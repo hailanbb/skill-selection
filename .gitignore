@@ -1,0 +1,13 @@
+# Local private configurations
+config.json
+.env
+
+# Python caching
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+
+# OS metadata
+.DS_Store
+Thumbs.db
