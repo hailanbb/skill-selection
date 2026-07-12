@@ -8,6 +8,12 @@ import shutil
 import subprocess
 from mimetypes import guess_extension
 
+# 强迫 Windows 控制台输出统一使用 UTF-8 编码，防止因为 \xa0 等特殊字符导致 GBK 编码崩溃
+if hasattr(sys.stdout, 'reconfigure'):
+    sys.stdout.reconfigure(encoding='utf-8')
+if hasattr(sys.stderr, 'reconfigure'):
+    sys.stderr.reconfigure(encoding='utf-8')
+
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 SKILL_ROOT = os.path.dirname(SCRIPT_DIR)
 CONFIG_FILE = os.path.join(SKILL_ROOT, "config.json")
@@ -60,7 +66,6 @@ def check_dependencies():
     return missing
 
 def check_optional_mcp_status():
-    """检查备选的 mcp 服务以及 anysearch 技能的安装情况"""
     status = {
         "node_installed": shutil.which("node") is not None,
         "npm_installed": shutil.which("npm") is not None,
@@ -70,12 +75,10 @@ def check_optional_mcp_status():
         "anysearch_skill_installed": False
     }
     
-    # 1. 检查 enquire-mcp 全局安装
     global_enquire_path = os.path.join(APPDATA_ROAMING, r"npm\node_modules\@oomkapwn\enquire-mcp\dist\index.js")
     if os.path.exists(global_enquire_path) or shutil.which("enquire-mcp"):
         status["enquire_mcp_installed"] = True
         
-    # 2. 检查 mcp_config.json 注册状态
     mcp_config_path = get_mcp_config_path()
     if mcp_config_path and os.path.exists(mcp_config_path):
         try:
@@ -87,8 +90,6 @@ def check_optional_mcp_status():
         except Exception:
             pass
             
-    # 3. 检查 anysearch-skill 技能是否存在于全局技能库中 (作为本技能 save-link-to-obs 的兄弟目录)
-    # C:\Users\HiWin11\.gemini\config\skills\anysearch-skill
     skills_parent = os.path.dirname(SKILL_ROOT)
     anysearch_probe_paths = [
         os.path.join(skills_parent, "anysearch-skill"),
@@ -209,12 +210,13 @@ def main():
         print("  python save_to_obsidian.py doctor")
         print("  python save_to_obsidian.py configure --vault <path> --image_dir <name>")
         print("  python save_to_obsidian.py fetch --url <url>")
+        print("  python save_to_obsidian.py localize --title <title> --html <file_or_string>")
         print("  python save_to_obsidian.py index")
         sys.exit(1)
         
     cmd = sys.argv[1]
     
-    # 1. doctor 综合自检
+    # 1. doctor
     if cmd == "doctor":
         missing_py = check_dependencies()
         optional_status = check_optional_mcp_status()
@@ -253,7 +255,7 @@ def main():
         print(json.dumps({"status": "success", "message": "Configuration successfully saved!"}))
         sys.exit(0)
         
-    # 3. 读取配置 (fetch 和 index)
+    # 3. 读取配置 (fetch, localize, index 共享)
     config = load_config()
     vault_path = config.get("vault_path")
     image_dir_name = config.get("image_dir_name")
@@ -328,6 +330,47 @@ def main():
             }
             print(json.dumps(result, ensure_ascii=False))
             
+        except Exception as e:
+            print(json.dumps({"status": "error", "message": str(e)}))
+            sys.exit(1)
+            
+    elif cmd == "localize":
+        # 4. localize: 用于为 external 抓回来的 HTML 数据执行图片本地化与重构
+        missing_py = check_dependencies()
+        if missing_py:
+            print(json.dumps({"status": "missing_dependencies", "message": f"Required packages missing: {', '.join(missing_py)}"}))
+            sys.exit(1)
+            
+        t_idx = sys.argv.index("--title") if "--title" in sys.argv else -1
+        h_idx = sys.argv.index("--html") if "--html" in sys.argv else -1
+        if t_idx == -1 or t_idx + 1 >= len(sys.argv) or h_idx == -1 or h_idx + 1 >= len(sys.argv):
+            print(json.dumps({"status": "error", "message": "Missing --title or --html arguments."}))
+            sys.exit(1)
+            
+        title = sys.argv[t_idx + 1]
+        html_input = sys.argv[h_idx + 1]
+        
+        # 支持传入文件路径或者 HTML 字符串本身
+        html_content = ""
+        if os.path.exists(html_input):
+            with open(html_input, 'r', encoding='utf-8') as f:
+                html_content = f.read()
+        else:
+            html_content = html_input
+            
+        try:
+            from bs4 import BeautifulSoup
+            soup = BeautifulSoup(html_content, 'lxml')
+            localize_images(soup, vault_path, image_dir_name, title)
+            
+            result = {
+                "status": "success",
+                "title": title,
+                "vault_path": vault_path,
+                "image_dir_name": image_dir_name,
+                "cleaned_html_body": str(soup)
+            }
+            print(json.dumps(result, ensure_ascii=False))
         except Exception as e:
             print(json.dumps({"status": "error", "message": str(e)}))
             sys.exit(1)
