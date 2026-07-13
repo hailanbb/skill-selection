@@ -16,6 +16,9 @@ skill-selection/
     │   ├── README.md           # 本技能详细安装配置与可选 mcp 引导手册
     │   └── scripts/
     │       └── save_to_obsidian.py # 核心驱动脚本
+    ├── neat-freak/             # 洁癖收尾与项目规范审计技能
+    │   ├── SKILL.md            # AI Agent 会话收尾整理与毕业机制指令
+    │   └── README.md           # 首次运行引导、WPS 与路径 Clicklink 审计手册
     ├── sales-daily-report-skill-zh-v1/ # 销售日报整理与钉钉排版优化技能
     │   ├── SKILL.md            # AI Agent 日报收集与钉钉排版指令说明
     │   ├── README.md           # 安装配置、环境自检与工作流说明
@@ -33,6 +36,7 @@ skill-selection/
 | 技能名称 | 核心功能 | 触发场景 | 详细说明 |
 | :--- | :--- | :--- | :--- |
 | **链接转存obs** | 智能网页直抓、图片本地化防失效、广告/软文深度语义净化、自动中文归类到待阅收件箱，并自动同步 enquire-mcp 检索缓存。 | 提供 URL 链接并要求转存到 Obsidian 库。 | [👉 详细配置与使用指南](skills/链接转存obs/README.md) |
+| **neat-freak** | 自动进行会话收尾整理与脑区物理清理。审计 Windows 路径 clicklinks 规范、WPS 表格排版及 Web UI 设计美学，防止文档规则与代码发生漂移。 | 会话结束收尾、要求同步文档、整理项目、或进行规范审计体检。 | [👉 详细配置与使用指南](skills/neat-freak/README.md) |
 | **销售日报整理至钉钉** | 自动收集、整理和优化销售团队日报，支持环境自检与引导、请假/离职成员动态配置、人名高亮色彩与格式自定义，并在归档完成后自动将日报追加到本地“日报汇总.md”文件，最后彻底清理临时文件。 | 提交销售人员日报、要求整理日报、查看今日进度或进行配置修改。 | [👉 详细配置与使用指南](skills/sales-daily-report-skill-zh-v1/README.md) |
 | **转存至github** | 将网络上第三方工具、Skill 或 MCP 的源码及说明，一键克隆、重构并整合保存到个人的 GitHub 统一工具库中。支持源链接中文自识别与智能翻译分流。 | 用户发送需要克隆、备份或收藏的第三方 AI 工具链接并要求保存到 GitHub 时。 | [👉 详细配置与使用指南](skills/转存至github/README.md) |
 
