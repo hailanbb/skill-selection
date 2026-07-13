@@ -37,6 +37,11 @@ git clone <源项目链接> scratch/temp_source
 git clone <github_remote_url> scratch/temp_target
 ```
 
+### 步骤 1.5：防重与同名冲突校验
+AI Agent 在本地沙盒中执行两项安全性校验，以防止项目冲突和主页索引表格的重复：
+* **源链接防重校验**：读取克隆仓库根目录下的 `imported_sources.json` 文件（如不存在则跳过）。对当前转存链接进行标准化比对，若已记录，将立刻终止操作并友好通知用户已转存信息。
+* **同名目录冲突校验**：如果目标路径中已存在 `tools/<工具名>/` 子目录，而源链接与清单记录不一致时，自动终止操作，提示用户修改工具名，以防覆盖其它工具源码。
+
 ### 步骤 2：精简源码搬运
 在 `scratch/temp_target/tools/` 下为新收录的工具创建专属子目录，自动复制所有源码和配置文件，并排除 `.git`、`.github` 和原始 `README.md`，彻底规避嵌套冲突。
 
@@ -52,10 +57,11 @@ git clone <github_remote_url> scratch/temp_target
 AI 自动编辑 `scratch/temp_target/README.md`，将新收录的工具行（包括：中文翻译后的核心功能与触发场景、指向 `tools/工具名/README.md` 的相对跳转链接）追加至主索引表格中。
 
 ### 步骤 5：提交与远程推送
-进入临时沙盒 `scratch/temp_target/` 下执行自动提交与远程推送：
+1. **更新导入清单**：在执行 Git 提交前，更新或创建个人收藏仓库根目录下的 `imported_sources.json` 记录，存入当前导入的源项目链接、工具名以及当前本地时间。
+2. **执行 Git 提交与推送**：进入临时沙盒 `scratch/temp_target/` 下将清单文件及源码文件添加并提交，然后推送到您的远程 `ai-tools` 仓库：
 ```bash
 git add .
-git commit -m "Merge source code and restructure README for <工具名>"
+git commit -m "Merge source code, update imported_sources.json and restructure README for <工具名> into tools directory"
 $env:GITHUB_TOKEN=""; git push origin main
 ```
 
