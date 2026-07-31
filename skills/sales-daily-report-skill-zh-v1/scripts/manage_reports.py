@@ -13,12 +13,12 @@ BASE_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", "
 TEMP_DIR = os.path.join(BASE_DIR, "temp")
 ARCHIVE_DIR = os.path.join(BASE_DIR, "归档")
 CONFIG_PATH = os.path.join(BASE_DIR, "config.json")
-SUMMARY_FILE_PATH = os.path.abspath(os.path.join(BASE_DIR, "..", "日报汇总.md"))
+SUMMARY_FILE_PATH = os.path.abspath(os.path.join(BASE_DIR, "..", "销售日报汇总.md"))
 
 # Default de-identified configuration template (GitHub safe)
 DEFAULT_CONFIG = {
     "name_color": "#1a73e8",
-    "output_format": "both",
+    "output_format": "copy_only",
     "reporters": [
         {
             "key": "Sales_A",
@@ -336,6 +336,34 @@ def check_environment():
             
     return status
 
+def is_configured():
+    """Check if config.json has been properly configured by user (not still default template)."""
+    if not os.path.exists(CONFIG_PATH):
+        return {"configured": False, "reason": "config.json does not exist"}
+    try:
+        with open(CONFIG_PATH, "r", encoding="utf-8") as f:
+            config = json.load(f)
+    except Exception:
+        return {"configured": False, "reason": "config.json is invalid"}
+    reporters = config.get("reporters", [])
+    if len(reporters) == 0:
+        return {"configured": False, "reason": "reporters list is empty"}
+    # Check if still default template data
+    keys = [r.get("key", "") for r in reporters]
+    if set(keys) == {"Sales_A", "Sales_B"} or set(keys) <= {"Sales_A", "Sales_B"}:
+        return {"configured": False, "reason": "reporters still contains default template data"}
+    return {"configured": True}
+
+def init_clean_config():
+    """Initialize a clean config with empty reporters list for first-time onboarding."""
+    clean_config = {
+        "name_color": "#1a73e8",
+        "output_format": "copy_only",
+        "reporters": []
+    }
+    result = save_config(clean_config)
+    return {"success": result, "config": clean_config}
+
 def add_reporter(config, key, fullname, aliases_str):
     reporters = config.setdefault("reporters", [])
     
@@ -402,6 +430,8 @@ def main():
     # New options
     parser.add_argument("--check-env", action="store_true", help="Check running environment and skills")
     parser.add_argument("--init", action="store_true", help="Initialize/reset config file to defaults")
+    parser.add_argument("--init-clean", action="store_true", help="Initialize a clean config with empty reporters for onboarding")
+    parser.add_argument("--is-configured", action="store_true", help="Check if config has been properly set up by user")
     parser.add_argument("--add-reporter", action="store_true", help="Add a new reporter")
     parser.add_argument("--key", type=str, help="Unique reporter key (required for --add-reporter / --set-status)")
     parser.add_argument("--fullname", type=str, help="Full display name (required for --add-reporter)")
@@ -419,6 +449,14 @@ def main():
     
     if args.check_env:
         res = check_environment()
+        print(json.dumps(res, ensure_ascii=False, indent=2))
+
+    elif args.is_configured:
+        res = is_configured()
+        print(json.dumps(res, ensure_ascii=False, indent=2))
+
+    elif args.init_clean:
+        res = init_clean_config()
         print(json.dumps(res, ensure_ascii=False, indent=2))
         
     elif args.init:
