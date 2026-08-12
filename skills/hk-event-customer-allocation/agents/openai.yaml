@@ -1,0 +1,4 @@
+interface:
+  display_name: "香港活動客戶分配"
+  short_description: "按人數、客戶類型及步行距離均衡分配香港活動附近客戶"
+  default_prompt: "使用 $hk-event-customer-allocation 分析活動附近客戶與銷售分組，先預覽均衡分配方案，確認後再製作 Excel。"
