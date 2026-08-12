@@ -210,29 +210,40 @@ function buildAssignments(sheet, plan) {
 
 function buildRoutes(sheet, plan) {
   const headers = [
-    "小組", "建議次序", "客戶類型", "客戶名稱", "客戶地址", "距離場地（KM）",
-    "上一站至本站距離（KM）", "路線說明",
+    "小組", "成員", "客戶數", "平均步行距離（KM）", "最遠步行距離（KM）",
+    "建議首站", "建議起步區域", "整組路線規劃總結",
   ];
-  const assignments = [...plan.assignments].sort((a, b) =>
-    a.group.localeCompare(b.group, "zh-HK") || a.route_order - b.route_order);
-  const lastRow = 3 + assignments.length;
+  const rows = plan.groups.map((group) => {
+    const customers = [...plan.assignments]
+      .filter((customer) => customer.group === group.name)
+      .sort((a, b) => a.route_order - b.route_order || a.id.localeCompare(b.id, "zh-HK"));
+    const first = customers[0];
+    const farthest = [...customers].sort((a, b) => b.distance_km - a.distance_km)[0];
+    const firstArea = first?.address || "由活動場地附近開始";
+    const routeMethod = customers.every((customer) => customer.route_method === "實際步行距離矩陣")
+      ? "實際步行距離矩陣"
+      : "地理聚集建議";
+    const summary = `由${plan.venue.name}出發，先到「${first?.name ?? "首站"}」，再按同街道、同屋苑或同商廈集中分段拜訪；` +
+      `全組共 ${group.customer_count} 家，平均 ${group.average_distance_km.toFixed(2)} KM，最遠「${farthest?.name ?? "客戶"}」約 ${group.farthest_distance_km.toFixed(2)} KM，建議把較遠片區安排在同一時段集中完成。` +
+      `本建議採用${routeMethod}，不是最短步行路線；外勤前請按現場行人通道及營業情況核實。`;
+    return [
+      group.name,
+      group.members.join("、"),
+      group.customer_count,
+      group.average_distance_km,
+      group.farthest_distance_km,
+      first?.name ?? "",
+      firstArea,
+      summary,
+    ];
+  });
+  const lastRow = 3 + rows.length;
   sheet.mergeCells("A1:H1");
-  sheet.getRange("A1").values = [[`${plan.venue.name}｜小組路線建議`]];
+  sheet.getRange("A1").values = [[`${plan.venue.name}｜小組路線規劃總結`]];
   sheet.mergeCells("A2:H2");
-  sheet.getRange("A2").values = [[`由活動場地出發；${plan.warning}`]];
+  sheet.getRange("A2").values = [[`每個小組只提供一條整體規劃建議；${plan.warning}`]];
   sheet.getRange("A3:H3").values = [headers];
-  sheet.getRange(`A4:H${lastRow}`).values = assignments.map((customer) => [
-    customer.group,
-    customer.route_order,
-    customer.type,
-    customer.name,
-    customer.address,
-    customer.distance_km,
-    customer.route_method === "實際步行距離矩陣" ? customer.route_leg_km : null,
-    customer.route_order === 1
-      ? `由活動場地出發；${customer.route_method}`
-      : `由上一站前往本客戶；${customer.route_method}`,
-  ]);
+  sheet.getRange(`A4:H${lastRow}`).values = rows;
   setBaseStyle(sheet, `A1:H${lastRow}`);
   styleTitle(sheet, "A1:H1");
   sheet.getRange("A2:H2").format = {
@@ -244,12 +255,47 @@ function buildRoutes(sheet, plan) {
   };
   styleHeader(sheet, "A3:H3");
   styleBody(sheet, `A4:H${lastRow}`);
-  sheet.getRange(`B4:B${lastRow}`).format.numberFormat = "#,##0";
-  sheet.getRange(`F4:G${lastRow}`).format.numberFormat = "0.00";
+  sheet.getRange(`C4:C${lastRow}`).format.numberFormat = "#,##0";
+  sheet.getRange(`D4:E${lastRow}`).format.numberFormat = "0.00";
   sheet.freezePanes.freezeRows(3);
-  addTable(sheet, `A3:H${lastRow}`, "RouteSuggestionTable");
-  setWidths(sheet, lastRow, [100, 82, 105, 170, 320, 120, 150, 240]);
-  sheet.getRange(`E4:H${lastRow}`).format.rowHeightPx = 40;
+  addTable(sheet, `A3:H${lastRow}`, "RouteSummaryTable");
+  setWidths(sheet, lastRow, [90, 260, 82, 125, 125, 180, 300, 560]);
+  sheet.getRange(`A4:H${lastRow}`).format.rowHeightPx = 120;
+  return sheet;
+}
+
+function buildFarCustomers(sheet, plan) {
+  const distanceLimit = Number(plan.allocation_distance_limit_km ?? 4);
+  const headers = ["序號", "客戶類型", "客戶名稱", "客戶地址", "電話號碼", "實際步行距離（KM）", "不分配原因"];
+  const customers = [...(plan.far_customers ?? [])].sort((a, b) =>
+    a.distance_km - b.distance_km || a.id.localeCompare(b.id, "zh-HK"));
+  const lastRow = 3 + customers.length;
+  sheet.mergeCells("A1:G1");
+  sheet.getRange("A1").values = [[`${plan.venue.name}｜超過 ${distanceLimit.toFixed(2)} KM 客戶`]];
+  sheet.mergeCells("A2:G2");
+  sheet.getRange("A2").values = [[`以下客戶的實際步行距離超過 ${distanceLimit.toFixed(2)} KM，按規則不分配予任何銷售小組。`]];
+  sheet.getRange("A3:G3").values = [headers];
+  if (customers.length) sheet.getRange(`A4:G${lastRow}`).values = customers.map((customer, index) => [
+    index + 1, customer.type, customer.name, customer.address, customer.phone, customer.distance_km,
+    customer.exclusion_reason ?? `實際步行距離超過 ${distanceLimit.toFixed(2)} KM，不分配予銷售小組`,
+  ]);
+  setBaseStyle(sheet, `A1:G${lastRow}`);
+  styleTitle(sheet, "A1:G1");
+  sheet.getRange("A2:G2").format = {
+    fill: COLORS.warning, font: { name: FONT, color: COLORS.text, size: 9 },
+    horizontalAlignment: "center", verticalAlignment: "center", wrapText: true,
+  };
+  styleHeader(sheet, "A3:G3");
+  if (customers.length) {
+    styleBody(sheet, `A4:G${lastRow}`);
+    sheet.getRange(`A4:A${lastRow}`).format.numberFormat = "#,##0";
+    sheet.getRange(`E4:E${lastRow}`).format.numberFormat = "@";
+    sheet.getRange(`F4:F${lastRow}`).format.numberFormat = "0.00";
+    sheet.getRange(`A4:G${lastRow}`).format.rowHeightPx = 48;
+  }
+  sheet.freezePanes.freezeRows(3);
+  addTable(sheet, `A3:G${lastRow}`, "FarCustomerTable");
+  setWidths(sheet, lastRow, [68, 115, 190, 340, 125, 135, 280]);
   return sheet;
 }
 
@@ -265,8 +311,8 @@ function buildIssues(sheet, plan) {
   sheet.getRange(`A4:G${lastRow}`).values = issues.map((issue) => [
     issue.issue_type ?? issue.type ?? "待核實",
     issue.original_id ?? issue.id ?? "",
-    issue.customer_type ?? "",
-    issue.customer_name ?? "",
+    issue.customer_type ?? issue.type ?? "",
+    issue.customer_name ?? issue.name ?? "",
     issue.address ?? "",
     issue.phone ?? "",
     issue.suggestion ?? issue.detail ?? "請人工核實",
@@ -302,11 +348,13 @@ async function main() {
   const summarySheet = workbook.worksheets.add("分配總覽");
   const assignmentSheet = workbook.worksheets.add("客戶分工");
   const routeSheet = workbook.worksheets.add("小組路線建議");
+  const farSheet = workbook.worksheets.add("超4KM客戶");
   const issueSheet = workbook.worksheets.add("待核實資料");
   const assignmentLastRow = 3 + plan.assignments.length;
   buildSummary(summarySheet, plan, assignmentLastRow);
   buildAssignments(assignmentSheet, plan);
   buildRoutes(routeSheet, plan);
+  buildFarCustomers(farSheet, plan);
   buildIssues(issueSheet, plan);
 
   const errors = await workbook.inspect({
@@ -321,8 +369,9 @@ async function main() {
 
   if (previewDirectory) {
     await fs.mkdir(previewDirectory, { recursive: true });
-    for (const sheetName of ["分配總覽", "客戶分工", "小組路線建議", "待核實資料"]) {
-      const preview = await workbook.render({ sheetName, autoCrop: "all", scale: 1, format: "png" });
+    const previewRanges = { "分配總覽": "A1:J16", "客戶分工": "A1:H28", "小組路線建議": "A1:H10", "超4KM客戶": "A1:G28", "待核實資料": "A1:G28" };
+    for (const [sheetName, range] of Object.entries(previewRanges)) {
+      const preview = await workbook.render({ sheetName, range, scale: 1, format: "png" });
       await fs.writeFile(path.join(previewDirectory, `${sheetName}.png`), new Uint8Array(await preview.arrayBuffer()));
     }
   }
