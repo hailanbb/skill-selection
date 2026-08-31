@@ -1,5 +1,7 @@
 # 取证与关键帧流程
 
+命令中的 `<python>` 表示客户端可用的 Python 3.10+ 启动器，`<skill-root>` 表示包含 `SKILL.md` 的技能根目录。客户端必须先解析这两个值，不依赖当前工作目录。
+
 ## 取证路由
 
 流程借鉴 `https://github.com/Rimagination/dy-note` 的证据分层，但只为最终图文笔记收集最小充分材料。
@@ -15,6 +17,31 @@
 
 所有下载、音频、转写、候选帧和辅助 JSON 都写入 `run_workspace.py create` 返回的目录。不要在工作区或 Obsidian 库中散落中间文件。
 
+## yt-dlp 元数据
+
+需要通过 `yt-dlp` 获取标题、作者、发布时间等元数据时，使用技能自带助手。前台执行：
+
+```text
+<python> "<skill-root>/scripts/extract_metadata.py" --url "<来源 URL>" --output "<临时目录>/metadata.json"
+```
+
+确实需要后台执行时：
+
+```text
+<python> "<skill-root>/scripts/extract_metadata.py" --url "<来源 URL>" --output "<临时目录>/metadata.json" --background
+```
+
+后台命令返回 PID、状态文件和日志文件。轮询状态文件，状态会从 `starting`/`running` 进入 `succeeded` 或 `failed`；只有 `succeeded` 后才读取输出，`failed` 时查看临时日志并报告 `yt-dlp` 的实际错误。状态、日志和元数据都必须留在本次临时目录，最终随运行目录清理。
+
+不要使用以下易损模式：
+
+```powershell
+# 错误示例：父 PowerShell 会提前展开或丢失嵌套字符串中的 $env:...
+Start-Process powershell -ArgumentList '-Command', "yt-dlp ... $env:SOME_PATH ..."
+```
+
+助手通过参数数组直接启动 `yt-dlp` 或 Python 子进程，不使用嵌套 `powershell -Command`、字符串拼接或 `shell=True`，因此 URL、中文路径、空格、`&` 和环境变量展开不会跨两层 PowerShell 重新解释。它只持久化白名单元数据，不保存格式直链、Cookie、HTTP 请求头或带签名的视频 URL。
+
 如果调用上游 `dy-note`：
 
 - 把 `--out-dir` 指向本次临时目录下的子目录。
@@ -26,14 +53,14 @@
 
 先均匀抽取 12–24 个候选帧：
 
-```powershell
-python scripts/extract_keyframes.py --video "<临时视频>" --out-dir "<临时目录>\candidates" --auto-count 16
+```text
+<python> "<skill-root>/scripts/extract_keyframes.py" --video "<临时视频>" --out-dir "<临时目录>/candidates" --auto-count 16
 ```
 
 已从转写或章节定位到关键时刻时，可直接指定时间：
 
-```powershell
-python scripts/extract_keyframes.py --video "<临时视频>" --out-dir "<临时目录>\selected" --at 00:00:03.5 --at 00:00:27 --at 00:01:12
+```text
+<python> "<skill-root>/scripts/extract_keyframes.py" --video "<临时视频>" --out-dir "<临时目录>/selected" --at 00:00:03.5 --at 00:00:27 --at 00:01:12
 ```
 
 逐张查看候选帧，结合相邻转写/章节选择最终画面。优先级从高到低：

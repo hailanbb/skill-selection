@@ -2,6 +2,8 @@
 
 `douyin-obsidian-note` 是一个面向 Codex、Gemini、Claude Code 及其他兼容 Agent Skills 的抖音视频知识整理技能。它将单条抖音视频、分享文本或本地视频提炼成一篇适合长期学习和检索的 Obsidian Markdown 图文笔记，并把真正有解释价值的关键画面保存为本地图片。
 
+技能遵循开放 [Agent Skills 规范](https://agentskills.io/specification)，核心不依赖 Codex 专属接口。结构和命令已按 Google Antigravity 2.11.0、通用 Agent Skills 客户端以及 Windows/macOS/Linux 本地脚本环境设计；客户端仍需具备执行 Python 和所需外部二进制的权限。
+
 它不是“逐字稿生成器”，也不是把视频机械切成几十张截图。它的目标是：
 
 > 用最少但充分的文字和画面，让读者不重新播放视频也能理解核心观点、方法、案例和适用边界。
@@ -93,12 +95,14 @@ douyin-obsidian-note/
 ├── agents/
 │   └── openai.yaml                 # 技能展示名、简介和默认调用提示
 ├── references/
+│   ├── compatibility.md            # Antigravity 2.11.0、通用客户端和跨平台约定
 │   ├── note-format.md              # Frontmatter、正文结构和图片占位符规范
 │   └── workflow.md                 # 取证路线、关键帧筛选与写作闸门
 └── scripts/
     ├── common.py                   # 配置、标题清理、路径安全与验证公共函数
     ├── configure.py                # 首次配置和配置状态检查
     ├── run_workspace.py            # 创建及安全清理临时运行目录
+    ├── extract_metadata.py         # 安全提取 yt-dlp 元数据，支持无嵌套 PowerShell 的后台模式
     ├── extract_keyframes.py        # 从本地视频抽取候选帧或指定时间帧
     ├── publish_note.py             # 图片归档、Frontmatter 生成和笔记发布
     └── validate_note.py            # 校验属性、图片链接、编码和禁用内容
@@ -120,6 +124,7 @@ douyin-obsidian-note/
 | 功能 | 需要的组件 | 说明 |
 |---|---|---|
 | 从本地视频抽帧 | `ffmpeg` 与 `ffprobe` | `extract_keyframes.py` 会调用两者 |
+| 从链接提取公开元数据 | `yt-dlp` | `extract_metadata.py` 使用参数数组执行，避免 PowerShell 后台转义问题 |
 | 图片统一转为 640px JPEG | Pillow 或 `ffmpeg` | 优先使用 Pillow；两者都没有时保留原格式并使用 `_0` 后缀 |
 | 从视频语音获得文本 | 可用的 ASR 工具 | 可复用本机 `dy-note`、Qwen3-ASR、Whisper 或宿主 Agent 已有能力 |
 | 从抖音链接获得视频/页面内容 | 已授权浏览器会话或宿主工具 | 不读取或导出 Cookie、token 和签名链接 |
@@ -129,6 +134,21 @@ douyin-obsidian-note/
 ---
 
 ## 安装方式
+
+### Antigravity 2.11.0
+
+Google Antigravity 官方 Skills 文档规定：
+
+- 全局技能：`~/.gemini/config/skills/douyin-obsidian-note/`
+- 工作区技能：`<workspace>/.agents/skills/douyin-obsidian-note/`
+
+Windows 全局路径示例：
+
+```text
+%USERPROFILE%\.gemini\config\skills\douyin-obsidian-note\
+```
+
+Antigravity 2.11.0 会从 `SKILL.md` 的 `name` 与 `description` 发现技能，按需读取正文、`scripts/` 和 `references/`。`agents/openai.yaml` 不是核心依赖，Antigravity 可以忽略。
 
 ### Codex 全局安装
 
@@ -163,6 +183,8 @@ Copy-Item -LiteralPath $source -Destination $target -Recurse
 ```
 
 安装时必须保留整个目录，不要只复制 `SKILL.md`。脚本、参考文件和 `agents/openai.yaml` 都属于技能的一部分。
+
+其他客户端请把完整目录复制到其声明的 Agent Skills 根目录。详细安装范围、解释器选择和沙箱限制见 [客户端兼容性](references/compatibility.md)。
 
 ---
 
@@ -283,6 +305,28 @@ python "$skillRoot\scripts\run_workspace.py" create
 页面简介不等于字幕；ASR 也无法证明焊在视频画面里的文字、价格、动作和操作界面。涉及视觉事实时必须查看画面。
 
 如果配合 `dy-note`，务必把它的 `--out-dir` 指向步骤 1 创建的临时目录。它输出的转写和元数据仅用于理解视频，不复制到 Obsidian。
+
+通过 `yt-dlp` 获取公开元数据时，使用内置助手：
+
+```powershell
+$sourceUrl = "https://www.douyin.com/video/..."
+python "$skillRoot\scripts\extract_metadata.py" `
+  --url $sourceUrl `
+  --output "<临时目录>\metadata.json"
+```
+
+需要后台运行时直接增加 `--background`：
+
+```powershell
+python "$skillRoot\scripts\extract_metadata.py" `
+  --url $sourceUrl `
+  --output "<临时目录>\metadata.json" `
+  --background
+```
+
+返回结果包含 PID、状态文件和日志文件。轮询状态文件，状态会从 `starting`/`running` 进入 `succeeded` 或 `failed`；仅在 `succeeded` 后读取 `metadata.json`。不要把命令包装为双引号中的 `powershell -Command`，也不要在嵌套命令字符串中引用 `$env:...`；父 PowerShell 会提前展开变量，路径中的空格、`&` 和引号也可能被再次解析。助手直接传递参数数组，不经过 Shell 二次解释。
+
+元数据文件只保留标题、作者、发布时间、时长、统计值和规范页面 URL 等白名单字段。`yt-dlp` 返回的格式直链、Cookie、请求头和签名视频 URL 不会写入磁盘。
 
 ### 步骤 3：抽取候选画面
 
@@ -493,6 +537,8 @@ ObsidianVault/
 | `run_workspace.py` | `create` | 创建带保护标记的临时运行目录 |
 | `run_workspace.py` | `status --path ...` | 检查目录是否为合法运行目录 |
 | `run_workspace.py` | `cleanup --path ...` | 安全清理本次临时目录 |
+| `extract_metadata.py` | `--url ... --output ...` | 前台安全提取白名单元数据 |
+| `extract_metadata.py` | `--url ... --output ... --background` | 无嵌套 PowerShell 的后台元数据任务 |
 | `extract_keyframes.py` | `--auto-count 16` | 均匀抽取候选帧 |
 | `extract_keyframes.py` | `--at HH:MM:SS` | 按指定时间抽取关键帧 |
 | `publish_note.py` | `--draft ... --images ...` | 发布笔记和本地图片 |
@@ -570,6 +616,11 @@ Obsidian 的 wiki 嵌入通常基于库内相对路径。图片位于库外时�
 - 验证禁用的逐字稿/清单章节会被阻止。
 - 验证临时清理会删除本次视频文件，并拒绝删除未带标记的普通目录。
 - 验证测试依赖、模拟库、测试草稿和 Python 缓存均已清理。
+- 验证 `yt-dlp` 前台与后台命令均使用参数数组，不经过嵌套 PowerShell；含中文、空格、`&` 和字面量 `$env:` 的输入不会被二次展开。
+- 验证元数据输出会排除格式直链、Cookie、请求头和签名视频 URL。
+- 同时通过开放 Agent Skills 与严格客户端的 Frontmatter 交集验证：只使用 `name`、`description`，并验证技能名、目录名和相对资源结构。
+- 使用 GitHub Actions 在 Windows、macOS、Linux 与 Python 3.10/3.12 组合上运行脚本回归测试。
+- 本地核对 Google Antigravity 2.11.0 安装版本及官方 Skills 目录约定；未把 Codex 专属运行时作为兼容性前提。
 
 ---
 
