@@ -36,7 +36,7 @@ python scripts/configure.py --note-dir "<笔记目录>" --image-dir "<图片目�
 python scripts/run_workspace.py create
 ```
 
-2. 取得来源 URL、作者、发布时间、标题/简介和可用文本证据。已有本地视频、字幕或转写时优先复用。需要从链接取证时，遵循 [取证与关键帧流程](references/workflow.md)。
+2. 取得来源 URL、作者、发布时间、标题/简介和可用文本证据。已有本地视频、字幕或转写时优先复用。需要使用 `yt-dlp` 提取元数据时，调用 `scripts/extract_metadata.py`；后台模式也由该脚本启动，不要把含 `$env:...` 的命令拼进双引号 `powershell -Command` 字符串。具体命令和限制见 [取证与关键帧流程](references/workflow.md)。
 3. 需要精确理解时，可在临时目录中复用本机 `dy-note` 的字幕/本地 ASR 能力。转写只是写笔记的证据，不是交付物，也不要整段复制到笔记。
 4. 从视频抽取候选帧，结合内容段落逐张查看，选择通常 3–8 张非重复、能解释概念/步骤/对比/结果的画面。命令和选择标准见 [取证与关键帧流程](references/workflow.md)。
 5. 按 [笔记格式](references/note-format.md) 写一个仅含正文的 UTF-8 Markdown 草稿。在画面应出现的位置放 `{{image:1|说明}}` 这类占位符。

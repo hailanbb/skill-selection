@@ -15,6 +15,31 @@
 
 所有下载、音频、转写、候选帧和辅助 JSON 都写入 `run_workspace.py create` 返回的目录。不要在工作区或 Obsidian 库中散落中间文件。
 
+## yt-dlp 元数据
+
+需要通过 `yt-dlp` 获取标题、作者、发布时间等元数据时，使用技能自带助手。前台执行：
+
+```powershell
+python scripts/extract_metadata.py --url $sourceUrl --output "$runDir\metadata.json"
+```
+
+确实需要后台执行时：
+
+```powershell
+python scripts/extract_metadata.py --url $sourceUrl --output "$runDir\metadata.json" --background
+```
+
+后台命令返回 PID、状态文件和日志文件。轮询状态文件，状态会从 `starting`/`running` 进入 `succeeded` 或 `failed`；只有 `succeeded` 后才读取输出，`failed` 时查看临时日志并报告 `yt-dlp` 的实际错误。状态、日志和元数据都必须留在本次临时目录，最终随运行目录清理。
+
+不要使用以下易损模式：
+
+```powershell
+# 错误示例：父 PowerShell 会提前展开或丢失嵌套字符串中的 $env:...
+Start-Process powershell -ArgumentList '-Command', "yt-dlp ... $env:SOME_PATH ..."
+```
+
+助手通过参数数组直接启动 `yt-dlp` 或 Python 子进程，不使用嵌套 `powershell -Command`、字符串拼接或 `shell=True`，因此 URL、中文路径、空格、`&` 和环境变量展开不会跨两层 PowerShell 重新解释。它只持久化白名单元数据，不保存格式直链、Cookie、HTTP 请求头或带签名的视频 URL。
+
 如果调用上游 `dy-note`：
 
 - 把 `--out-dir` 指向本次临时目录下的子目录。
