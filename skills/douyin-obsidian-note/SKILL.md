@@ -7,12 +7,18 @@ description: 将单条抖音视频或分享链接提炼成带关键画面的 Obs
 
 目标是生成一篇可直接阅读和复习的 Markdown 笔记，并把少量真正解释内容的关键画面嵌在相关段落中。取证思路参考 Rimagination/dy-note，但这个技能只发布最终笔记与关键图片；转写、音频、视频和候选帧都属于临时材料。
 
+## 客户端中立约定
+
+先把包含本文件的目录解析为 `<skill-root>`，再调用其中的脚本；不要假设当前工作目录、`CODEX_HOME`、`.codex` 或 PowerShell 一定存在。选择客户端实际可用的 Python 3.10+ 启动方式作为 `<python>`（例如 `python`、`python3` 或 Windows 的 `py -3`），后续命令中的尖括号内容均为占位符，不要原样传给 Shell。
+
+核心能力只依赖 `SKILL.md`、`scripts/` 和 `references/`。`agents/openai.yaml` 仅提供可选的 Codex 界面信息，其他 Agent Skills 客户端可以忽略。安装位置、运行能力和跨平台注意事项见 [客户端兼容性](references/compatibility.md)。
+
 ## 首次运行门槛
 
 在处理视频前运行：
 
-```powershell
-python scripts/configure.py --status
+```text
+<python> "<skill-root>/scripts/configure.py" --status
 ```
 
 如果返回 `configured: false`，只向用户询问一次以下两个绝对路径，然后等待回答：
@@ -22,8 +28,8 @@ python scripts/configure.py --status
 
 取得路径后运行：
 
-```powershell
-python scripts/configure.py --note-dir "<笔记目录>" --image-dir "<图片目录>" --create-dirs
+```text
+<python> "<skill-root>/scripts/configure.py" --note-dir "<笔记目录>" --image-dir "<图片目录>" --create-dirs
 ```
 
 两个目录必须位于同一个含 `.obsidian` 的库中。配置有效后不重复询问；路径失效或用户要求换库时才重新配置。不要在首次配置前下载视频或运行转写。
@@ -32,8 +38,8 @@ python scripts/configure.py --note-dir "<笔记目录>" --image-dir "<图片目�
 
 1. 创建隔离的临时运行目录，并把本次下载、音频、转写和候选帧全部放进去：
 
-```powershell
-python scripts/run_workspace.py create
+```text
+<python> "<skill-root>/scripts/run_workspace.py" create
 ```
 
 2. 取得来源 URL、作者、发布时间、标题/简介和可用文本证据。已有本地视频、字幕或转写时优先复用。需要使用 `yt-dlp` 提取元数据时，调用 `scripts/extract_metadata.py`；后台模式也由该脚本启动，不要把含 `$env:...` 的命令拼进双引号 `powershell -Command` 字符串。具体命令和限制见 [取证与关键帧流程](references/workflow.md)。
@@ -42,20 +48,20 @@ python scripts/run_workspace.py create
 5. 按 [笔记格式](references/note-format.md) 写一个仅含正文的 UTF-8 Markdown 草稿。在画面应出现的位置放 `{{image:1|说明}}` 这类占位符。
 6. 发布草稿。脚本会生成 YAML 属性、智能清理笔记文件名、把图片转为归档风格的哈希文件名、生成 Obsidian 库内链接并原子写入：
 
-```powershell
-python scripts/publish_note.py --draft "<正文草稿.md>" --title "<自然标题>" --source-url "<抖音 URL>" --author "<作者>" --publish-time "<发布时间>" --images "<关键帧1>" "<关键帧2>"
+```text
+<python> "<skill-root>/scripts/publish_note.py" --draft "<正文草稿.md>" --title "<自然标题>" --source-url "<抖音 URL>" --author "<作者>" --publish-time "<发布时间>" --images "<关键帧1>" "<关键帧2>"
 ```
 
 7. 对最终文件运行：
 
-```powershell
-python scripts/validate_note.py "<最终笔记.md>"
+```text
+<python> "<skill-root>/scripts/validate_note.py" "<最终笔记.md>"
 ```
 
 8. 无论成功、失败或中断，都在最后清理本次临时目录：
 
-```powershell
-python scripts/run_workspace.py cleanup --path "<本次临时目录>"
+```text
+<python> "<skill-root>/scripts/run_workspace.py" cleanup --path "<本次临时目录>"
 ```
 
 只有该脚本创建且带有匹配标记的目录可以清理。不要删除用户提供的原始本地视频，也不要清理 Obsidian 中已发布的笔记和图片。

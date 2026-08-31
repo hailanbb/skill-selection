@@ -2,6 +2,8 @@
 
 `douyin-obsidian-note` 是一个面向 Codex、Gemini、Claude Code 及其他兼容 Agent Skills 的抖音视频知识整理技能。它将单条抖音视频、分享文本或本地视频提炼成一篇适合长期学习和检索的 Obsidian Markdown 图文笔记，并把真正有解释价值的关键画面保存为本地图片。
 
+技能遵循开放 [Agent Skills 规范](https://agentskills.io/specification)，核心不依赖 Codex 专属接口。结构和命令已按 Google Antigravity 2.11.0、通用 Agent Skills 客户端以及 Windows/macOS/Linux 本地脚本环境设计；客户端仍需具备执行 Python 和所需外部二进制的权限。
+
 它不是“逐字稿生成器”，也不是把视频机械切成几十张截图。它的目标是：
 
 > 用最少但充分的文字和画面，让读者不重新播放视频也能理解核心观点、方法、案例和适用边界。
@@ -93,6 +95,7 @@ douyin-obsidian-note/
 ├── agents/
 │   └── openai.yaml                 # 技能展示名、简介和默认调用提示
 ├── references/
+│   ├── compatibility.md            # Antigravity 2.11.0、通用客户端和跨平台约定
 │   ├── note-format.md              # Frontmatter、正文结构和图片占位符规范
 │   └── workflow.md                 # 取证路线、关键帧筛选与写作闸门
 └── scripts/
@@ -132,6 +135,21 @@ douyin-obsidian-note/
 
 ## 安装方式
 
+### Antigravity 2.11.0
+
+Google Antigravity 官方 Skills 文档规定：
+
+- 全局技能：`~/.gemini/config/skills/douyin-obsidian-note/`
+- 工作区技能：`<workspace>/.agents/skills/douyin-obsidian-note/`
+
+Windows 全局路径示例：
+
+```text
+%USERPROFILE%\.gemini\config\skills\douyin-obsidian-note\
+```
+
+Antigravity 2.11.0 会从 `SKILL.md` 的 `name` 与 `description` 发现技能，按需读取正文、`scripts/` 和 `references/`。`agents/openai.yaml` 不是核心依赖，Antigravity 可以忽略。
+
 ### Codex 全局安装
 
 把整个目录复制到：
@@ -165,6 +183,8 @@ Copy-Item -LiteralPath $source -Destination $target -Recurse
 ```
 
 安装时必须保留整个目录，不要只复制 `SKILL.md`。脚本、参考文件和 `agents/openai.yaml` 都属于技能的一部分。
+
+其他客户端请把完整目录复制到其声明的 Agent Skills 根目录。详细安装范围、解释器选择和沙箱限制见 [客户端兼容性](references/compatibility.md)。
 
 ---
 
@@ -598,6 +618,9 @@ Obsidian 的 wiki 嵌入通常基于库内相对路径。图片位于库外时�
 - 验证测试依赖、模拟库、测试草稿和 Python 缓存均已清理。
 - 验证 `yt-dlp` 前台与后台命令均使用参数数组，不经过嵌套 PowerShell；含中文、空格、`&` 和字面量 `$env:` 的输入不会被二次展开。
 - 验证元数据输出会排除格式直链、Cookie、请求头和签名视频 URL。
+- 同时通过开放 Agent Skills 与严格客户端的 Frontmatter 交集验证：只使用 `name`、`description`，并验证技能名、目录名和相对资源结构。
+- 使用 GitHub Actions 在 Windows、macOS、Linux 与 Python 3.10/3.12 组合上运行脚本回归测试。
+- 本地核对 Google Antigravity 2.11.0 安装版本及官方 Skills 目录约定；未把 Codex 专属运行时作为兼容性前提。
 
 ---
 
