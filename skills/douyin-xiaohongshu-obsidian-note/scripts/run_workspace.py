@@ -10,15 +10,15 @@ from pathlib import Path
 from common import local_timestamp, read_json, write_json
 
 
-PREFIX = "douyin-obsidian-note-"
-MARKER = ".douyin-obsidian-note-run.json"
+PREFIX = "douyin-xiaohongshu-note-"
+MARKER = ".douyin-xiaohongshu-note-run.json"
 
 
 def create_workspace(base_dir: Path | None) -> Path:
     if base_dir is not None:
         base_dir.mkdir(parents=True, exist_ok=True)
     path = Path(tempfile.mkdtemp(prefix=PREFIX, dir=str(base_dir) if base_dir else None)).resolve()
-    write_json(path / MARKER, {"tool": "douyin-obsidian-note", "path": str(path), "created_at": local_timestamp()})
+    write_json(path / MARKER, {"tool": "douyin-xiaohongshu-obsidian-note", "path": str(path), "created_at": local_timestamp()})
     return path
 
 
@@ -31,7 +31,7 @@ def validate_workspace(path: Path) -> None:
     if not marker_path.is_file():
         raise ValueError(f"Missing workspace marker: {marker_path}")
     marker = read_json(marker_path)
-    if marker.get("tool") != "douyin-obsidian-note" or Path(str(marker.get("path", ""))).resolve() != resolved:
+    if marker.get("tool") != "douyin-xiaohongshu-obsidian-note" or Path(str(marker.get("path", ""))).resolve() != resolved:
         raise ValueError("Workspace marker does not match cleanup target")
 
 

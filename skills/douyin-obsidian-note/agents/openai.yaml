@@ -1,4 +1,0 @@
-interface:
-  display_name: "抖音图文笔记到 Obsidian"
-  short_description: "将抖音视频提炼为带关键画面的 Obsidian Markdown 笔记"
-  default_prompt: "使用 $douyin-obsidian-note 将这个抖音视频整理为带关键画面的 Obsidian Markdown 笔记并保存。"

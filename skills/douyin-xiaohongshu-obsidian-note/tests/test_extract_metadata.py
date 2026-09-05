@@ -17,7 +17,7 @@ import extract_metadata  # noqa: E402
 
 class ExtractMetadataTests(unittest.TestCase):
     def test_foreground_uses_argument_array_and_removes_sensitive_urls(self) -> None:
-        source_url = "https://example.invalid/video?id=中文&from=$env:SOURCE"
+        source_url = "https://www.douyin.com/video/7531234567890123456?from=$env:SOURCE"
         raw = {
             "id": "123",
             "title": "中文标题",
@@ -53,7 +53,7 @@ class ExtractMetadataTests(unittest.TestCase):
         source_url = "https://example.invalid/$env:SOURCE?a=1&b=2"
         output = Path(r"E:\含 空格\metadata.json")
         status = Path(r"E:\含 空格\metadata.status.json")
-        command = extract_metadata.background_command(source_url, output, status, r"C:\Tools\yt-dlp.exe")
+        command = extract_metadata.background_command(source_url, output, status, r"C:\Tools\yt-dlp.exe", Path(r"E:\含 空格"))
 
         self.assertIsInstance(command, list)
         self.assertEqual(command[0], sys.executable)
@@ -74,6 +74,7 @@ class ExtractMetadataTests(unittest.TestCase):
                     root / "metadata.status.json",
                     root / "metadata.log",
                     "yt-dlp.exe",
+                    root,
                 )
 
         command = popen.call_args.args[0]

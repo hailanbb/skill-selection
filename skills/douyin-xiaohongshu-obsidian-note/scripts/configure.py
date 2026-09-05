@@ -21,7 +21,7 @@ def status() -> int:
 
 
 def main() -> int:
-    parser = argparse.ArgumentParser(description="Configure Obsidian output paths for douyin-obsidian-note")
+    parser = argparse.ArgumentParser(description="Configure shared Obsidian output paths for Douyin/Xiaohongshu notes")
     parser.add_argument("--status", action="store_true", help="Print configuration status as JSON")
     parser.add_argument("--note-dir", help="Absolute directory for Markdown notes")
     parser.add_argument("--image-dir", help="Absolute directory for note images")
@@ -39,12 +39,6 @@ def main() -> int:
         raise SystemExit("Both paths must be absolute")
     note_dir = note_dir.resolve()
     image_dir = image_dir.resolve()
-    if args.create_dirs:
-        note_dir.mkdir(parents=True, exist_ok=True)
-        image_dir.mkdir(parents=True, exist_ok=True)
-    if not note_dir.is_dir() or not image_dir.is_dir():
-        raise SystemExit("Both directories must exist, or pass --create-dirs")
-
     explicit_root = Path(args.vault_root).expanduser().resolve() if args.vault_root else None
     vault_root = explicit_root or discover_vault_root(note_dir)
     if vault_root is None or not (vault_root / ".obsidian").is_dir():
@@ -54,6 +48,14 @@ def main() -> int:
         raise SystemExit("The image directory belongs to a different Obsidian vault")
     if not is_within(note_dir, vault_root) or not is_within(image_dir, vault_root):
         raise SystemExit("Both output directories must be inside the configured vault")
+    for output in (note_dir, image_dir):
+        if any(char in output.relative_to(vault_root).as_posix() for char in "[]|#\n\r"):
+            raise SystemExit("Output paths cannot contain Obsidian embed delimiters: []|# or newlines")
+    if args.create_dirs:
+        note_dir.mkdir(parents=True, exist_ok=True)
+        image_dir.mkdir(parents=True, exist_ok=True)
+    if not note_dir.is_dir() or not image_dir.is_dir():
+        raise SystemExit("Both directories must exist, or pass --create-dirs")
 
     config = {
         "version": CONFIG_VERSION,

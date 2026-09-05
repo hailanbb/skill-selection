@@ -9,10 +9,10 @@ from pathlib import Path
 from typing import Any
 
 
-CONFIG_ENV = "DOUYIN_OBSIDIAN_NOTE_CONFIG"
+CONFIG_ENV = "DOUYIN_XIAOHONGSHU_OBSIDIAN_NOTE_CONFIG"
 CONFIG_VERSION = 1
 FORBIDDEN_HEADINGS = re.compile(
-    r"^#{1,6}\s*(?:完整逐字稿|逐字稿|全文转录|完整转录|可迁移自检清单|实践清单|自测题|自检清单)\s*$",
+    r"^#{1,6}\s*[^\n]*(?:逐字稿|全文转录|完整转录|字幕全文|全文字幕|可迁移.*自检清单|实践清单|自测题|自检清单)[^\n]*$",
     re.MULTILINE | re.IGNORECASE,
 )
 
@@ -21,7 +21,7 @@ def config_path() -> Path:
     override = os.environ.get(CONFIG_ENV)
     if override:
         return Path(override).expanduser().resolve()
-    return (Path.home() / ".config" / "douyin-obsidian-note" / "config.json").resolve()
+    return (Path.home() / ".config" / "douyin-xiaohongshu-obsidian-note" / "config.json").resolve()
 
 
 def read_json(path: Path) -> dict[str, Any]:
@@ -86,7 +86,7 @@ def sanitize_title(value: str, max_length: int = 56) -> str:
             kept.append(char)
     result = "".join(kept).strip("._-")
     if not result:
-        result = "抖音图文笔记"
+        result = "短内容图文笔记"
     result = result[:max_length].rstrip("._-")
     reserved = {
         "CON", "PRN", "AUX", "NUL",

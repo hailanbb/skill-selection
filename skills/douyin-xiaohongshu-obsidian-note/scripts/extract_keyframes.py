@@ -2,12 +2,14 @@ from __future__ import annotations
 
 import argparse
 import json
+import math
 import shutil
 import subprocess
 import sys
 from pathlib import Path
 
-from common import local_timestamp, write_json
+from common import is_within, local_timestamp, write_json
+from run_workspace import validate_workspace
 
 
 def parse_time(value: str) -> float:
@@ -31,7 +33,8 @@ def probe_duration(video: Path, ffprobe: str) -> float:
         capture_output=True,
         text=True,
         encoding="utf-8",
-        errors="replace",
+        errors="strict",
+        timeout=60,
     )
     payload = json.loads(completed.stdout)
     return float(payload["format"]["duration"])
@@ -41,19 +44,25 @@ def main() -> int:
     parser = argparse.ArgumentParser(description="Extract review candidates or timestamped keyframes from a local video")
     parser.add_argument("--video", type=Path, required=True)
     parser.add_argument("--out-dir", type=Path, required=True)
+    parser.add_argument("--run-dir", type=Path, required=True, help="Marked workspace containing video and output")
     parser.add_argument("--auto-count", type=int, default=16)
     parser.add_argument("--at", action="append", type=parse_time, default=[])
     parser.add_argument("--ffmpeg", default=shutil.which("ffmpeg") or "ffmpeg")
     parser.add_argument("--ffprobe", default=shutil.which("ffprobe") or "ffprobe")
     args = parser.parse_args()
 
+    run_dir = args.run_dir.expanduser().resolve()
+    validate_workspace(run_dir)
     video = args.video.expanduser().resolve()
+    out_dir = args.out_dir.expanduser().resolve()
+    if not is_within(video, run_dir) or not is_within(out_dir, run_dir):
+        raise SystemExit("Video and frame output must stay inside the marked run workspace")
     if not video.is_file():
         raise SystemExit(f"Video not found: {video}")
     if args.auto_count < 1 or args.auto_count > 60:
         raise SystemExit("--auto-count must be between 1 and 60")
     duration = probe_duration(video, args.ffprobe)
-    if duration <= 0:
+    if not math.isfinite(duration) or duration <= 0:
         raise SystemExit("Video duration must be positive")
     if args.at:
         times = sorted({round(value, 3) for value in args.at if 0 <= value < duration})
@@ -63,7 +72,6 @@ def main() -> int:
     if not times:
         raise SystemExit("No valid timestamps to extract")
 
-    out_dir = args.out_dir.expanduser().resolve()
     out_dir.mkdir(parents=True, exist_ok=True)
     frames: list[dict[str, object]] = []
     for index, timestamp in enumerate(times, start=1):
@@ -72,10 +80,11 @@ def main() -> int:
         subprocess.run(
             [
                 args.ffmpeg, "-hide_banner", "-loglevel", "error", "-ss", f"{timestamp:.3f}",
-                "-i", str(video), "-frames:v", "1", "-vf", "scale=960:-2:force_original_aspect_ratio=decrease",
+                "-i", str(video), "-frames:v", "1", "-vf", "scale='min(1920,iw)':-2",
                 "-q:v", "2", "-y", str(output),
             ],
             check=True,
+            timeout=120,
         )
         frames.append({"index": index, "timestamp_seconds": timestamp, "path": str(output)})
     manifest = {"video": str(video), "duration_seconds": round(duration, 3), "created_at": local_timestamp(), "frames": frames}
@@ -88,6 +97,6 @@ def main() -> int:
 if __name__ == "__main__":
     try:
         raise SystemExit(main())
-    except (FileNotFoundError, OSError, ValueError, KeyError, subprocess.CalledProcessError) as exc:
+    except (OSError, ValueError, KeyError, subprocess.SubprocessError) as exc:
         print(str(exc), file=sys.stderr)
         raise SystemExit(2)
