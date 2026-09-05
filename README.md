@@ -21,14 +21,8 @@ skill-selection/
     │   ├── README.md           # 本技能详细安装配置与可选 mcp 引导手册
     │   └── scripts/
     │       └── save_to_obsidian.py # 核心驱动脚本
-    ├── douyin-obsidian-note/   # 抖音视频转 Obsidian 图文学习笔记技能
-    │   ├── SKILL.md            # 取证、关键帧筛选、发布与清理工作流
-    │   ├── README.md           # 详细安装、首次配置与使用指南
-    │   ├── agents/             # Agent 展示与调用元数据
-    │   ├── references/         # 笔记格式、取证与关键帧选择规范
-    │   └── scripts/            # 配置、抽帧、发布、验证与安全清理脚本
-    ├── xiaohongshu-obsidian-note/ # 小红书单条图文/视频链接转 Obsidian 笔记
-    │   ├── SKILL.md            # 原帖取证、图文/视频分析、保存与清理
+    ├── douyin-xiaohongshu-obsidian-note/ # 抖音/小红书统一转 Obsidian 笔记
+    │   ├── SKILL.md            # 双平台分流、取证、保存与清理
     │   ├── README.md           # 详细安装、首次配置与使用指南
     │   ├── agents/             # 可选客户端展示元数据
     │   ├── references/         # 浏览器流程、笔记格式与输入契约
@@ -62,8 +56,7 @@ skill-selection/
 | :--- | :--- | :--- | :--- |
 | **obsidian-整理** | 基于 AI 语义深度解析自动提取 Obsidian 笔记 Frontmatter 元数据，根据自定义分类规范自动对笔记进行一级和二级归档，保留原件备份，支持不符合分类标准之文件的拦截与提示。 | 整理笔记、整理收件箱、归档 Obsidian 笔记或进行分类整理。 | [👉 详细配置与使用指南](skills/obsidian-整理/README.md) |
 | **链接转存obs** | 智能网页直抓、图片本地化防失效、广告/软文深度语义净化、自动中文归类到待阅收件箱，并自动同步 enquire-mcp 检索缓存。 | 提供 URL 链接并要求转存到 Obsidian 库。 | [👉 详细配置与使用指南](skills/链接转存obs/README.md) |
-| **抖音转笔记** | 将单条抖音视频、分享文本或本地视频提炼成 Obsidian Markdown 学习笔记，智能选择并本地保存关键画面，自动生成属性、哈希图片名和库内相对链接，完成后安全清理视频、音频、转写及候选帧。 | 抖音转图文笔记、视频保存到 Obsidian、提炼视频知识、制作带关键截图的 Markdown 笔记。 | [👉 详细配置与使用指南](skills/douyin-obsidian-note/README.md) |
-| **小红书转笔记** | 将用户发送的小红书单条链接或分享文本提炼为 Obsidian Markdown 学习笔记，支持图文、多图、LIVE 和视频；保存真实高清图片与关键帧，自动生成属性、智能命名、按原帖去重并安全清理临时素材。不采集收藏夹。 | 小红书转图文笔记、小红书链接保存到 Obsidian、分析图文教程或视频知识。 | [👉 详细配置与使用指南](skills/xiaohongshu-obsidian-note/README.md) |
+| **抖音/小红书转笔记** | 一个技能识别抖音单条视频与小红书图文、LIVE、视频链接，提炼为带本地真实图片的 Obsidian Markdown 学习笔记；共用首次路径配置，按平台与来源去重，完成或失败后安全清理视频、音频、转写和候选帧。不采集主页或收藏夹。 | 抖音或小红书转图文笔记、短视频知识提炼、单条链接保存到 Obsidian。 | [👉 详细配置与使用指南](skills/douyin-xiaohongshu-obsidian-note/README.md) |
 | **neat-freak** | 自动进行会话收尾整理与脑区物理清理。审计 Windows 路径 clicklinks 规范、WPS 表格排版及 Web UI 设计美学，防止文档规则与代码发生漂移。 | 会话结束收尾、要求同步文档、整理项目、或进行规范审计体检。 | [👉 详细配置与使用指南](skills/neat-freak/README.md) |
 | **销售日报整理至钉钉** | 自动收集、整理 and 优化销售团队日报，支持环境自检与引导、请假/离职成员动态配置、人名高亮色彩与格式自定义，并在归档完成后自动将日报追加到本地“日报汇总.md”文件，最后彻底清理临时文件。 | 提交销售人员日报、要求整理日报、查看今日进度或进行配置修改。 | [👉 详细配置与使用指南](skills/sales-daily-report-skill-zh-v1/README.md) |
 | **香港活动客户均衡分配** | 按销售小组名单人数、客户类型权重、加权工作量、步行距离与地理聚集度，相对均衡地分配活动附近客户；诊所类客户按 1.5 倍工作量计权，并在确认后生成四页签 Excel。 | 香港公益义诊活动客户分工、销售小组扫街分组、活动附近客户路线规划。 | [👉 详细配置与使用指南](skills/hk-event-customer-allocation/README.md) |
@@ -80,7 +73,7 @@ skill-selection/
    * **全局技能路径**：`%USERPROFILE%/.gemini/config/skills/` (对于 Gemini/Antigravity 客户端)
    * **项目级路径**：您当前开发项目根目录下的 `.agents/skills/` 目录中。
 2. **首次运行引导 (Onboarding)**：
-   各技能会按各自说明检查依赖与首次路径配置；是否需要安装依赖、是否能自动安装，以技能文档及当前客户端权限为准。小红书转笔记不会自动更改全局环境，会先询问笔记与图片目录并保存独立的本机配置。
+   各技能会按各自说明检查依赖与首次路径配置；是否需要安装依赖、是否能自动安装，以技能文档及当前客户端权限为准。抖音/小红书统一转笔记不会自动更改全局环境，会先询问笔记与图片目录并保存独立的本机配置。
 
 ---
 

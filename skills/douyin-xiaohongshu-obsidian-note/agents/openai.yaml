@@ -1,0 +1,4 @@
+interface:
+  display_name: "抖音/小红书转笔记"
+  short_description: "将抖音视频或小红书图文/视频提炼为带本地图片的 Obsidian 笔记"
+  default_prompt: "使用 $douyin-xiaohongshu-obsidian-note 将我提供的抖音或小红书链接整理为带真实关键图片的 Obsidian Markdown 学习笔记。"
