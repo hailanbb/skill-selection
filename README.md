@@ -1,6 +1,6 @@
 # Skill 精选 (AI Agent Skills Selection)
 
-个人及团队 AI Agent 核心 Skill 技能与 MCP 服务精选库。包含开箱即用、高度确定性的自动化归档、数据提取与知识管理工具。
+个人及团队 AI Agent 核心 Skill 技能、MCP 服务与 Agent 配置精选库。包含自动化归档、数据提取、知识管理工具，以及按 Agent 区分的行为规范。
 
 ---
 
@@ -8,8 +8,12 @@
 
 ```text
 skill-selection/
-├── README.md                   # 全局技能索引概览（本文件）
+├── README.md                   # 技能与 Agent 配置索引（本文件）
 ├── .gitignore
+├── agent-configs/              # Agent 配置与行为规范（独立于 Skills）
+│   └── codex/                  # OpenAI Codex 专用
+│       ├── AGENTS.md           # 全局个人行为规范 v1.2
+│       └── README.md           # 安装、适用范围、验证与回滚说明
 └── skills/                     # 技能集合目录
     ├── obsidian-整理/           # Obsidian 笔记库智能整理与自动归档技能
     │   ├── SKILL.md            # AI Agent 整理加工核心指令
@@ -50,6 +54,18 @@ skill-selection/
 
 ---
 
+## 🧭 Agent 配置与行为规范 (Agent Configuration)
+
+本类别收录按 Agent 区分的持久行为规范与配置模板，独立于下方的「精选技能索引」。请按适用 Agent 的说明安装。
+
+| 配置名称 | 适用 Agent | 用途 | 文件与说明 |
+| :--- | :--- | :--- | :--- |
+| **Codex 全局 AGENTS.md · v1.2** | **OpenAI Codex 专用** | 中文协作、自主执行、批准边界、任务完成与 Windows/Unicode 可靠性规范。 | [规则文件](agent-configs/codex/AGENTS.md) · [安装与使用说明](agent-configs/codex/README.md) |
+
+这是个人配置模板，不是官方预设；其他 Agent 需要单独适配。Codex 安装请使用上方专用说明，不沿用下面的技能拷贝路径。
+
+---
+
 ## 🛠️ 精选技能索引 (Skills Directory)
 
 | 技能名称 | 核心功能 | 触发场景 | 详细说明 |
@@ -66,7 +82,9 @@ skill-selection/
 
 ---
 
-## ⚙️ 全局安装与使用说明
+## ⚙️ 技能安装与使用说明
+
+以下仅适用于 Skills；Codex 全局规则请查看 [Codex 专用安装说明](agent-configs/codex/README.md)。
 
 1. **技能拷贝**：
    从本仓库的 `skills/` 目录下将您需要的技能文件夹，复制到您 AI 客户端的全局配置目录中：
