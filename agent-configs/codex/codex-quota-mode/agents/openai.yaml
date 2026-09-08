@@ -1,0 +1,6 @@
+interface:
+  display_name: "Codex 全局省额度开关"
+  short_description: "一键切换 Astra 高推理与 Luna 分工，保留原设置并可安全恢复"
+  default_prompt: "使用 $codex-quota-mode 查询省额度模式，或按我的指令全局开启/关闭。"
+policy:
+  allow_implicit_invocation: true
