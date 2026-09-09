@@ -1,0 +1,4 @@
+interface:
+  display_name: "收藏 GitHub 工具"
+  short_description: "将 GitHub 工具整理为中文指南、分类索引和可追溯源码快照"
+  default_prompt: "用 $github-tools-collect 将这个 GitHub 工具收藏到 hailanbb/tools。"
