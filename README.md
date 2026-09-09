@@ -16,6 +16,11 @@ skill-selection/
 │       ├── README.md           # 安装、适用范围、验证与回滚说明
 │       └── codex-quota-mode/    # Astra high + Luna medium 全局省额度开关
 └── skills/                     # 技能集合目录
+    ├── github-tools-collect/    # 通用 Agent 的 GitHub 软件收藏技能
+    │   ├── SKILL.md            # 与客户端、账号无关的工作流
+    │   ├── README.md           # 安装、配置与使用指南
+    │   ├── references/         # 收录规范与数据契约
+    │   └── scripts/            # 索引生成与源码摘要校验
     ├── obsidian-整理/           # Obsidian 笔记库智能整理与自动归档技能
     │   ├── SKILL.md            # AI Agent 整理加工核心指令
     │   ├── README.md           # 首次运行引导、分层工作流说明
@@ -78,6 +83,7 @@ skill-selection/
 | **neat-freak** | 自动进行会话收尾整理与脑区物理清理。审计 Windows 路径 clicklinks 规范、WPS 表格排版及 Web UI 设计美学，防止文档规则与代码发生漂移。 | 会话结束收尾、要求同步文档、整理项目、或进行规范审计体检。 | [👉 详细配置与使用指南](skills/neat-freak/README.md) |
 | **销售日报整理至钉钉** | 自动收集、整理 and 优化销售团队日报，支持环境自检与引导、请假/离职成员动态配置、人名高亮色彩与格式自定义，并在归档完成后自动将日报追加到本地“日报汇总.md”文件，最后彻底清理临时文件。 | 提交销售人员日报、要求整理日报、查看今日进度或进行配置修改。 | [👉 详细配置与使用指南](skills/sales-daily-report-skill-zh-v1/README.md) |
 | **香港活动客户均衡分配** | 按销售小组名单人数、客户类型权重、加权工作量、步行距离与地理聚集度，相对均衡地分配活动附近客户；诊所类客户按 1.5 倍工作量计权，并在确认后生成四页签 Excel。 | 香港公益义诊活动客户分工、销售小组扫街分组、活动附近客户路线规划。 | [👉 详细配置与使用指南](skills/hk-event-customer-allocation/README.md) |
+| **GitHub 工具收藏（通用 Agent）** | 将普通软件与实用工具收藏到用户指定仓库，生成中文指南、分类索引和可追溯快照；自带规范与校验脚本，不绑定账号或客户端。 | 收藏 GitHub 软件、更新工具快照、检查收藏库；支持 CLI、API 或连接器。 | [👉 安装与使用指南](skills/github-tools-collect/README.md) |
 | **转存至github** | 将网络上第三方工具、Skill 或 MCP 的源码及说明，一键克隆、重构并整合保存到个人的 GitHub 统一工具库中。支持源链接中文自识别与智能翻译分流。 | 用户发送需要克隆、备份或收藏的第三方 AI 工具链接并要求保存到 GitHub 时。 | [👉 详细配置与使用指南](skills/转存至github/README.md) |
 
 *(未来新增的 Skill 或 MCP 服务将持续罗列于上表中，并对应放置于 `skills/` 子目录下。)*
