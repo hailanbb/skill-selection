@@ -16,7 +16,7 @@ skill-selection/
 │       ├── README.md           # 安装、适用范围、验证与回滚说明
 │       └── codex-quota-mode/    # Astra high + Luna medium 全局省额度开关
 └── skills/                     # 技能集合目录
-    ├── obsidian-task-memory/   # 跨平台任务交接、经验沉淀与只读恢复
+    ├── task-memory-to-obsdian/ # Task Memory To Obsdian：智能全自动任务归档
     ├── github-tools-collect/    # 通用 Agent 的 GitHub 软件收藏技能
     │   ├── SKILL.md            # 与客户端、账号无关的工作流
     │   ├── README.md           # 安装、配置与使用指南
@@ -78,7 +78,7 @@ skill-selection/
 
 | 技能名称 | 核心功能 | 触发场景 | 详细说明 |
 | :--- | :--- | :--- | :--- |
-| **任务记忆与经验沉淀（跨平台）** | 将选定任务或对话保存为交接快照，按需提取决策、Prompt、代码与避坑经验；只新增笔记，支持只读恢复和防覆盖校验。 | 归档前保存任务、沉淀经验、恢复上次上下文。 | [安装与路径设计](skills/obsidian-task-memory/README.md) |
+| **Task Memory To Obsdian** | 首次询问并记住 Obsidian 归档路径，后续智能全自动提炼任务上下文、决策、Prompt、代码与避坑经验，完成分类、查重、新增保存及验证；支持通用 Agent 和只读恢复，不改已有笔记。 | 帮我归档到obsdian；恢复任务上下文、查找历史经验。 | [👉 详细配置与使用指南](skills/task-memory-to-obsdian/README.md) |
 | **obsidian-整理** | 基于 AI 语义深度解析自动提取 Obsidian 笔记 Frontmatter 元数据，根据自定义分类规范自动对笔记进行一级和二级归档，保留原件备份，支持不符合分类标准之文件的拦截与提示。 | 整理笔记、整理收件箱、归档 Obsidian 笔记或进行分类整理。 | [👉 详细配置与使用指南](skills/obsidian-整理/README.md) |
 | **链接转存obs** | 智能网页直抓、图片本地化防失效、广告/软文深度语义净化、自动中文归类到待阅收件箱，并自动同步 enquire-mcp 检索缓存。 | 提供 URL 链接并要求转存到 Obsidian 库。 | [👉 详细配置与使用指南](skills/链接转存obs/README.md) |
 | **抖音/小红书转笔记** | 一个技能识别抖音单条视频与小红书图文、LIVE、视频链接，提炼为带本地真实图片的 Obsidian Markdown 学习笔记；共用首次路径配置，按平台与来源去重，完成或失败后安全清理视频、音频、转写和候选帧。不采集主页或收藏夹。 | 抖音或小红书转图文笔记、短视频知识提炼、单条链接保存到 Obsidian。 | [👉 详细配置与使用指南](skills/douyin-xiaohongshu-obsidian-note/README.md) |

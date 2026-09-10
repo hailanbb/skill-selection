@@ -211,15 +211,32 @@ def run(manifest, apply=False, expected=None):
     return result
 
 
+def resolve_manifest(manifest, config_file=None):
+    if isinstance(manifest, dict) and set(manifest) == {"notes"}:
+        from configure import load
+        config = load(config_file)
+        return {"vault_root": config["vault_root"], "archive_root": config["archive_root"], "notes": manifest["notes"]}
+    return manifest
+
+
+def run_auto(manifest, config_file=None):
+    manifest = resolve_manifest(manifest, config_file)
+    digest, _, _ = plan(manifest)
+    return run(manifest, apply=True, expected=digest)
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("manifest")
-    parser.add_argument("--apply", action="store_true")
+    mode = parser.add_mutually_exclusive_group()
+    mode.add_argument("--apply", action="store_true")
+    mode.add_argument("--auto", action="store_true", help="Agent-authorized automatic preflight, create and verify")
+    parser.add_argument("--config")
     parser.add_argument("--expect")
     args = parser.parse_args()
     try:
-        manifest = json.loads(Path(args.manifest).read_text(encoding="utf-8"))
-        result = run(manifest, args.apply, args.expect)
+        manifest = resolve_manifest(json.loads(Path(args.manifest).read_text(encoding="utf-8")), args.config)
+        result = run_auto(manifest) if args.auto else run(manifest, args.apply, args.expect)
     except (OSError, ValueError, TypeError, yaml.YAMLError) as error:
         result = {"error": str(error), "verified": False}
     print(json.dumps(result, ensure_ascii=False, indent=2))
