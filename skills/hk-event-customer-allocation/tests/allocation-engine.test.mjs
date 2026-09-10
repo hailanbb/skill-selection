@@ -49,3 +49,23 @@ test("缺少步行距離時停止，不以直線距離冒充", () => {
   delete input.customers[0].distance_km;
   assert.throws(() => allocate(input), /步行距離/u);
 });
+
+test("超過 4 KM 的客戶不進入小組並列入超距離清單", () => {
+  const input = sampleInput();
+  input.customers[0].distance_km = 4.01;
+  const plan = allocate(input);
+  assert.equal(plan.assignments.length, 23);
+  assert.equal(plan.far_customers.length, 1);
+  assert.equal(plan.far_customers[0].id, "1");
+  assert.ok(plan.assignments.every((customer) => customer.distance_km <= 4));
+  assert.match(plan.far_customers[0].exclusion_reason, /超過 4\.00 KM/u);
+});
+
+test("可用自訂距離上限取代預設 4 KM", () => {
+  const input = sampleInput();
+  input.allocation_distance_limit_km = 1;
+  const plan = allocate(input);
+  assert.ok(plan.assignments.every((customer) => customer.distance_km <= 1));
+  assert.ok(plan.far_customers.every((customer) => customer.distance_km > 1));
+  assert.equal(plan.allocation_distance_limit_km, 1);
+});

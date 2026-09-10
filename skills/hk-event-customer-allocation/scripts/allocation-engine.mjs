@@ -89,10 +89,16 @@ function validateInput(raw) {
     };
   });
 
+  const allocationDistanceLimitKm = Number(raw.allocation_distance_limit_km ?? 4);
+  if (!Number.isFinite(allocationDistanceLimitKm) || allocationDistanceLimitKm <= 0) {
+    throw new Error("分配步行距離上限必須是大於零的公里數。 ");
+  }
+
   return {
     venue,
     teams,
     customers,
+    allocation_distance_limit_km: allocationDistanceLimitKm,
     walking_matrix: raw.walking_matrix ?? {},
     issues: Array.isArray(raw.issues) ? raw.issues : [],
   };
@@ -226,6 +232,16 @@ function buildRoute(input, customers) {
 
 export function allocate(raw) {
   const input = validateInput(raw);
+  const farCustomers = input.customers
+    .filter((customer) => customer.distance_km > input.allocation_distance_limit_km)
+    .map((customer) => ({
+      ...customer,
+      exclusion_reason: `實際步行距離超過 ${input.allocation_distance_limit_km.toFixed(2)} KM，不分配予銷售小組`,
+    }));
+  input.customers = input.customers.filter((customer) => customer.distance_km <= input.allocation_distance_limit_km);
+  if (input.customers.length === 0) {
+    throw new Error(`沒有步行距離不超過 ${input.allocation_distance_limit_km.toFixed(2)} KM 的可分配客戶。`);
+  }
   const totalHeadcount = input.teams.reduce((sum, team) => sum + team.members.length, 0);
   const totalWorkload = input.customers.reduce((sum, customer) => sum + customer.weight, 0);
   const totalsByType = typeCounts(input.customers);
@@ -295,6 +311,7 @@ export function allocate(raw) {
       clinic_weight: 1.5,
       other_weight: 1.0,
       distance_mode: "步行距離",
+      allocation_distance_limit_km: input.allocation_distance_limit_km,
       score_weights: { workload: 0.45, count: 0.10, geography: 0.25, type: 0.20 },
     },
     totals: {
@@ -307,6 +324,8 @@ export function allocate(raw) {
     },
     groups: summaryGroups,
     assignments,
+    allocation_distance_limit_km: input.allocation_distance_limit_km,
+    far_customers: farCustomers,
     issues: input.issues,
     warning: "步行路線可能缺少部分行人道或步行路徑，外勤前請按現場情況核實。",
   };
