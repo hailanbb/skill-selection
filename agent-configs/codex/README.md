@@ -59,4 +59,4 @@ Windows/中文环境是本版本重点；macOS/Linux 上的通用协作规则可
 
 ## 可选：全局省额度开关
 
-需要在 Astra 高推理与 Luna 执行分工之间启用可恢复的全局策略时，使用 [Codex 全局省额度开关](codex-quota-mode/README.md)。它是独立 Skill，支持“开启省额度模式”“关闭省额度模式”和“查询省额度模式”。关闭恢复开启前配置，不要求替换这份 AGENTS.md 模板。
+需要在 Astra/medium 与 Luna/medium 执行分工之间启用可恢复的全局策略时，使用 [Codex 全局省额度开关 v1.1](codex-quota-mode/README.md)。它是独立 Skill，支持“开启省额度模式”“关闭省额度模式”和“查询省额度模式”。关闭恢复开启前配置，不要求替换这份 AGENTS.md 模板。用户也可通过当前受支持的界面临时调整会话模型或推理强度；Skill 不自动升降强度，也不宣称能热切换当前轮。

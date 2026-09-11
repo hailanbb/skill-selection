@@ -15,7 +15,7 @@ class ModeTests(unittest.TestCase):
         self.home = Path(self.temp.name)
         self.cfg = self.home / 'config.toml'
         self.ag = self.home / 'AGENTS.md'
-        self.cfg.write_bytes(b'\xef\xbb\xbf' + ('# 中文配置\r\nmodel = "gpt-6-astra"\r\nmodel_reasoning_effort = "medium"\r\nsandbox_mode = "workspace-write"\r\n[unrelated]\r\nname = "用户保留"\r\n').encode('utf-8'))
+        self.cfg.write_bytes(b'\xef\xbb\xbf' + ('# 中文配置\r\nmodel = "gpt-6-astra"\r\nmodel_reasoning_effort = "high"\r\nsandbox_mode = "workspace-write"\r\n[unrelated]\r\nname = "用户保留"\r\n').encode('utf-8'))
         self.ag.write_bytes(b'\xef\xbb\xbf' + '# 中文规则\r\n保留原文\n'.encode('utf-8'))
         self.controller = q.Controller(self.home)
         self.before = self.cfg.read_bytes(), self.ag.read_bytes()
@@ -27,6 +27,7 @@ class ModeTests(unittest.TestCase):
         status = self.controller.switch('on')
         self.assertTrue(status['changed'])
         self.assertEqual(status['global_defaults'], q.KEYS)
+        self.assertEqual(status['global_defaults']['model_reasoning_effort'], 'medium')
         self.assertFalse(status['runtime_verified'])
         self.assertEqual(q.document(self.cfg.read_bytes())['sandbox_mode'], 'workspace-write')
         self.assertEqual(q.document(self.cfg.read_bytes())['unrelated']['name'], '用户保留')
@@ -53,7 +54,7 @@ class ModeTests(unittest.TestCase):
         self.ag.write_bytes(self.ag.read_bytes() + '\n追加用户规则'.encode('utf-8'))
         self.controller.switch('off')
         doc = q.document(self.cfg.read_bytes())
-        self.assertEqual(doc['model_reasoning_effort'], 'medium')
+        self.assertEqual(doc['model_reasoning_effort'], 'high')
         self.assertEqual(doc['unrelated']['name'], '用户新增改动')
         self.assertFalse(doc['agents']['interrupt_message'])
         self.assertNotIn('default_subagent_model', doc['agents'])
@@ -61,7 +62,7 @@ class ModeTests(unittest.TestCase):
 
     def test_managed_key_conflict_is_non_destructive(self):
         self.controller.switch('on')
-        self.cfg.write_bytes(self.cfg.read_bytes().replace(b'"high"', b'"xhigh"'))
+        self.cfg.write_bytes(q.patch_config(self.cfg.read_bytes(), {'model_reasoning_effort': 'xhigh'}))
         current = self.cfg.read_bytes(), self.ag.read_bytes()
         with self.assertRaises(q.ModeError):
             self.controller.switch('off')

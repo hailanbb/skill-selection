@@ -1,6 +1,6 @@
 ## Codex 省额度模式（开启）
 
-- 用户已启用全局省额度调度：目标主模型 gpt-6-astra / high，子模型 gpt-5.6-luna / medium。文件默认不证明当前会话模型；UI、项目及上层规则仍优先。
+- 用户已启用全局省额度调度：目标主模型 gpt-6-astra / medium，子模型 gpt-5.6-luna / medium。文件默认不证明当前会话模型；UI、项目及上层规则仍优先。
 - 本模式明确要求在有独立子任务、能抵消调度成本且平台允许时使用 Luna；小任务和强耦合任务直接完成，不机械运行 explorer→worker→tester→reviewer 五阶段。
 - 使用 collaboration.spawn_agent 时显式设置 model="gpt-5.6-luna"、reasoning_effort="medium"、fork_turns="none"；不复制整段历史。最多 2 个并发子 Agent，不超过平台上限；委派说明必须禁止子 Agent 递归委派。
 - 主 Agent 承担架构、API/数据/鉴权决定及最终验收；为子任务限定输入、文件所有权、权限和完成判据，自己同步推进独立工作。需要依赖的步骤串行，不让多个 Agent 同时修改同一文件。

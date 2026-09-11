@@ -14,7 +14,7 @@ skill-selection/
 │   └── codex/                  # OpenAI Codex 专用
 │       ├── AGENTS.md           # 全局个人行为规范 v1.2
 │       ├── README.md           # 安装、适用范围、验证与回滚说明
-│       └── codex-quota-mode/    # Astra high + Luna medium 全局省额度开关
+│       └── codex-quota-mode/    # Astra medium + Luna medium 全局省额度开关
 └── skills/                     # 技能集合目录
     ├── task-memory-to-obsdian/ # Task Memory To Obsdian：智能全自动任务归档
     ├── github-tools-collect/    # 通用 Agent 的 GitHub 软件收藏技能
@@ -68,7 +68,7 @@ skill-selection/
 | 配置名称 | 适用 Agent | 用途 | 文件与说明 |
 | :--- | :--- | :--- | :--- |
 | **Codex 全局 AGENTS.md · v1.2** | **OpenAI Codex 专用** | 中文协作、自主执行、批准边界、任务完成与 Windows/Unicode 可靠性规范。 | [规则文件](agent-configs/codex/AGENTS.md) · [安装与使用说明](agent-configs/codex/README.md) |
-| **Codex 全局省额度开关 · v1.0** | **OpenAI Codex 专用 Skill** | 开启 Astra/high + Luna/medium 按需调度；关闭恢复原配置，保留其他改动。 | [安装与开关说明](agent-configs/codex/codex-quota-mode/README.md) · [技能指令](agent-configs/codex/codex-quota-mode/SKILL.md) |
+| **Codex 全局省额度开关 · v1.1** | **OpenAI Codex 专用 Skill** | 开启 Astra/medium + Luna/medium 按需调度；关闭恢复原配置，保留其他改动。 | [安装与开关说明](agent-configs/codex/codex-quota-mode/README.md) · [技能指令](agent-configs/codex/codex-quota-mode/SKILL.md) |
 
 这是个人配置模板，不是官方预设；其他 Agent 需要单独适配。Codex 安装请使用上方专用说明，不沿用下面的技能拷贝路径。
 

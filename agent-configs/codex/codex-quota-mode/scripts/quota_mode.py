@@ -19,7 +19,7 @@ import tomlkit
 BEGIN = '<!-- codex-quota-mode:v1:begin -->'
 END = '<!-- codex-quota-mode:v1:end -->'
 KEYS = {
-    'model': 'gpt-6-astra', 'model_reasoning_effort': 'high',
+    'model': 'gpt-6-astra', 'model_reasoning_effort': 'medium',
     'agents.enabled': True, 'agents.max_concurrent_threads_per_session': 2,
     'agents.default_subagent_model': 'gpt-5.6-luna',
     'agents.default_subagent_reasoning_effort': 'medium',
