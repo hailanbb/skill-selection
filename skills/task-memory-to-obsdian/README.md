@@ -1,4 +1,4 @@
-# Task Memory To Obsdian
+# 经验归档到obsdian
 
 对 AI 说 **“帮我归档到obsdian”**，把当前任务中值得保留的上下文与经验，自动保存到你的 Obsidian。支持通用 Agent，按用户指定保留名称中的 `Obsdian` 拼写。
 
