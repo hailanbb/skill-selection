@@ -39,6 +39,12 @@ def existing_notes(note_dir: Path) -> dict[tuple[str, str], Path]:
     return result
 
 
+def duplicate_result(source: dict[str, str], existing: Path) -> dict[str, Any]:
+    return {"status": "skipped_existing", "stop_task": True, "note": str(existing),
+            "note_id": source["note_id"], "platform": source["platform"],
+            "message": "检测到重复链接：该内容之前已处理，重复存在，已停止本次任务。"}
+
+
 def safe_run_file(value: str, run_dir: Path) -> Path:
     path = Path(value)
     path = (path if path.is_absolute() else run_dir / path).resolve()
@@ -157,7 +163,7 @@ def publish(manifest: Path, draft: Path, run_dir: Path, *, allow_partial: bool =
     manifest = safe_run_file(str(manifest.resolve()), run_dir)
     draft = safe_run_file(str(draft.resolve()), run_dir)
     meta = read_json(manifest)
-    source, limitations = validate_evidence(meta, allow_partial)
+    source = canonical_source(meta.get("source_url", ""))
     config = load_config()
     vault = Path(config["vault_root"]).resolve()
     note_dir, image_dir = Path(config["note_dir"]).resolve(), Path(config["image_dir"]).resolve()
@@ -168,6 +174,10 @@ def publish(manifest: Path, draft: Path, run_dir: Path, *, allow_partial: bool =
             raise ValueError("Configured output directory is missing; reconfigure first")
         if any(char in output.relative_to(vault).as_posix() for char in "[]|#\n\r"):
             raise ValueError("Output path contains unsupported Obsidian embed delimiters")
+    existing = existing_notes(vault).get((source["platform"], source["note_id"]))
+    if existing:
+        return duplicate_result(source, existing)
+    source, limitations = validate_evidence(meta, allow_partial)
     if frame_width not in {0, 640, 1280, 1920}:
         raise ValueError("frame_width must be 0, 640, 1280, or 1920")
     body = draft.read_text(encoding="utf-8-sig").strip()
@@ -192,9 +202,9 @@ def publish(manifest: Path, draft: Path, run_dir: Path, *, allow_partial: bool =
     with lock_path.open("x", encoding="utf-8", newline="\n") as lock:
         lock.write(json.dumps({"pid": os.getpid(), "created_at": local_timestamp()}))
     try:
-        existing = existing_notes(note_dir).get((source["platform"], source["note_id"]))
+        existing = existing_notes(vault).get((source["platform"], source["note_id"]))
         if existing:
-            return {"status": "skipped_existing", "note": str(existing), "note_id": source["note_id"]}
+            return duplicate_result(source, existing)
         title = sanitize_title(meta["title"])
         note_path = note_dir / f"{title}.md"
         if note_path.exists():
@@ -274,7 +284,7 @@ def main() -> int:
     result = publish(args.manifest, args.draft, args.run_dir,
                      allow_partial=args.allow_partial, frame_width=args.frame_width)
     print(json.dumps(result, ensure_ascii=False, indent=2))
-    return 0
+    return 3 if result["status"] == "skipped_existing" else 0
 
 
 if __name__ == "__main__":

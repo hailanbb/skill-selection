@@ -72,7 +72,7 @@ def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--text", help="Share text (prefer --stdin for signed/private links)")
     parser.add_argument("--stdin", action="store_true", help="Read UTF-8 share text from standard input")
-    parser.add_argument("--check-existing", action="store_true", help="Check the configured note directory by platform and source ID")
+    parser.add_argument("--check-existing", action="store_true", help="Check the configured vault by platform and source ID")
     args = parser.parse_args()
     if args.stdin == (args.text is not None):
         parser.error("Choose exactly one of --text or --stdin")
@@ -82,7 +82,7 @@ def main() -> int:
         from pathlib import Path
         from common import load_config
         from publish_note import existing_notes
-        saved = existing_notes(Path(load_config()["note_dir"]).resolve())
+        saved = existing_notes(Path(load_config()["vault_root"]).resolve())
         for result in results:
             if result["kind"] == "note":
                 key = (result["platform"], result["note_id"])
@@ -90,8 +90,24 @@ def main() -> int:
                 result["status"] = "already_saved" if path else "not_saved"
                 if path:
                     result["note"] = str(path)
-    print(json.dumps({"items": results, "count": len(results)}, ensure_ascii=False))
-    return 0 if results and all(r["kind"] != "unsupported" for r in results) else 2
+    output = {"items": results, "count": len(results)}
+    code = 0 if results and all(r["kind"] != "unsupported" for r in results) else 2
+    if args.check_existing:
+        duplicates = [r for r in results if r.get("status") == "already_saved"]
+        if duplicates:
+            code = 3
+            output.update(status="duplicate", stop_task=True,
+                          message="检测到重复链接：该内容之前已处理，重复存在，已停止本次任务。",
+                          existing_notes=[r["note"] for r in duplicates])
+        elif any(r["kind"] == "short" for r in results):
+            code = 4
+            output.update(status="needs_resolution", stop_task=True,
+                          message="短链接尚未完成查重；请解析最终地址后重新检查，暂不处理内容。")
+        else:
+            code = 0 if results and all(r["kind"] == "note" for r in results) else 2
+            output.update(status="ready" if code == 0 else "invalid", stop_task=code != 0)
+    print(json.dumps(output, ensure_ascii=False))
+    return code
 
 
 if __name__ == "__main__":

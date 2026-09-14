@@ -93,8 +93,10 @@ python -X utf8 scripts/run_workspace.py cleanup --path "RUN"
 ## 4. 状态、失败与重复
 
 - `published`：新笔记写入，返回路径、图片列表与限制。再次验证、看最终图片后交付。
-- `skipped_existing`：同一原帖 ID 已在配置的笔记目录（含子目录）中归档；不会更新旧文。签名不同、标题不同也不重复。若用户已把旧文移出该目录，去重不覆盖整个库；可在明确授权后把配置笔记目录设为共同上层，或先查库。
-- 非零退出：不得宣称成功。常见原因是没有配置、漏图、无效图片、链接非笔记、文件系统权限或缺 Pillow。
+- 创建工作区前用 UTF-8 stdin 执行 `sources.py --stdin --check-existing`：以当前配置的整个库内 Markdown 的 `url` 属性查重。退出码 0 且 `status: ready` / `stop_task: false` 才可继续；退出码 3、`status: duplicate` / `stop_task: true` 表示已有链接，`items` 中标注 `already_saved`，并返回中文 `message` 和 `existing_notes` 路径。提示重复并停止整批任务。
+- 退出码 4、`needs_resolution` 表示短链接待解析；仅解析最终地址，然后对整批具体链接重新查重，不得先下载或分析。查重读取失败不得当成未重复。
+- `skipped_existing`：发布前或持锁后发现同平台原帖 ID 已在库内归档，返回 `stop_task: true`、中文 `message`、现有 `note` 路径，CLI 退出码 3；提示重复并停止，不更新旧文。参数、标题不同或笔记移到库内其他目录也能识别。已删除、移出当前库或无可识别 `url` 属性的历史笔记不在此检测范围。
+- 其他非零退出：不得宣称成功。常见原因是没有配置、漏图、无效图片、链接非笔记、文件系统权限或缺 Pillow。
 - 独占锁位于库根 `.douyin-xiaohongshu-obsidian-note.publish.lock`。有锁时不启动第二个发布。异常断电可能留锁：核对锁内 PID、启动时间与相关进程并确认已无发布运行后才能清理**该锁文件**，不要自动按年龄删锁。
 - 先写临时 MD 并读回，再用硬链接原子提交、拒绝覆盖；要求 NTFS/APFS/ext4 等支持硬链接的文件系统。FAT/exFAT 或某些网盘挂载可能不支持，会安全失败，不静默降级到覆盖写入。失败回滚本次新增图片，复用已有图片不会删除。
 - 用户强制终止进程/断电时无法保证 finally 执行；残留工作区只在标记一致时清理，残留笔记目录 `.social-note-publish-*.tmp` 和库锁须逐个确认归属，绝不能通配清除用户文件。

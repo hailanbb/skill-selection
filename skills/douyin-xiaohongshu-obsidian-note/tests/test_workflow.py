@@ -254,11 +254,86 @@ class WorkflowTests(unittest.TestCase):
         result = self.save()
         process = subprocess.run([sys.executable, "-X", "utf8", str(SCRIPTS / "sources.py"),
                                   "--stdin", "--check-existing"], input=SOURCE + "?xsec_token=SECRET",
-                                 encoding="utf-8", capture_output=True, check=True)
+                                 encoding="utf-8", capture_output=True)
+        self.assertEqual(process.returncode, 3)
         self.assertNotIn("SECRET", process.stdout + process.stderr)
-        item = json.loads(process.stdout)["items"][0]
+        payload = json.loads(process.stdout)
+        self.assertEqual(payload["status"], "duplicate")
+        self.assertTrue(payload["stop_task"])
+        self.assertTrue(payload["message"])
+        self.assertRegex(payload["message"], "[一-鿿]")
+        item = payload["items"][0]
         self.assertTrue(os.path.samefile(item["note"], result["note"]))
         self.assertEqual(item["status"], "already_saved")
+
+    def test_source_lookup_finds_note_moved_outside_configured_note_dir(self):
+        result = self.save()
+        moved_dir = self.vault / "归档笔记"
+        moved_dir.mkdir()
+        moved = moved_dir / "已归档.md"
+        Path(result["note"]).rename(moved)
+        process = subprocess.run([sys.executable, "-X", "utf8", str(SCRIPTS / "sources.py"),
+                                  "--stdin", "--check-existing"], input=SOURCE,
+                                 encoding="utf-8", capture_output=True)
+        self.assertEqual(process.returncode, 3)
+        payload = json.loads(process.stdout)
+        self.assertEqual(payload["status"], "duplicate")
+        self.assertTrue(os.path.samefile(payload["items"][0]["note"], moved))
+
+    def test_source_lookup_mixed_new_and_existing_links_stops_entire_batch(self):
+        self.save()
+        new_source = SOURCE[:-1] + "8"
+        process = subprocess.run([sys.executable, "-X", "utf8", str(SCRIPTS / "sources.py"),
+                                  "--stdin", "--check-existing"], input=f"{new_source}\n{SOURCE}",
+                                 encoding="utf-8", capture_output=True)
+        self.assertEqual(process.returncode, 3)
+        payload = json.loads(process.stdout)
+        self.assertEqual(payload["status"], "duplicate")
+        self.assertTrue(payload["stop_task"])
+        self.assertEqual([item["status"] for item in payload["items"]], ["not_saved", "already_saved"])
+
+    def test_source_lookup_short_link_needs_resolution(self):
+        process = subprocess.run([sys.executable, "-X", "utf8", str(SCRIPTS / "sources.py"),
+                                  "--stdin", "--check-existing"], input="https://xhslink.com/a/Example",
+                                 encoding="utf-8", capture_output=True)
+        self.assertEqual(process.returncode, 4)
+        payload = json.loads(process.stdout)
+        self.assertEqual(payload["status"], "needs_resolution")
+        self.assertTrue(payload["stop_task"])
+        self.assertRegex(payload["message"], "[一-鿿]")
+
+    def test_source_lookup_new_link_is_ready(self):
+        process = subprocess.run([sys.executable, "-X", "utf8", str(SCRIPTS / "sources.py"),
+                                  "--stdin", "--check-existing"], input=SOURCE,
+                                 encoding="utf-8", capture_output=True)
+        self.assertEqual(process.returncode, 0)
+        payload = json.loads(process.stdout)
+        self.assertEqual(payload["status"], "ready")
+        self.assertFalse(payload["stop_task"])
+        self.assertEqual(payload["items"][0]["status"], "not_saved")
+
+    def test_publish_duplicate_stops_before_image_processing(self):
+        self.save()
+        self.meta["title"] = "不会生成的重复笔记"
+        self.meta["assets"][0]["path"] = "不存在的图片.png"
+        write_json(self.manifest, self.meta)
+        with patch("publish_note.image_payload", side_effect=AssertionError("image processing must not run")):
+            result = publish(self.manifest, self.draft, self.run)
+        self.assertEqual(result["status"], "skipped_existing")
+        self.assertTrue(result["stop_task"])
+        self.assertRegex(result["message"], "[一-鿿]")
+
+    def test_publish_duplicate_cli_exits_three(self):
+        self.save()
+        write_json(self.manifest, self.meta)
+        process = subprocess.run([sys.executable, "-X", "utf8", str(SCRIPTS / "publish_note.py"),
+                                  "--manifest", str(self.manifest), "--draft", str(self.draft),
+                                  "--run-dir", str(self.run)], encoding="utf-8", capture_output=True)
+        self.assertEqual(process.returncode, 3)
+        payload = json.loads(process.stdout)
+        self.assertEqual(payload["status"], "skipped_existing")
+        self.assertTrue(payload["stop_task"])
+        self.assertRegex(payload["message"], "[一-鿿]")
 
     def test_download_mocked_response_creates_media_without_overwrite(self):
         from email.message import Message
