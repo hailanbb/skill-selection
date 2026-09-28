@@ -24,7 +24,7 @@ test('Excel 仅将最终齐全记录的剧集目录填绿，重名和待核实�
     assert.equal(sheet['D'+(i+2)].l.Target,C.cloudLink(path));
     assert.equal(sheet['A'+(i+2)].s.fill,undefined);
   });
-  assert.equal(sheet['!autofilter'].ref,'A1:Q6');
+  assert.equal(sheet['!autofilter'].ref,'A1:S6');
 });
 test('Excel 写出实际 XLSX 字节，中文和公式样式文本作为文字保留',()=>{
   const rows=[{showName:'=测试剧',status:'齐全',path}];
@@ -32,10 +32,11 @@ test('Excel 写出实际 XLSX 字节，中文和公式样式文本作为文字�
   assert.equal(sheet.B2.t,'s');assert.equal(sheet.B2.f,undefined);
   const bytes=Buffer.from(C.resultXlsx(rows));assert.equal(bytes.subarray(0,2).toString(),'PK');assert.ok(bytes.length>1000);
 });
-test('CSV 列精简且源位置变为链接；历史诊断仍留在原始记录中',()=>{
+test('CSV 保留原列顺序并增加核对说明与无法识别的文件',()=>{
   const r={path,conflict:true,note:'说明内容',scannedAt:'2026-09-28',plan:'仅建议',futureEpisodes:[5],undatedEpisodes:[6]};
   const [header,data]=parseCsv(C.resultCsv([r]));
-  assert.equal(header.length,17);assert.equal(data.length,17);
+  assert.equal(header.length,19);assert.equal(data.length,19);
+  assert.equal(header[17],'核对说明');assert.equal(data[17],'说明内容');assert.equal(header[18],'无法识别集号的文件');
   assert.ok(header.includes('源云存储链接'));
   for(const name of ['源云存储路径','当前未到播出日集号','播出日期未知集号','扫描时间','建议动作（未执行）','说明'])assert.ok(!header.includes(name));
   assert.equal(data[header.indexOf('目标重名')],'YES');assert.equal(r.note,'说明内容');

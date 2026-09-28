@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         剧集整理助手 · 只读核对版
 // @namespace    local.tv-season-audit
-// @version      0.5.0
+// @version      0.5.1
 // @description  手动选择 CloudDrive2 分类，TMDB 主查、豆瓣备用，导出本轮缺集报告；此版本不移动文件。
 // @match        https://clouddrive.example/*
 // @match        https://movie.douban.com/*
@@ -747,15 +747,24 @@ return exports;
     const title = clean.replace(/[（(](?:19|20)\d{2}[)）]/g, '').replace(/第\s*[\d一二三四五六七八九十两]+\s*季/g, '').replace(/\bSeason\s+\d+\b/ig, '').trim();
     return { title, year, season };
   }
-  function sameTitle(candidateTitle, expectedTitle) {
-    const c = norm(titleIdentity(candidateTitle).title), s = norm(titleIdentity(expectedTitle).title);
-    // Douban often concatenates the Chinese display title and its original title.
-    // After script conversion accept an exact title or two identical copies, never a substring.
-    return !!s && (c === s || c === s + s);
+  function sameTitle(candidateTitle, expectedTitle, allowHanPair = false) {
+    const title = titleIdentity(candidateTitle).title;
+    const c = norm(title), s = norm(titleIdentity(expectedTitle).title);
+    if (!s) return false;
+    if (c === s || c === s + s) return true;
+    if (/(?:特别篇|特別篇|总集篇|總集篇|剧场版|劇場版|スペシャル)/.test(title)) return false;
+    // Split only at an actual title boundary. Han-only pairs are provisional in
+    // search and require Japan production-country evidence on the detail page.
+    return [...title.matchAll(/\s+/g)].some(m => {
+      const left = title.slice(0, m.index).trim(), right = title.slice(m.index + m[0].length).trim();
+      return !!left && !!right && (/[\u3041-\u3096\u30a1-\u30fa]/.test(left + right) ||
+        (allowHanPair && /^[\p{Script=Han}\s\p{P}\p{N}]+$/u.test(left + right))) &&
+        (norm(left) === s || norm(right) === s);
+    });
   }
   function candidateMatches(candidate, show, season, { inspectDetails = false } = {}) {
     const c = titleIdentity(candidate.title);
-    const namesMatch = [candidate.title, ...(candidate.aliases || [])].some(t => sameTitle(t, show.title));
+    const namesMatch = [candidate.title, ...(candidate.aliases || [])].some(t => sameTitle(t, show.title, inspectDetails || candidate.japanese === true));
     const seasonMatch = season === 1 ? c.season === null || c.season === 1 : c.season === season;
     const yearMatch = !!show.year && (c.year === show.year || (candidate.releaseYears || []).includes(show.year));
     return !!candidate.tv && namesMatch && seasonMatch && (season !== 1 || inspectDetails || yearMatch);
@@ -779,8 +788,16 @@ return exports;
     if (pairs.length) {
       const ids = [...new Set(pairs.map(m => `${Number(m[1])}:${Number(m[2])}`))];
       if (ids.length !== 1 || Number(pairs[0][1]) !== season) return null;
-      // A second E or a numeric range after the first token means a combined episode.
-      if (/(?:S\d+[ ._-]*E\d+)(?:[ ._-]*E\d+|\s*[-~～]\s*\d+)/i.test(name)) return null;
+      // An explicit second E is still a combined episode. Permit only an exact
+      // repeated numeric suffix at the end: "S01E01 - 01.mkv" is one episode.
+      if (/(?:S\d+[ ._-]*E\d+)[ ._-]*E\d+/i.test(name)) return null;
+      for (const pair of pairs) {
+        const tail = name.slice(pair.index + pair[0].length);
+        if (/^\s*[-~～]\s*\d/.test(tail)) {
+          const repeated = /^\s+-\s+(\d{1,4})\.[a-z0-9]+$/i.exec(tail);
+          if (!repeated || Number(repeated[1]) !== Number(pair[2])) return null;
+        }
+      }
       return Number(pairs[0][2]) || null;
     }
     const cn = [...name.matchAll(/第\s*(\d{1,4})\s*集/g)];
@@ -801,15 +818,15 @@ return exports;
     const episodes = [...counts.keys()].sort((a, b) => a - b);
     const duplicates = episodes.filter(n => counts.get(n) > 1);
     const validTotal = Number.isInteger(total) && total > 0 && total <= 10000;
-    const missing = validTotal ? Array.from({ length: total }, (_, i) => i + 1).filter(n => !counts.has(n)) : null;
+    const missing = validTotal && !unknown.length ? Array.from({ length: total }, (_, i) => i + 1).filter(n => !counts.has(n)) : null;
     const extra = validTotal ? episodes.filter(n => n > total) : [];
     const nested = rows.filter(r => r.directory).map(r => r.name);
     const issues = [];
     if (unknown.length) issues.push(`有 ${unknown.length} 个视频无法识别集号`);
     if (duplicates.length) issues.push(`集号重复：${duplicates.join('、')}`);
-    if (extra.length) issues.push(`超出豆瓣总集数：${extra.join('、')}`);
+    if (extra.length) issues.push(`超出来源登记集数：${extra.join('、')}`);
     if (nested.length) issues.push(`季内存在子目录：${nested.join('、')}`);
-    if (!validTotal) issues.push('豆瓣总集数未确认');
+    if (!validTotal) issues.push('来源登记集数未确认');
     return { videoCount: videos.length, current: episodes.length, episodes, unknown, duplicates, extra, missing, issues,
       integrity: issues.length ? '待核实' : missing.length ? '未完结' : '齐全' };
   }
@@ -829,8 +846,9 @@ return exports;
     const confirmed=await queryDouban();
     if(!Number.isInteger(confirmed.total)||confirmed.total<1||confirmed.total>10000||!validSubjectUrl(confirmed.url)) {
       const reason=confirmed.error||'未取得有效的豆瓣总集数';
-      db={error:'TMDB 未完结后的豆瓣复核失败：'+reason,checkedAt:confirmed.checkedAt||'',candidates:confirmed.candidates||[]};
-      return {db,audit:auditSource(files,season,db),review:{state:'failed',tmdb:original,reason}};
+      db={...db,error:'豆瓣复核失败，保留 TMDB 登记集数及缺集供参考：'+reason,candidates:confirmed.candidates||[]};
+      audit={...audit,integrity:'待核实'};
+      return {db,audit,review:{state:'failed',tmdb:original,reason,checkedAt:confirmed.checkedAt||''}};
     }
     db={...confirmed,source:'douban',matchNote:[confirmed.matchNote,'TMDB 初判未完结，已用豆瓣复核；最终集数以豆瓣为准'].filter(Boolean).join('；')};
     return {db,audit:auditSource(files,season,db),review:{state:'confirmed',tmdb:original,douban:{total:db.total,url:db.url,checkedAt:db.checkedAt}}};
@@ -899,7 +917,7 @@ return exports;
     // retain csvCell's formula-injection protection. Display the actual URL as well.
     return '"'+(`=HYPERLINK("${url}","${url}")`).replace(/"/g,'""')+'"';
   }
-  const REPORT_FIELDS=[ ['分类', 'category'], ['剧集目录', 'showName'], ['季数', 'season'], ['源云存储链接', 'cloudLink'], ['视频文件数', 'videoCount'], ['已识别集数', 'current'], ['来源登记集数', 'total'], ['缺失集号', 'missing'], ['数据来源', 'source'], ['集数核对', 'integrity'], ['目标重名', 'conflict'], ['处理结果', 'status'], ['目标路径', 'destination'], ['来源链接', 'sourceUrl'], ['来源查询时间', 'checkedAt'], ['豆瓣候选标题', 'candidateTitles'], ['详情标题', 'sourceTitle'] ];
+  const REPORT_FIELDS=[ ['分类', 'category'], ['剧集目录', 'showName'], ['季数', 'season'], ['源云存储链接', 'cloudLink'], ['视频文件数', 'videoCount'], ['已识别集数', 'current'], ['来源登记集数', 'total'], ['缺失集号', 'missing'], ['数据来源', 'source'], ['集数核对', 'integrity'], ['目标重名', 'conflict'], ['处理结果', 'status'], ['目标路径', 'destination'], ['来源链接', 'sourceUrl'], ['来源查询时间', 'checkedAt'], ['豆瓣候选标题', 'candidateTitles'], ['详情标题', 'sourceTitle'], ['核对说明', 'note'], ['无法识别集号的文件', 'unknown'] ];
   function reportValue(r,key) {
     const value=key==='cloudLink'?cloudLink(r.path):key==='conflict'?(r.conflict===true||r.conflict==='true'?'YES':''):key==='missing'?(r.missing==null?'未确认':r.missing.length?r.missing:'无'):key==='sourceUrl'?r.sourceUrl||r.doubanUrl:key==='sourceTitle'?r.sourceTitle||r.doubanTitle:key==='source'?r.source||(r.doubanUrl?'douban':''):r[key];
     return value==null?'':Array.isArray(value)?value.join('、'):value;
@@ -911,9 +929,9 @@ return exports;
   function resultWorkbook(results) {
     const X=excelEngine(),book=X.utils.book_new();
     const sheet=X.utils.aoa_to_sheet([REPORT_FIELDS.map(([name])=>name),...results.map(r=>REPORT_FIELDS.map(([,key])=>reportValue(r,key)))]);
-    const widths=[14,46,9,58,13,13,15,22,12,14,12,22,55,48,27,40,36];
+    const widths=[14,46,9,58,13,13,15,22,12,14,12,22,55,48,27,40,36,65,65];
     sheet['!cols']=widths.map(wch=>({wch}));sheet['!rows']=[{hpt:30},...results.map(()=>({hpt:42}))];
-    sheet['!autofilter']={ref:`A1:Q${results.length+1}`};
+    sheet['!autofilter']={ref:`A1:S${results.length+1}`};
     for(let row=0;row<=results.length;row++)for(let col=0;col<REPORT_FIELDS.length;col++) {
       const cell=sheet[X.utils.encode_cell({r:row,c:col})];if(!cell)continue;
       cell.s={font:{name:'Microsoft YaHei',sz:11,color:{rgb:row===0?'FFFFFF':'243746'}},alignment:{vertical:'center',wrapText:true}};
@@ -988,7 +1006,9 @@ return exports;
         const url = validSubjectUrl(location.href);
         const releaseYears = [...new Set([...document.querySelectorAll('#info [property="v:initialReleaseDate"]')].flatMap(e => e.textContent.match(/(?:19|20)\d{2}/g) || []))];
         const aliases = (/(?:^|\n)\s*又名\s*[:：]\s*([^\n]+)/.exec(infoText)?.[1] || '').split('/').map(s => s.trim()).filter(Boolean);
-        const detail = { title, url, tv: !!total, releaseYears, aliases };
+        const country = /(?:^|\n)\s*制片国家\/地区\s*[:：]\s*([^\n]+)/.exec(infoText)?.[1] || '';
+        const japanese = country.split('/').some(s => s.trim() === '日本');
+        const detail = { title, url, tv: !!total, releaseYears, aliases, japanese };
         if (!url || !total) { reply({ error: '豆瓣条目未提供可确认的总集数', title, url, candidates: request.candidates || [] }); return; }
         if (!request.manual && !candidateMatches(detail, request.show, request.season)) { reply({ error: matchFailure([detail], request.show, request.season, true), title, url, candidates: request.candidates || [] }); return; }
         const matchNote = !request.manual && request.season === 1 && titleIdentity(title).year !== request.show.year ? `豆瓣标题年份 ${titleIdentity(title).year}，按详情首播年份 ${request.show.year} 确认` : '';

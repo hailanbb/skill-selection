@@ -21,11 +21,16 @@ test('豆瓣结果少于本地集号范围时仍待核实',async()=>{
   const r=await C.reviewIncomplete(files,1,tmdb,false,async()=>({...douban,total:1}));
   assert.equal(r.audit.integrity,'待核实');assert.deepEqual(r.audit.extra,[2]);
 });
-test('豆瓣复核失败或链接无效时最终总数未确认，保留 TMDB 诊断',async()=>{
+test('豆瓣复核失败或链接无效时保留 TMDB 集数和来源，但仍待核实',async()=>{
   for(const result of [{error:'没有匹配候选'},{...douban,url:'https://example.com/'},{...douban,total:0}]){
     const r=await C.reviewIncomplete(files,1,tmdb,false,async()=>result);
-    assert.equal(r.audit.integrity,'待核实');assert.equal(r.audit.missing,null);
-    assert.equal(r.db.total,undefined);assert.equal(r.review.state,'failed');assert.equal(r.review.tmdb.total,3);
+    assert.equal(r.audit.integrity,'待核实');assert.deepEqual(r.audit.missing,[3]);
+    assert.equal(r.db.total,3);assert.equal(r.review.state,'failed');assert.equal(r.review.tmdb.total,3);
+    assert.equal(r.db.source,'tmdb');assert.equal(r.db.url,tmdb.url);
+    assert.match(r.db.error,/豆瓣复核失败/);
+    const sheet=C.resultWorkbook([{...r.audit,total:r.db.total,source:r.db.source,sourceUrl:r.db.url,note:r.db.error,status:r.audit.integrity}]).Sheets['剧集检查'];
+    assert.equal(sheet.G2.v,3);assert.equal(sheet.I2.v,'tmdb');assert.match(sheet.R2.v,/豆瓣复核失败/);
+    assert.equal(sheet.B2.s.fill,undefined);
   }
 });
 test('齐全、待核实、目标重名和已使用豆瓣时不额外触发复核',async()=>{

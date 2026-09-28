@@ -45,6 +45,46 @@ test('支持简单中文集号、EP 和纯数字名称', () => {
   assert.equal(C.episodeFromName('某剧.EP12.mp4',1),12);
   assert.equal(C.episodeFromName('012.mkv',1),12);
 });
+
+test('麻辣教师真实命名：S01E01 后重复数字标题不再误判为合并集', () => {
+  const rows=Array.from({length:11},(_,i)=>{
+    const n=String(i+1).padStart(2,'0');return row(`麻辣教师 - S01E${n} - ${n}.mkv`);
+  });
+  const result=C.auditEpisodes(rows,1,11);
+  assert.equal(result.videoCount,11);assert.equal(result.current,11);
+  assert.deepEqual(result.episodes,Array.from({length:11},(_,i)=>i+1));
+  assert.deepEqual(result.missing,[]);assert.equal(result.integrity,'齐全');
+  for(const name of ['麻辣教师 - S01E01 - 02.mkv','S01E01-02.mkv','S01E01 ~ 01.mkv','S01E01 - 01-02.mkv','S01E01 - 01.extra.mkv','S02E01 - 01.mkv']) {
+    assert.equal(C.episodeFromName(name,1),null,name);
+  }
+});
+
+test('未知视频可能包含缺失集号，报告应写未确认而非确认缺集', () => {
+  const result=C.auditEpisodes([row('S01E01.mkv'),row('未知视频.mkv')],1,2);
+  assert.equal(result.current,1);assert.equal(result.missing,null);
+  assert.deepEqual(result.unknown,['未知视频.mkv']);assert.equal(result.integrity,'待核实');
+});
+
+test('日剧中日双标题先唯一匹配候选，再检查详情年份、季数及别名', () => {
+  const s={title:'想和喜欢的男人分手',year:'2024'};
+  const c={title:'想和喜欢的男人分手 好きなオトコと別れたい (2024)',url:'https://movie.douban.com/subject/1/',tv:true};
+  assert.equal(C.chooseCandidate([c],s,1,{inspectDetails:true}),c);
+  assert.equal(C.candidateMatches(c,s,1),true);
+  assert.equal(C.candidateMatches({...c,title:c.title.replace('2024','2023')},s,1),false);
+  assert.equal(C.candidateMatches({...c,tv:false},s,1),false);
+  assert.equal(C.candidateMatches(c,s,2),false);
+  assert.equal(C.chooseCandidate([c,{...c,url:'https://movie.douban.com/subject/2/'}],s,1,{inspectDetails:true}),null);
+  assert.equal(C.sameTitle('想和喜欢的男人分手 特别篇 好きなオトコと別れたい','想和喜欢的男人分手'),false);
+  assert.equal(C.sameTitle('想和喜欢的男人分手 好きなオトコと別れたい スペシャル','想和喜欢的男人分手'),false);
+  assert.equal(C.sameTitle('想和喜欢的男人分手特别篇 好きなオトコと別れたい','想和喜欢的男人分手'),false);
+  assert.equal(C.candidateMatches({title:'另一个译名 (2024)',tv:true,aliases:[s.title]},s,1),true);
+  const han={title:'三人夫妻 三人夫婦 (2025)',tv:true,url:c.url};
+  const hanShow={title:'三人夫妻',year:'2025'};
+  assert.equal(C.chooseCandidate([han],hanShow,1,{inspectDetails:true}),han);
+  assert.equal(C.candidateMatches(han,hanShow,1),false);
+  assert.equal(C.candidateMatches({...han,japanese:true},hanShow,1),true);
+  assert.equal(C.candidateMatches({...han,japanese:true,title:han.title.replace('2025','2024')},hanShow,1),false);
+});
 test('越界集号、未知视频、子目录均进入待核实', () => {
   for(const rows of [[video(1),video(25)],[video(1),row('未知.mp4')],[video(1),row('另一个文件夹',true)]]) assert.equal(C.auditEpisodes(rows,1,24).integrity,'待核实');
 });
