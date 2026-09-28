@@ -1,6 +1,6 @@
-# Skill 精选 (AI Agent Skills Selection)
+# 个人开发
 
-个人及团队 AI Agent 核心 Skill 技能、MCP 服务与 Agent 配置精选库。包含自动化归档、数据提取、知识管理工具，以及按 Agent 区分的行为规范。
+个人开发与维护的 Agent 配置、精选技能和脚本工具集合。包含自动化归档、数据提取、知识管理与 MoviePilot 订阅维护工具，以及按 Agent 区分的行为规范。
 
 ---
 
@@ -8,13 +8,20 @@
 
 ```text
 skill-selection/
-├── README.md                   # 技能与 Agent 配置索引（本文件）
+├── README.md                   # 个人开发总索引（本文件）
 ├── .gitignore
 ├── agent-configs/              # Agent 配置与行为规范（独立于 Skills）
 │   └── codex/                  # OpenAI Codex 专用
 │       ├── AGENTS.md           # 全局个人行为规范 v1.2
 │       ├── README.md           # 安装、适用范围、验证与回滚说明
 │       └── codex-quota-mode/    # Astra medium + Luna medium 全局省额度开关
+├── script-tools/               # 脚本工具（独立于 Skills）
+│   ├── README.md               # 脚本工具索引
+│   └── moviepilot-unsubscribe/ # MoviePilot订阅批量取消脚本
+│       ├── README.md           # 安装、站点配置与操作指南
+│       ├── moviepilot-unsubscribe.user.js # Tampermonkey 安装文件
+│       ├── build.cjs           # 从维护源码构建安装文件
+│       └── tests/              # 本地模拟回归测试
 └── skills/                     # 技能集合目录
     ├── task-memory-to-obsdian/ # Task Memory To Obsdian：智能全自动任务归档
     ├── github-tools-collect/    # 通用 Agent 的 GitHub 软件收藏技能
@@ -89,6 +96,18 @@ skill-selection/
 | **转存至github** | 将网络上第三方工具、Skill 或 MCP 的源码及说明，一键克隆、重构并整合保存到个人的 GitHub 统一工具库中。支持源链接中文自识别与智能翻译分流。 | 用户发送需要克隆、备份或收藏的第三方 AI 工具链接并要求保存到 GitHub 时。 | [👉 详细配置与使用指南](skills/转存至github/README.md) |
 
 *(未来新增的 Skill 或 MCP 服务将持续罗列于上表中，并对应放置于 `skills/` 子目录下。)*
+
+---
+
+## 🧰 脚本工具 (Script Tools)
+
+本类别收录可独立安装、运行的实用脚本，与 Agent 配置、Skills 分开管理。每个工具均提供适用环境、配置步骤和验证范围。
+
+| 脚本名称 | 适用环境 | 核心功能 | 文件与说明 |
+| :--- | :--- | :--- | :--- |
+| **MoviePilot订阅批量取消脚本 · v2.4.0** | **Chrome + Tampermonkey + MoviePilot** | 从底部逐项取消订阅；支持电视剧零进度取消、2026年前未完成订阅维护、跳过名单、整季资源比较、可折叠面板与处理记录。 | [安装脚本](script-tools/moviepilot-unsubscribe/moviepilot-unsubscribe.user.js) · [👉 配置与使用指南](script-tools/moviepilot-unsubscribe/README.md) |
+
+脚本需按指南配置自己的站点地址；安装后默认不运行。单项试跑与批量运行自由选择，不需要先安装 Agent Skill。更多工具见 [脚本工具索引](script-tools/README.md)。
 
 ---
 
