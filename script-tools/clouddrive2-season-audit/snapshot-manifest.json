@@ -1,0 +1,21 @@
+{
+  "build.cjs": "2c985688c9bd7c37eddf2d2b36f3a83bd7981c8ec9324bd574f3be1517e9dfe3",
+  "season-audit.user.js": "2dc3bf31d8750e851b411b53063861803bc49d716691d60721345632bb88407e",
+  "src/season-audit.js": "c9113f1baedee68fbec5226192044fa347a4d79ebcd588a8ff22f3a2e5e86659",
+  "test/core.test.cjs": "e6eeaf49c8862212234f67eb5862b1ca20375bc802e8df8c3a0207b715bc51ac",
+  "test/export.test.cjs": "a9699883cbe78a57f027a60dd60568557c504879cc533e9ee2a442e0f14017e4",
+  "test/panel.test.cjs": "f96bfb91d09463ab3487a3abec9fa100a7a2051686f866c4439129c83a328ddd",
+  "test/review.test.cjs": "7ace561b4534d0c32016c2e8e5691f3800cb6783343bab269405f0f91f7584c4",
+  "test/tmdb.test.cjs": "701694147e759376dc35186b04ef92876777e943a56e4139b924a0b9bdb7578c",
+  "vendor/package/dist/umd/package.json": "8005a3491db7d92f36ac66369861589f9c47123d3a7c71e643fc2c06168cd45a",
+  "vendor/package/dist/umd/t2cn.js": "5009384a6bdc904babee967a8bb9928e3c92288ec8a89ed036d53257e74cd8ab",
+  "vendor/package/LICENSE": "960f7fc16d8baa126802316a7df9078a383af4fb6bc60033adb28e85c08d5e5e",
+  "vendor/package/LICENSES/Apache-2.0.txt": "b534e465949558eec2597b04f5092b5e161236a68dfbfd04d547592ac3964308",
+  "vendor/package/THIRD_PARTY_LICENSES.md": "42c7dbe71c178fcca97ba945e9ac9ff360fb69bbfea4cb50556f6c65bfa59806",
+  "vendor/provenance.json": "6b802e63727421a951cdb79f5a7aec16aab635227ddc146b37deb1aa8431d4cc",
+  "vendor/xlsx-js-style/package/dist/LICENSE": "4d2a38ac35cda06a555c84074a819d413339cd3691b822cae50f8f322fe01f64",
+  "vendor/xlsx-js-style/package/dist/xlsx.bundle.js": "1c7abf2993ff2cd61e508f9268e9acda0098c9796f3925d2ba0d2579072653e2",
+  "vendor/xlsx-js-style/package/LICENSE": "4d2a38ac35cda06a555c84074a819d413339cd3691b822cae50f8f322fe01f64",
+  "vendor/xlsx-js-style/provenance.json": "ba28f85e886efab17598f0df62b9436b03748acbdf684006f4bb2f9d42884cf0",
+  ".gitattributes": "a79691a93b46e49ce460c26ef22afcc03d6eca1e63bf2edbc20e96159510f6c9"
+}
