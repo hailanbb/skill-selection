@@ -1,0 +1,4 @@
+interface:
+  display_name: "八达通详单"
+  short_description: "原像素裁剪八达通截图，剔除正数交易并生成居中、无冻结的 Excel"
+  default_prompt: "使用 $octopus-statement 处理指定的本地八达通截图，按补贴位置裁剪，排除正数交易后生成 Excel。"

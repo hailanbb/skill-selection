@@ -24,6 +24,7 @@ skill-selection/
 │       ├── build.cjs           # 从维护源码构建安装文件
 │       └── tests/              # 本地模拟回归测试
 └── skills/                     # 技能集合目录
+    ├── octopus-statement/      # 八达通详单：截图裁剪、消费提取与 Excel
     ├── task-memory-to-obsdian/ # Task Memory To Obsdian：智能全自动任务归档
     ├── github-tools-collect/    # 通用 Agent 的 GitHub 软件收藏技能
     │   ├── SKILL.md            # 与客户端、账号无关的工作流
@@ -86,6 +87,7 @@ skill-selection/
 
 | 技能名称 | 核心功能 | 触发场景 | 详细说明 |
 | :--- | :--- | :--- | :--- |
+| **八达通详单** | 按交通费用补贴或指定边界原像素裁剪截图，排除正数交易后生成居中、可筛选且不冻结表头的 Excel，保留原图并核对金额。 | 八达通消费记录截图裁剪、详单转 Excel。 | [👉 安装与使用指南](skills/octopus-statement/README.md) |
 | **Task Memory To Obsdian** | 首次询问并记住 Obsidian 归档路径，后续智能全自动提炼任务上下文、决策、Prompt、代码与避坑经验，完成分类、查重、新增保存及验证；支持通用 Agent 和只读恢复，不改已有笔记。 | 帮我归档到obsdian；恢复任务上下文、查找历史经验。 | [👉 详细配置与使用指南](skills/task-memory-to-obsdian/README.md) |
 | **obsidian-整理** | 基于 AI 语义深度解析自动提取 Obsidian 笔记 Frontmatter 元数据，根据自定义分类规范自动对笔记进行一级和二级归档，保留原件备份，支持不符合分类标准之文件的拦截与提示。 | 整理笔记、整理收件箱、归档 Obsidian 笔记或进行分类整理。 | [👉 详细配置与使用指南](skills/obsidian-整理/README.md) |
 | **链接转存obs** | 智能网页直抓、图片本地化防失效、广告/软文深度语义净化、自动中文归类到待阅收件箱，并自动同步 enquire-mcp 检索缓存。 | 提供 URL 链接并要求转存到 Obsidian 库。 | [👉 详细配置与使用指南](skills/链接转存obs/README.md) |
