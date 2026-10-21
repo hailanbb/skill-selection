@@ -1,6 +1,6 @@
 # CloudDrive2剧集整理助手 · 只读核对版
 
-> 此目录保留旧综合版。新用户请使用独立的 [① 剧集初检 v1.1.1 与 ② MoviePilot 补缺下载 v1.2.0](../tv-season-workflow/README.md)，附 [从零安装教程](../tv-season-workflow/INSTALL.md)。升级时停用旧副本，避免同时运行。
+> 此目录保留旧综合版。新用户请使用独立的 [① 剧集初检 v1.1.1 与 ② MoviePilot 补缺下载 v1.2.1](../tv-season-workflow/README.md)，附 [从零安装教程](../tv-season-workflow/INSTALL.md)。升级时停用旧副本，避免同时运行。
 
 **版本：v0.5.1** · **环境：Chrome + Tampermonkey + CloudDrive2**
 

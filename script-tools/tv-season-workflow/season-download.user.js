@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         剧集工作流 ② · MoviePilot 补缺下载
 // @namespace    local.tv-season-download
-// @version      1.2.0
+// @version      1.2.1
 // @description  手动补缺；整季优先、中文标记优先，做种≥5时优先小容量；逐资源导出选择依据。
 // @match        https://moviepilot.example/*
 // @grant        unsafeWindow
@@ -1391,9 +1391,10 @@ return exports;
     const bytes=reportEngine().write(session),url=URL.createObjectURL(new Blob([bytes],{type:'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'}));
     const a=el('a',null,{href:url,download:session.fileName.replace(/\.xlsx$/i,'')+'_下载补充.xlsx'});a.click();setTimeout(()=>URL.revokeObjectURL(url),10000);
   }
+  // 面板固定浅色控件配色，兼容站点深色模式；禁用和焦点样式独立设置。
   function mount(){
     const host=el('div',null,{id:'tv-download-panel'});document.body.append(host);const root=host.attachShadow({mode:'open'});
-    const style=el('style',`:host{position:fixed;right:20px;bottom:20px;z-index:2147483645;font:14px/1.55 system-ui;color:#18343d}*{box-sizing:border-box}.box{width:430px;max-width:92vw;max-height:82vh;overflow:auto;padding:16px;border:1px solid #afc5cb;border-radius:12px;background:#f8fbfc;box-shadow:0 6px 30px #0003}h2{font-size:18px;margin:0 0 8px}button{padding:7px 10px;margin:4px;border:1px solid #afc5cb;border-radius:6px;background:white;cursor:pointer}button:disabled{opacity:.45}.message{background:#e7f1f5;padding:9px;white-space:pre-wrap;overflow-wrap:anywhere}.list{max-height:240px;overflow:auto}small{display:block;color:#536a73}p{margin:7px 0}`);
+    const style=el('style',`:host{position:fixed;right:20px;bottom:20px;z-index:2147483645;font:14px/1.55 system-ui;color:#18343d}*{box-sizing:border-box}.box{width:430px;max-width:92vw;max-height:82vh;overflow:auto;padding:16px;border:1px solid #afc5cb;border-radius:12px;background:#f8fbfc;box-shadow:0 6px 30px #0003}h2{font-size:18px;margin:0 0 8px}button{padding:7px 10px;margin:4px;border:1px solid #afc5cb;border-radius:6px;background:white;cursor:pointer}:host{color-scheme:only light}button,input,select,textarea{font:inherit;color:#18343d;-webkit-text-fill-color:currentColor}button:disabled{opacity:1;color:#50626b;background:#edf1f3;cursor:not-allowed}button:not(:disabled):hover{background:#edf5f8}button:focus-visible,input:focus-visible,select:focus-visible,textarea:focus-visible{outline:2px solid #176484;outline-offset:2px}input{accent-color:#176484}.message{background:#e7f1f5;padding:9px;white-space:pre-wrap;overflow-wrap:anywhere}.list{max-height:240px;overflow:auto}small{display:block;color:#536a73}p{margin:7px 0}`);
     const box=el('section',null,{className:'box'}),body=el('div');root.append(style,box);
     const head=el('h2','② MoviePilot 补缺下载'),toggle=button('收起 / 展开',()=>{body.hidden=!body.hidden;});box.append(head,toggle,body);
     ui={status:el('p'),message:el('p','导入后点击开始才会下载。沿用 MoviePilot 默认下载器与自动保存目录。',{className:'message'}),list:el('div',null,{className:'list'})};

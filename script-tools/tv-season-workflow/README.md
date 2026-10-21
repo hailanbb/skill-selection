@@ -5,7 +5,7 @@
 | 脚本 | 当前版本 | 在哪里使用 | 会执行什么 |
 | --- | --- | --- | --- |
 | [① season-inspect.user.js](season-inspect.user.js) | **1.1.1** | CloudDrive2；需要时读取豆瓣 | 只读目录，按季核对，导出报告。不移动、删除、重命名文件，不创建云端目录。 |
-| [② season-download.user.js](season-download.user.js) | **1.2.0** | MoviePilot | 导入报告后，点击“开始补缺下载”才向默认下载器提交下载。不修改云盘文件，不创建订阅。 |
+| [② season-download.user.js](season-download.user.js) | **1.2.1** | MoviePilot | 导入报告后，点击“开始补缺下载”才向默认下载器提交下载。不修改云盘文件，不创建订阅。 |
 
 **安装后默认不运行。第二脚本的“开始”会实际提交下载。** 本目录只发布第一、第二阶段，不包含删除清理或归档脚本。
 
