@@ -1,0 +1,16 @@
+{
+  "name": "tv-season-workflow",
+  "version": "1.2.0",
+  "private": true,
+  "description": "CloudDrive2 初检与 MoviePilot 补缺下载",
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "build": "node build.cjs",
+    "test": "node --test"
+  },
+  "devDependencies": {
+    "@xmldom/xmldom": "0.9.12"
+  }
+}

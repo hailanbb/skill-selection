@@ -1,0 +1,40 @@
+{
+  "date": "2026-10-21",
+  "versions": {
+    "inspect": "1.1.1",
+    "download": "1.2.0"
+  },
+  "tests": 80,
+  "files": {
+    ".gitattributes": "a79691a93b46e49ce460c26ef22afcc03d6eca1e63bf2edbc20e96159510f6c9",
+    ".gitignore": "4d56952b0fb13bf8f9b6c13a6d4c34a075bac3af447636a1df4335d7576e2f97",
+    "build.cjs": "56b35f87f05057283b00fd30a02ddf3b6a9f92d8c1f47ba14bde78e1771f38bd",
+    "CHANGELOG.md": "cbe110a9e166a1b25cf7b775336556082e46d05d7b22cdeb900830b17099389c",
+    "docs/01-inspect.md": "6b8e949e7e5412a09cb51e944e6620799a7b891b5f1df32cfc255bb2adda7bf2",
+    "docs/02-download.md": "d5c4589ff0208bebd766bc84d221480c7283153aa5b30c33ad880180c3d4dd4b",
+    "INSTALL.md": "5e410296253ef93bdb16710134ce58a57c81fcd80931a686ffb66b8beb973db6",
+    "package.json": "9d10b854f64e77159b20e758516e8802509d4ba3d75fa613ef574c566bc224f0",
+    "README.md": "a42abd250abebe666b8e7dc310d90d9cf60a86629212c5da15e4074d3c3eac05",
+    "season-download.user.js": "95ab13b27f2070e55a140e4f45657d670ac4c443f72c4d21c191e0e82ac54667",
+    "season-inspect.user.js": "4e52f5d31996775542755fbcc41c3953361f5e844e8a4d77a2586cf4b9603a55",
+    "src/douban-policy.js": "7a6066a81b1d70884464234ae6409a647a29ea85187d83a30559c750bf68f932",
+    "src/douban-query.js": "fe3c6b2cdf27a544c05d8cb8102093d0e06f99e6a06fb3ad0b02ce6bd2aab68e",
+    "src/download-core.js": "ab50fe7dd2fddeab031a9e27082a4c6a8653909a4dab4d4d56eca016269f3113",
+    "src/season-download.js": "ee826e5a2f1fbfb1f5aa8faf71482e1422fdb1e5e9fb9ff2704bd0058ceba1ab",
+    "src/season-inspect.js": "de6482ca2f8c9afdb26885fc471c85771df22ca8bfa5f4cdb6df66fb53f68dbc",
+    "src/workflow-report.js": "0301e213c6d7f3bbb5d947daf4a818918ae5433702cc4cee0974c6220db54b94",
+    "test/douban-policy.test.cjs": "97dd721b4b7f3945caab2223633f68f000291c565ec84b433f581612bbbcf46c",
+    "test/download.test.cjs": "c280df50c4e162b26d3bf0894d2773901f2030451fa6fe59db0e7eabec5e7a4c",
+    "test/inspect-navigation.test.cjs": "7135407c42e40ec402814efa61cbb641cf49d5ab340a6958bebd1b2db797708f",
+    "test/inspect.test.cjs": "25ad9f03f7d85420dd189efbce7f2a1ca614058d96403ac7b008bee6b21319bf",
+    "test/workflow-report.test.cjs": "af68d4e9b7d0a0d0bfc546f731726f6b2de5c0f02de4577a5b8e505ea1e0eebe",
+    "THIRD_PARTY.md": "4190caa50ba0ad4f4f2ce186e4696a959ba86e34c10cf0d599b455c459b9f35e",
+    "vendor/package/dist/umd/t2cn.js": "5009384a6bdc904babee967a8bb9928e3c92288ec8a89ed036d53257e74cd8ab",
+    "vendor/package/LICENSE": "960f7fc16d8baa126802316a7df9078a383af4fb6bc60033adb28e85c08d5e5e",
+    "vendor/package/LICENSES/Apache-2.0.txt": "b534e465949558eec2597b04f5092b5e161236a68dfbfd04d547592ac3964308",
+    "vendor/package/THIRD_PARTY_LICENSES.md": "42c7dbe71c178fcca97ba945e9ac9ff360fb69bbfea4cb50556f6c65bfa59806",
+    "vendor/xlsx-js-style/package/dist/LICENSE": "4d2a38ac35cda06a555c84074a819d413339cd3691b822cae50f8f322fe01f64",
+    "vendor/xlsx-js-style/package/dist/xlsx.bundle.js": "1c7abf2993ff2cd61e508f9268e9acda0098c9796f3925d2ba0d2579072653e2",
+    "vendor/xlsx-js-style/package/LICENSE": "4d2a38ac35cda06a555c84074a819d413339cd3691b822cae50f8f322fe01f64"
+  }
+}

@@ -1,5 +1,7 @@
 # CloudDrive2剧集整理助手 · 只读核对版
 
+> 此目录保留旧综合版。新用户请使用独立的 [① 剧集初检 v1.1.1 与 ② MoviePilot 补缺下载 v1.2.0](../tv-season-workflow/README.md)，附 [从零安装教程](../tv-season-workflow/INSTALL.md)。升级时停用旧副本，避免同时运行。
+
 **版本：v0.5.1** · **环境：Chrome + Tampermonkey + CloudDrive2**
 
 手动选择一个电视剧分类，按修改时间从旧到新逐剧、逐季核对集号。优先按目录中的 TMDB ID 查询；TMDB 不可用或结果为“未完结”时使用豆瓣，导出本轮缺集报告。安装后默认不运行，**本版不移动、删除、重命名文件，也不创建云端目录**。
