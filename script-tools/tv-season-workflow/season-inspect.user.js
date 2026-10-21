@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         剧集工作流 ① · 初检（只读）
 // @namespace    local.tv-season-inspect
-// @version      1.1.1
+// @version      1.1.2
 // @description  手动初检；TMDB 主查、豆瓣分季缓存与逐页限速，风控暂停、待补查和进度恢复。无云端写操作。
 // @match        https://clouddrive.example/*
 // @match        https://movie.douban.com/*
@@ -1319,29 +1319,62 @@ return exports;
     checkpoint();
     return parseTmdbSeason(series,data,show,season,now());
   }
-  function setupDragging(handle,box) {
-    let drag=null;
-    const saved=get('panel-position',null);
-    if(saved?.collapsed) box.classList.add('min');
-    function place(x,y,savePosition=false) {
-      const rect=panel.getBoundingClientRect(), pos=clampPosition({x,y},rect.width,rect.height,innerWidth,innerHeight);
-      Object.assign(panel.style,{left:pos.x+'px',top:pos.y+'px',right:'auto',bottom:'auto'});
-      if(savePosition) put('panel-position',{...pos,collapsed:box.classList.contains('min')});
-    }
-    if(saved) requestAnimationFrame(()=>place(saved.x,saved.y));
-    handle.addEventListener('pointerdown',event=>{
-      if(event.button!==0 || event.target.closest('button')) return;
-      const rect=panel.getBoundingClientRect(); drag={id:event.pointerId,x:event.clientX,y:event.clientY,left:rect.left,top:rect.top};
-      handle.setPointerCapture(event.pointerId); event.preventDefault();
-    });
-    handle.addEventListener('pointermove',event=>{if(drag?.id===event.pointerId)place(drag.left+event.clientX-drag.x,drag.top+event.clientY-drag.y);});
-    const end=event=>{if(drag?.id!==event.pointerId)return;drag=null;const r=panel.getBoundingClientRect();place(r.left,r.top,true);};
-    handle.addEventListener('pointerup',end); handle.addEventListener('pointercancel',end); handle.addEventListener('lostpointercapture',end);
-    const clamp=()=>{const r=panel.getBoundingClientRect();place(r.left,r.top,true);};
-    window.addEventListener('resize',clamp);
-    new ResizeObserver(()=>{if(!drag){const r=panel.getBoundingClientRect();place(r.left,r.top);}}).observe(box);
-    return clamp;
+  const setupPanelLayout=/* 四个阶段共用的面板位置控制，不访问网络或执行业务任务。
+ * 标题栏可拖动；点击收起一律停靠右下角；展开恢复原展开位置。
+ * 收起后仍可拖动，下一次收起重新停靠。位置按各脚本自己的存储命名空间保存。
+ */
+(function setupPanelLayout({host,box,body,handle,toggle,load,save}) {
+  const margin=20,edge=8,valid=p=>p&&Number.isFinite(p.x)&&Number.isFinite(p.y);
+  const saved=load()||{},initial=valid(saved.expanded)?saved.expanded:valid(saved)?saved:null;
+  let expanded=initial?{x:initial.x,y:initial.y}:null,collapsed=!!saved.collapsed,docked=collapsed,drag=null,scheduled=false;
+  function point(){const r=host.getBoundingClientRect();return {x:r.left,y:r.top};}
+  function place(p){
+    const r=host.getBoundingClientRect(),x=Math.max(edge,Math.min(p.x,Math.max(edge,innerWidth-r.width-edge))),y=Math.max(edge,Math.min(p.y,Math.max(edge,innerHeight-r.height-edge)));
+    Object.assign(host.style,{left:x+'px',top:y+'px',right:'auto',bottom:'auto'});return {x,y};
   }
+  function dock(){Object.assign(host.style,{left:'auto',top:'auto',right:margin+'px',bottom:margin+'px'});}
+  function paint(){
+    if(box.classList.contains('min')!==collapsed)box.classList.toggle('min');
+    body.hidden=collapsed;toggle.textContent=collapsed?'展开':'收起';
+    toggle.setAttribute?.('aria-expanded',String(!collapsed));
+  }
+  function persist(){save({version:1,collapsed,docked,expanded,position:point()});}
+  function fit(){
+    if(drag)return;
+    if(collapsed&&docked)dock();
+    else {const p=place(point());if(!collapsed)expanded=p;}
+  }
+  function schedule(){if(scheduled)return;scheduled=true;requestAnimationFrame(()=>{scheduled=false;fit();});}
+  function togglePanel(){
+    drag=null;
+    if(!collapsed){expanded=point();collapsed=true;docked=true;paint();dock();}
+    else {collapsed=false;docked=false;paint();if(expanded)expanded=place(expanded);else dock();}
+    persist();schedule();
+  }
+  paint();
+  if(collapsed){
+    // 刷新时允许恢复收起后手动拖过的位置；旧版收起位置默认迁移到右下角。
+    if(saved.version===1&&saved.docked===false&&valid(saved.position)){docked=false;place(saved.position);}else dock();
+  }else if(expanded)expanded=place(expanded);
+  handle.addEventListener('pointerdown',e=>{
+    if(e.button!==0||e.target.closest('button, input, select, textarea, a'))return;
+    const p=point();drag={id:e.pointerId,x:e.clientX,y:e.clientY,left:p.x,top:p.y};docked=false;
+    handle.setPointerCapture(e.pointerId);e.preventDefault();
+  });
+  handle.addEventListener('pointermove',e=>{
+    if(drag?.id!==e.pointerId)return;
+    place({x:drag.left+e.clientX-drag.x,y:drag.top+e.clientY-drag.y});
+  });
+  const end=e=>{
+    if(drag?.id!==e.pointerId)return;drag=null;
+    const p=place(point());if(!collapsed)expanded=p;persist();
+  };
+  handle.addEventListener('pointerup',end);handle.addEventListener('pointercancel',end);handle.addEventListener('lostpointercapture',end);
+  window.addEventListener('resize',()=>{fit();persist();});
+  new ResizeObserver(schedule).observe(box);schedule();
+  return {toggle:togglePanel};
+})
+;
   // Preparation is deliberately per-page, not a persistent claim that login is valid.
   let doubanOpened = false;
   class Paused extends Error {constructor(message){super(message);this.name='Paused';}}
@@ -1602,8 +1635,8 @@ return exports;
     const style = el('style', `:host{position:fixed;right:18px;bottom:18px;z-index:2147483645;font:14px/1.5 system-ui,sans-serif;color:#18343d}*{box-sizing:border-box}.box{width:440px;max-width:94vw;max-height:85vh;overflow:hidden;background:#f8fbfc;border:1px solid #a9c3ca;border-radius:14px;box-shadow:0 10px 40px #0003;padding:14px}.body{max-height:calc(85vh - 108px);overflow:auto}.drag-handle{cursor:move;touch-action:none;user-select:none}h2{font-size:18px;margin:0 0 6px}p{margin:6px 0}small{display:block;color:#576e77;overflow-wrap:anywhere}button,select{font:inherit;border:1px solid #afc5cb;border-radius:6px;background:white;padding:6px 9px;margin:4px 4px 4px 0;color:#173d4b}button{cursor:pointer}button:disabled{opacity:.45;cursor:default}.primary{background:#165568;color:white}a{color:#166a85;display:inline-block;margin:4px 10px 4px 0}.message{padding:9px;background:#e7f1f5;margin:8px 0;overflow-wrap:anywhere}.result{padding:10px 0;border-top:1px solid #d7e3e7}.result strong{display:block;font-size:13px}.result p{font-size:13px}.results{max-height:280px;overflow:auto}.min .body{display:none}.min{width:240px}details{border-top:1px solid #d7e3e7;padding-top:8px;margin-top:8px}`);
     const box = el('section', null, { className: 'box' }), body = el('div', null, { className: 'body' });
     const heading = el('h2', '① 剧集初检 · 只读');
-    let reposition=()=>{};
-    const toggle = button('收起 / 展开', () => {box.classList.toggle('min');requestAnimationFrame(reposition);});
+    let panelLayout;
+    const toggle = button('收起', () => panelLayout.toggle());
     const dragHandle=el('header',null,{className:'drag-handle',title:'按住标题区域拖动'});
     dragHandle.append(heading,toggle);
     root.append(style, box); box.append(dragHandle, body);
@@ -1674,7 +1707,7 @@ return exports;
     ui.pause = button('暂停', () => { stopping = true; message('正在暂停；保留已完成结果，当前剧集继续时会重新核对。'); });
     body.append(ui.summary,tmdbDetails,ui.prepare, el('br'), readyLabel, el('br'),ui.unlock,ui.budget, ui.load, ui.category, el('br'),ui.start, ui.single, ui.pause, ui.resume,ui.restore,ui.supplement, button('导出 Excel（绿 / 蓝标记）', () => exportFile('xlsx')),button('导出 CSV', () => exportFile('csv')), button('导出完整 JSON', () => exportFile('json')),ui.status, ui.message, ui.results);
     categories(get('categories', [])); render();
-    reposition=setupDragging(dragHandle,box);
+    panelLayout=setupPanelLayout({host:panel,box,body,handle:dragHandle,toggle,load:()=>get('panel-layout-v1',null)||get('panel-position',null),save:value=>put('panel-layout-v1',value)});
   }
   mount();
 })();

@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         剧集工作流 ② · MoviePilot 补缺下载
 // @namespace    local.tv-season-download
-// @version      1.2.1
+// @version      1.2.2
 // @description  手动补缺；整季优先、中文标记优先，做种≥5时优先小容量；逐资源导出选择依据。
 // @match        https://moviepilot.example/*
 // @grant        unsafeWindow
@@ -1392,11 +1392,67 @@ return exports;
     const a=el('a',null,{href:url,download:session.fileName.replace(/\.xlsx$/i,'')+'_下载补充.xlsx'});a.click();setTimeout(()=>URL.revokeObjectURL(url),10000);
   }
   // 面板固定浅色控件配色，兼容站点深色模式；禁用和焦点样式独立设置。
+  const setupPanelLayout=/* 四个阶段共用的面板位置控制，不访问网络或执行业务任务。
+ * 标题栏可拖动；点击收起一律停靠右下角；展开恢复原展开位置。
+ * 收起后仍可拖动，下一次收起重新停靠。位置按各脚本自己的存储命名空间保存。
+ */
+(function setupPanelLayout({host,box,body,handle,toggle,load,save}) {
+  const margin=20,edge=8,valid=p=>p&&Number.isFinite(p.x)&&Number.isFinite(p.y);
+  const saved=load()||{},initial=valid(saved.expanded)?saved.expanded:valid(saved)?saved:null;
+  let expanded=initial?{x:initial.x,y:initial.y}:null,collapsed=!!saved.collapsed,docked=collapsed,drag=null,scheduled=false;
+  function point(){const r=host.getBoundingClientRect();return {x:r.left,y:r.top};}
+  function place(p){
+    const r=host.getBoundingClientRect(),x=Math.max(edge,Math.min(p.x,Math.max(edge,innerWidth-r.width-edge))),y=Math.max(edge,Math.min(p.y,Math.max(edge,innerHeight-r.height-edge)));
+    Object.assign(host.style,{left:x+'px',top:y+'px',right:'auto',bottom:'auto'});return {x,y};
+  }
+  function dock(){Object.assign(host.style,{left:'auto',top:'auto',right:margin+'px',bottom:margin+'px'});}
+  function paint(){
+    if(box.classList.contains('min')!==collapsed)box.classList.toggle('min');
+    body.hidden=collapsed;toggle.textContent=collapsed?'展开':'收起';
+    toggle.setAttribute?.('aria-expanded',String(!collapsed));
+  }
+  function persist(){save({version:1,collapsed,docked,expanded,position:point()});}
+  function fit(){
+    if(drag)return;
+    if(collapsed&&docked)dock();
+    else {const p=place(point());if(!collapsed)expanded=p;}
+  }
+  function schedule(){if(scheduled)return;scheduled=true;requestAnimationFrame(()=>{scheduled=false;fit();});}
+  function togglePanel(){
+    drag=null;
+    if(!collapsed){expanded=point();collapsed=true;docked=true;paint();dock();}
+    else {collapsed=false;docked=false;paint();if(expanded)expanded=place(expanded);else dock();}
+    persist();schedule();
+  }
+  paint();
+  if(collapsed){
+    // 刷新时允许恢复收起后手动拖过的位置；旧版收起位置默认迁移到右下角。
+    if(saved.version===1&&saved.docked===false&&valid(saved.position)){docked=false;place(saved.position);}else dock();
+  }else if(expanded)expanded=place(expanded);
+  handle.addEventListener('pointerdown',e=>{
+    if(e.button!==0||e.target.closest('button, input, select, textarea, a'))return;
+    const p=point();drag={id:e.pointerId,x:e.clientX,y:e.clientY,left:p.x,top:p.y};docked=false;
+    handle.setPointerCapture(e.pointerId);e.preventDefault();
+  });
+  handle.addEventListener('pointermove',e=>{
+    if(drag?.id!==e.pointerId)return;
+    place({x:drag.left+e.clientX-drag.x,y:drag.top+e.clientY-drag.y});
+  });
+  const end=e=>{
+    if(drag?.id!==e.pointerId)return;drag=null;
+    const p=place(point());if(!collapsed)expanded=p;persist();
+  };
+  handle.addEventListener('pointerup',end);handle.addEventListener('pointercancel',end);handle.addEventListener('lostpointercapture',end);
+  window.addEventListener('resize',()=>{fit();persist();});
+  new ResizeObserver(schedule).observe(box);schedule();
+  return {toggle:togglePanel};
+})
+;
   function mount(){
     const host=el('div',null,{id:'tv-download-panel'});document.body.append(host);const root=host.attachShadow({mode:'open'});
-    const style=el('style',`:host{position:fixed;right:20px;bottom:20px;z-index:2147483645;font:14px/1.55 system-ui;color:#18343d}*{box-sizing:border-box}.box{width:430px;max-width:92vw;max-height:82vh;overflow:auto;padding:16px;border:1px solid #afc5cb;border-radius:12px;background:#f8fbfc;box-shadow:0 6px 30px #0003}h2{font-size:18px;margin:0 0 8px}button{padding:7px 10px;margin:4px;border:1px solid #afc5cb;border-radius:6px;background:white;cursor:pointer}:host{color-scheme:only light}button,input,select,textarea{font:inherit;color:#18343d;-webkit-text-fill-color:currentColor}button:disabled{opacity:1;color:#50626b;background:#edf1f3;cursor:not-allowed}button:not(:disabled):hover{background:#edf5f8}button:focus-visible,input:focus-visible,select:focus-visible,textarea:focus-visible{outline:2px solid #176484;outline-offset:2px}input{accent-color:#176484}.message{background:#e7f1f5;padding:9px;white-space:pre-wrap;overflow-wrap:anywhere}.list{max-height:240px;overflow:auto}small{display:block;color:#536a73}p{margin:7px 0}`);
+    const style=el('style',`:host{position:fixed;right:20px;bottom:20px;z-index:2147483645;font:14px/1.55 system-ui;color:#18343d}*{box-sizing:border-box}.drag-handle{cursor:move;touch-action:none;user-select:none}.box.min{width:240px}.box{width:430px;max-width:92vw;max-height:82vh;overflow:auto;padding:16px;border:1px solid #afc5cb;border-radius:12px;background:#f8fbfc;box-shadow:0 6px 30px #0003}h2{font-size:18px;margin:0 0 8px}button{padding:7px 10px;margin:4px;border:1px solid #afc5cb;border-radius:6px;background:white;cursor:pointer}:host{color-scheme:only light}button,input,select,textarea{font:inherit;color:#18343d;-webkit-text-fill-color:currentColor}button:disabled{opacity:1;color:#50626b;background:#edf1f3;cursor:not-allowed}button:not(:disabled):hover{background:#edf5f8}button:focus-visible,input:focus-visible,select:focus-visible,textarea:focus-visible{outline:2px solid #176484;outline-offset:2px}input{accent-color:#176484}.message{background:#e7f1f5;padding:9px;white-space:pre-wrap;overflow-wrap:anywhere}.list{max-height:240px;overflow:auto}small{display:block;color:#536a73}p{margin:7px 0}`);
     const box=el('section',null,{className:'box'}),body=el('div');root.append(style,box);
-    const head=el('h2','② MoviePilot 补缺下载'),toggle=button('收起 / 展开',()=>{body.hidden=!body.hidden;});box.append(head,toggle,body);
+    let panelLayout;const head=el('h2','② MoviePilot 补缺下载'),toggle=button('收起',()=>panelLayout.toggle()),handle=el('header',null,{className:'drag-handle',title:'按住标题栏拖动'});handle.append(head,toggle);box.append(handle,body);
     ui={status:el('p'),message:el('p','导入后点击开始才会下载。沿用 MoviePilot 默认下载器与自动保存目录。',{className:'message'}),list:el('div',null,{className:'list'})};
     ui.file=el('input',null,{type:'file',accept:'.xlsx'});ui.file.style.display='none';
     ui.import=button('导入 Excel',()=>ui.file.click());ui.start=button('开始补缺下载',run);ui.resume=button('继续本轮',run);
@@ -1416,6 +1472,7 @@ return exports;
       el('small','规则：整季包优先，无合格包补零散集；同类优先中文标记，做种≥5且容量已知时优先小容量，否则优先做种数；最低2个做种。零散多集按每个待补集估算容量。绿/紫跳过；黄＝已提交待复核，红＝无合格资源。'),
       el('small','结果不明的任务不自动重试。刷新前先导出；重新导入旧报告也会读取本地防重复记录。'),ui.message,ui.list);
     render();
+    panelLayout=setupPanelLayout({host,box,body,handle,toggle,load:()=>get('panel-layout-v1',null),save:value=>put('panel-layout-v1',value)});
   }
   mount();
 })();

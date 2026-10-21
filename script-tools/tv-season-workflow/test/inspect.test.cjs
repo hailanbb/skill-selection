@@ -157,7 +157,7 @@ test('实际分类任务暂停后只重试当前剧，保留已完成结果且�
 test('初检安装文件严格 UTF-8、无云端写请求；独立元数据和构建无远程代码',()=>{
   const bytes=fs.readFileSync(require('node:path').join(__dirname,'../season-inspect.user.js'));
   assert.notEqual(bytes.subarray(0,3).toString('hex'),'efbbbf');new TextDecoder('utf-8',{fatal:true}).decode(bytes);
-  assert.match(source,/\/\/ @namespace\s+local\.tv-season-inspect/);assert.match(source,/\/\/ @version\s+1\.1\.1/);
+  assert.match(source,/\/\/ @namespace\s+local\.tv-season-inspect/);assert.match(source,/\/\/ @version\s+1\.1\.2/);
   assert.ok(!/@require|GM_cookie|\bfetch\s*\(/.test(source));
   assert.deepEqual([...source.matchAll(/^\/\/ @connect\s+(.+)$/gm)].map(m=>m[1]),['api.themoviedb.org']);
   const own=fs.readFileSync(require('node:path').join(__dirname,'../src/season-inspect.js'),'utf8');

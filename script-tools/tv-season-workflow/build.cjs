@@ -31,7 +31,7 @@ for(const name of ['season-inspect','season-download']) {
     output=output.replace(reviewMarker,()=>read('src/excel-review.js'));
   }
   // 可选模块只进入需要它的脚本，初检版不会因此带入下载或报告修改功能。
-  for(const [marker,file] of [['/* build:douban-policy */ null','src/douban-policy.js'],['/* build:douban-query */ null','src/douban-query.js']])if(output.includes(marker))output=output.replace(marker,()=>read(file));
+  for(const [marker,file] of [['/* build:panel-layout */ null','src/panel-layout.js'],['/* build:douban-policy */ null','src/douban-policy.js'],['/* build:douban-query */ null','src/douban-query.js']])if(output.includes(marker))output=output.replace(marker,()=>read(file));
   for(const [marker,file] of [['/* build:download-core */ null','src/download-core.js'],['/* build:workflow-report */ null','src/workflow-report.js']]) {
     if(output.includes(marker)) {
       if(output.split(marker).length!==2)throw Error(`Expected one ${marker}`);
