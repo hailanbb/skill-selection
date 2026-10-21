@@ -2,6 +2,8 @@
 
 [安装配置](../INSTALL.md) · [工具首页](../README.md) · [安装文件](../season-download.user.js) · [第一脚本说明](01-inspect.md)
 
+[需求与验收标准](requirements-02-download.md)
+
 ## 点哪里，什么时候真正下载
 
 1. 登录 MoviePilot，确认站点、默认下载器及自动保存目录已经正常配置。

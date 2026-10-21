@@ -11,6 +11,8 @@
 
 [从零安装教程](INSTALL.md) · [第一脚本完整说明](docs/01-inspect.md) · [第二脚本完整说明](docs/02-download.md) · [版本与验证记录](CHANGELOG.md) · [返回 Script Tools](../README.md)
 
+需求与验收：[第一脚本需求说明](docs/requirements-01-inspect.md) · [第二脚本需求说明](docs/requirements-02-download.md)。需求说明记录已确认规则、操作边界和验收场景；使用方法仍见上方教程。
+
 ## 第一次使用，照这个顺序做
 
 1. 按 [安装教程](INSTALL.md) 安装两个脚本，填好自己的站点地址和源目录。

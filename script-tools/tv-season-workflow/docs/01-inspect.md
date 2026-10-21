@@ -2,6 +2,8 @@
 
 [安装配置](../INSTALL.md) · [工具首页](../README.md) · [安装文件](../season-inspect.user.js) · [下一步：MoviePilot 补缺](02-download.md)
 
+[需求与验收标准](requirements-01-inspect.md)
+
 ## 功能与范围
 
 手动选择分类，按云盘显示的目录修改时间从旧到新，逐剧、逐季核对集号。目录中的 TMDB ID 优先；来源不可用、异常或本季播完状态不明确时使用豆瓣。不移动、删除、重命名文件，不创建云端目录，不读取归档目标目录。
