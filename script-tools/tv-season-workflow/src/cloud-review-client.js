@@ -1,0 +1,119 @@
+/* CloudDrive2 / 豆瓣页面适配层。
+ * 读取通过当前界面完成，不读取登录秘密值；删除仅使用普通文件菜单及可核对的确认窗口。
+ * 永久删除、目录删除、未连接、分页不全、选择范围改变时均停止。
+ */
+(function createCloudReviewClient(C,options) {
+  'use strict';
+  const {get,put,del,checkpoint:check,message,ready}=options;
+  const SOURCE=options.source||'/115/Library_incs/nas/电视剧';
+  const {parent,base,showInfo,mapKey,titleIdentity,candidateMatches,chooseCandidate,matchFailure,validSubjectUrl,parseTotal,parseDoubanBroadcast,doubanAccessProblem,createListingSettler}=C;
+  const sleep=ms=>new Promise(resolve=>setTimeout(resolve,ms)),now=()=>new Date().toISOString();
+  const visible=e=>!!e&&!!e.getClientRects().length;
+  let finishing=0;
+  const checkpoint=()=>{if(!finishing)check();};
+  function pause(text){const e=Error(text);e.name='Pause';return e;}
+  async function waitFor(fn,text,timeout=45000) {
+    const until=Date.now()+timeout;
+    while(Date.now()<until){checkpoint();const value=fn();if(value)return value;await sleep(250);}
+    throw Error(text);
+  }
+  function setInput(input,value) {
+    const proto=input.tagName==='SELECT'?HTMLSelectElement.prototype:HTMLInputElement.prototype;
+    Object.getOwnPropertyDescriptor(proto,'value').set.call(input,value);
+    input.dispatchEvent(new Event('input',{bubbles:true}));input.dispatchEvent(new Event('change',{bubbles:true}));
+  }
+  function currentPath(){return new URL(location.href).searchParams.get('path')?.replace(/\/$/,'')||'/';}
+  function breadcrumbPath(){return '/'+[...document.querySelectorAll('.files-breadcrumb-bar .breadcrumb-item:not(.breadcrumb-root)')].map(e=>e.textContent.trim()).join('/');}
+  function allowed(path){return path.startsWith(SOURCE+'/')&&!path.split('/').some(s=>s==='.'||s==='..');}
+  function requireConnected(){if(!document.querySelector('.health-indicator.connected'))throw Error('云盘未确认连接，停止清理');}
+  function readRows(){return [...document.querySelectorAll('table.file-list tr.file-row[data-path]')].map(e=>({path:e.getAttribute('data-path'),name:e.querySelector('.file-name-text')?.textContent.trim()||'',directory:e.classList.contains('directory'),modified:e.querySelector('.file-modified')?.textContent.trim()||'',size:e.querySelector('.file-size')?.textContent.trim()||''}));}
+  function readCount(){const m=/^\s*([\d,]+)\s*items\b/.exec(document.querySelector('.file-list-status')?.textContent||'');return m?Number(m[1].replace(/,/g,'')):null;}
+  async function navigate(path) {
+    checkpoint();if(!allowed(path))throw Error('目录不在允许的电视剧源目录内');
+    await waitFor(()=>document.querySelector('.files-breadcrumb-bar .breadcrumb-edit-btn'),'请打开 CloudDrive2 文件浏览器');
+    if(currentPath()!==path||breadcrumbPath()!==path) {
+      let input=document.querySelector('.files-breadcrumb-bar input.breadcrumb-path-input');
+      if(!input){document.querySelector('.files-breadcrumb-bar .breadcrumb-edit-btn').click();input=await waitFor(()=>document.querySelector('.files-breadcrumb-bar input.breadcrumb-path-input'),'路径框未出现');}
+      setInput(input,path);input.dispatchEvent(new KeyboardEvent('keydown',{key:'Enter',code:'Enter',bubbles:true}));
+      await waitFor(()=>currentPath()===path&&breadcrumbPath()===path,'路径导航失败');
+    }
+    const mode=document.querySelector('button[aria-label="列表视图"]');if(visible(mode))mode.click();
+    const filter=document.querySelector('.unified-header .uh-filter-input');if(filter?.value)setInput(filter,'');
+  }
+  async function listing(path,{uninterruptible=false}={}) {
+    if(uninterruptible)finishing++;
+    try {
+      await navigate(path);
+      requireConnected();
+      const refresh=await waitFor(()=>document.querySelector('button.toolbar-refresh-btn'),'刷新控件不存在');refresh.click();
+      const select=await waitFor(()=>document.querySelector('select.page-size-select'),'分页控件不存在');
+      if(![...select.options].some(o=>o.value==='all'))throw Error('无法读取全部条目');
+      if(select.value!=='all')setInput(select,'all');
+      const settle=createListingSettler(path);
+      return await waitFor(()=>{
+        if(currentPath()!==path||breadcrumbPath()!==path)throw pause('工作目录已切换，停止当前操作');
+        requireConnected();
+        if([...document.querySelectorAll('.files-load-error')].some(visible))throw Error('云盘列表加载失败，不能使用缓存结果');
+        const rows=readRows(),count=readCount(),loading=[...document.querySelectorAll('.file-list-scroll-area .loading-bar')].some(visible);
+        const emptyConfirmed=[...document.querySelectorAll('table.file-list .empty-state .empty-content p')].some(e=>visible(e)&&/^(此文件夹为空|This folder is empty)[.!。！]?$/i.test(e.textContent.trim()));
+        return settle({rows,count,loading,emptyConfirmed,allSelected:document.querySelector('select.page-size-select')?.value==='all'},Date.now());
+      },'文件列表未读全，不能确认数量或删除结果');
+    }finally{if(uninterruptible)finishing--;}
+  }
+  // 标准词条读取逻辑在构建时从初检源码复用；请求键独立为 tv_review，不会与初检串话。
+  /* build:douban-worker */
+  async function queryDouban(task,boundUrl) {
+    if(!ready())throw pause('请先打开豆瓣完成登录准备，勾选可访问后继续');
+    await sleep(3000);checkpoint();
+    const show=showInfo(task.name),id=crypto.randomUUID(),request={show,season:task.season,manual:false,created:Date.now()};
+    const url=boundUrl?validSubjectUrl(boundUrl):null;if(boundUrl&&!url)throw Error('豆瓣链接无效');
+    put('request:'+id,request);let tab,reply;
+    try {
+      tab=GM_openInTab((url||`https://search.douban.com/movie/subject_search?search_text=${encodeURIComponent(show.title+(task.season>1?' 第'+task.season+'季':''))}&cat=1002`)+'#tv_review='+id,{active:false,insert:true,setParent:true});
+      reply=await waitFor(()=>get('response:'+id,null),'豆瓣未返回结果，请检查登录或验证后继续',90000);
+      if(reply.blocked)throw pause(reply.error||'豆瓣需要人工验证');
+      if(reply.error)throw Error(reply.error);
+      return {...reply,source:'douban'};
+    }finally{del('request:'+id);del('response:'+id);if(reply&&!reply.blocked)tab?.close();}
+  }
+  const cleanText=e=>e.textContent.replace(/[\uE000-\uF8FF]/g,'').trim();
+  function rowFor(path){return [...document.querySelectorAll('table.file-list tr.file-row[data-path]')].find(e=>e.getAttribute('data-path')===path);}
+  function selected(){return [...document.querySelectorAll('table.file-list tr.file-row.selected')];}
+  function cancelDelete(){const d=[...document.querySelectorAll('[aria-labelledby="delete-confirm-title"]')].find(visible);[...d?.querySelectorAll('button')||[]].find(b=>cleanText(b)==='取消')?.click();}
+  async function deleteFile(file,expectedRows) {
+    let submitted=false;
+    function unchanged() {
+      if(!Array.isArray(expectedRows)||!expectedRows.length)throw Error('缺少删除前完整快照');
+      const key=r=>JSON.stringify([r.path,r.name,!!r.directory,r.modified,r.size]),current=readRows(),expected=new Map(expectedRows.map(r=>[r.path,key(r)]));
+      if(current.length!==expectedRows.length||current.some(r=>expected.get(r.path)!==key(r))||readCount()!==expectedRows.length||document.querySelector('select.page-size-select')?.value!=='all')throw Error('确认前文件列表或分页发生变化');
+    }
+    try {
+      checkpoint();requireConnected();
+      if(file.directory||!allowed(file.path)||currentPath()!==parent(file.path)||breadcrumbPath()!==parent(file.path))throw Error('拒绝删除目录、越界文件或其他工作目录中的文件');
+      if([...document.querySelectorAll('[role="dialog"]')].some(visible))throw Error('已有其他对话框打开，请先关闭后重新执行');
+      unchanged();
+      for(const e of selected())e.querySelector('.file-icon')?.dispatchEvent(new MouseEvent('click',{bubbles:true,ctrlKey:true}));
+      await waitFor(()=>!selected().length,'无法清除旧文件选择');
+      const row=rowFor(file.path);if(!row||row.classList.contains('directory'))throw Error('待删文件已经变化');
+      const current=readRows().find(r=>r.path===file.path);
+      if(!current||current.name!==file.name||current.modified!==file.modified||current.size!==file.size)throw Error('待删文件的名称、大小或时间已经变化');
+      row.querySelector('.file-name-ellipsis')?.click();
+      const menu=await waitFor(()=>[...document.querySelectorAll('[role="menu"]')].find(visible),'文件菜单未出现');
+      const chosen=selected();if(chosen.length!==1||chosen[0].getAttribute('data-path')!==file.path)throw Error('文件选择范围不等于待删单文件');
+      const remove=[...menu.querySelectorAll('button')].find(b=>cleanText(b)==='删除');if(!remove)throw Error('找不到普通删除入口');remove.click();
+      const dialog=await waitFor(()=>[...document.querySelectorAll('[aria-labelledby="delete-confirm-title"]')].find(visible),'删除确认窗口未出现');
+      const names=[...dialog.querySelectorAll('.delete-file-name')];
+      if(names.length!==1||names[0].textContent.trim()!==file.name)throw Error('确认窗口中的文件清单与计划不一致');
+      if(dialog.querySelector('input:checked')||/永久|不可恢复|permanent/i.test(dialog.textContent))throw Error('检测到永久删除选项，本脚本不执行');
+      if(dialog.querySelector('.delete-file-size')?.textContent.trim()!==file.size)throw Error('确认窗口中的文件大小不一致');
+      checkpoint();requireConnected();
+      unchanged();
+      if(currentPath()!==parent(file.path)||selected().length!==1||selected()[0].getAttribute('data-path')!==file.path)throw Error('确认前目录或选择发生变化');
+      const confirm=[...dialog.querySelectorAll('button')].find(b=>cleanText(b)==='删除');if(!confirm||confirm.disabled)throw Error('删除确认按钮不可用');
+      // 用户已在脚本面板确认本次具体清单，这里只确认已逐字核对的普通单文件删除。
+      finishing++;submitted=true;
+      try {confirm.click();await waitFor(()=>!visible(dialog),'删除请求未结束');}finally{finishing--;}
+    }catch(e){if(!submitted){cancelDelete();e.notSubmitted=true;}throw e;}
+  }
+  return {listing,queryDouban,deleteFile,worker:doubanWorker,currentPath,readRows,requireConnected};
+})

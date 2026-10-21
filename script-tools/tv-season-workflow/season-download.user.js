@@ -1081,7 +1081,7 @@ return exports;
     if(data['报告版本']&&data['报告版本']!=='tv-workflow/1')throw Error('不支持此报告版本');
     return {name,category,season,path,showPath,key:JSON.stringify([showPath,season,path]),data};
   }
-  function read(bytes,{origin,source,mode='download'}) {
+  function read(bytes,{origin,source,destination='/115/Library_incs/nas.finish/电视剧',mode='download'}) {
     if(!['download','review','archive'].includes(mode))throw Error('报告处理模式不支持');
     if(bytes.byteLength>30*1024*1024)throw Error('报告不能超过 30 MB');
     const original=new Uint8Array(bytes).slice(),zip=X.CFB.read(original,{type:'array'});
@@ -1131,7 +1131,7 @@ return exports;
       }
     }
     // 同一季出现多行时可共用防重复记录，但报告位置仍分别保留。
-    return {original,tasks,errors,skipped,sheets,updates:new Map(),mode};
+    return {original,tasks,errors,skipped,sheets,updates:new Map(),mode,origin,destination};
   }
   const escape=s=>String(s??'').replace(/[\x00-\x08\x0B\x0C\x0E-\x1F]/g,'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
   // 仅替换指定单元格，其他单元格原始 XML 字节不动；新增下载列使用 inlineStr，避免公式执行。
@@ -1230,7 +1230,7 @@ return exports;
       if(!value){item.text=item.text.replace(pattern,'');return;}
       if(archiving) {
         const u=new URL(value),p=u.searchParams.get('path');
-        if(u.origin!=='https://clouddrive.example'||u.username||u.password||u.hash||u.searchParams.get('page')!=='files'||!p?.startsWith('/115/Library_incs/nas.finish/电视剧/')||p.split('/').some(x=>x==='.'||x==='..'))throw Error('归档链接超出指定云盘目标');
+        if(u.origin!==session.origin||u.username||u.password||u.hash||u.searchParams.get('page')!=='files'||!p?.startsWith(session.destination+'/')||p.split('/').some(x=>x==='.'||x==='..'))throw Error('归档链接超出指定云盘目标');
       }else if(!/^https:\/\/movie\.douban\.com\/subject\/\d+\/$/.test(value))throw Error('复核来源链接不是有效豆瓣详情页');
       const relPath=sheetPath.replace(/([^/]+)$/,'_rels/$1.rels');
       if(!linkParts.has(relPath))linkParts.set(relPath,xml(zip.FullPaths.includes(zip.FullPaths[0]+relPath)?part(zip,relPath):'<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"/>'));

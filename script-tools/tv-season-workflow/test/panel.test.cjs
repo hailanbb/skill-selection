@@ -1,0 +1,137 @@
+// A DOM/GM adapter exercises the actual userscript event handlers without a network or cloud account.
+const {test}=require('node:test');
+const assert=require('node:assert/strict');
+const fs=require('node:fs');
+const vm=require('node:vm');
+const source=fs.readFileSync(require('node:path').join(__dirname,'../season-inspect.user.js'),'utf8');
+async function launch(initial={},responses=[],adapters={}) {
+  const values=new Map(Object.entries(initial)),elements=[],opened=[],requests=[],accesses=[];
+  class Element {
+    constructor(tag){this.tagName=tag.toUpperCase();this.children=[];this.style={};this.listeners={};this.checked=false;this.value='';this.textContent='';this.classes=new Set();
+      this.classList={add:c=>this.classes.add(c),contains:c=>this.classes.has(c),toggle:c=>this.classes.has(c)?this.classes.delete(c):this.classes.add(c)};elements.push(this);}
+    set className(v){this._className=v;this.classes=new Set(v.split(' '));}
+    get className(){return this._className||'';}
+    append(...children){this.children.push(...children);for(const c of children)if(c instanceof Element)c.parentElement=this;}
+    replaceChildren(...children){this.children=[];this.append(...children);}
+    attachShadow(){this.shadow=new Element('shadow');this.shadow.parentElement=this;return this.shadow;}
+    addEventListener(name,fn){(this.listeners[name]??=[]).push(fn);}
+    async fire(name,props={}){for(const fn of this.listeners[name]||[])await fn({target:this,button:0,preventDefault(){},...props});}
+    closest(tag){for(let e=this;e;e=e.parentElement)if(e.tagName===tag.toUpperCase())return e;return null;}
+    setPointerCapture(){}
+    getBoundingClientRect(){const box=elements.find(e=>e.className==='box');return {left:parseFloat(this.style.left)||500,top:parseFloat(this.style.top)||100,width:box?.classes.has('min')?240:440,height:box?.classes.has('min')?80:600};}
+    click(){return this.fire('click');}
+  }
+  const body=new Element('body');
+  const context={console,URL,URLSearchParams,TextDecoder,Blob,Map,Set,Date,JSON,Math,Number,Promise,crypto:require('node:crypto').webcrypto,
+    location:adapters.location||{hostname:'clouddrive.example',origin:'https://clouddrive.example',href:'https://clouddrive.example/?page=files'},
+    document:{body,createElement:t=>new Element(t),createTextNode:t=>({textContent:t})},
+    window:{addEventListener(){}},innerWidth:1200,innerHeight:900,requestAnimationFrame:fn=>fn(),ResizeObserver:class{constructor(fn){this.fn=fn;}observe(){}},
+    navigator:{locks:{request:async(_name,options,fn)=>(fn||options)({})}},structuredClone,confirm:adapters.confirm||(()=>true),
+    GM_getValue:(k,d)=>{accesses.push(['read',k]);return values.has(k)?values.get(k):d;},GM_setValue:(k,v)=>{accesses.push(['write',k]);values.set(k,structuredClone(v));},GM_deleteValue:k=>{accesses.push(['delete',k]);values.delete(k);},
+    GM_xmlhttpRequest:options=>{requests.push(options);queueMicrotask(()=>options.onload(responses.shift()||{status:200,response:{success:true}}));return {abort(){}};},
+    GM_openInTab:(url,options)=>{opened.push({url,options});return {close(){}};},setTimeout,clearTimeout};
+  context.testReview=adapters.review;context.testScan=adapters.scan;
+  context.testWorkflowReport=adapters.workflow;
+  context.testCloudClient=adapters.cloudClient;
+  const testSource=(adapters.source||source).replace('function excelReviewEngine() {','function excelReviewEngine() { if(testReview)return testReview;')
+    .replace('function reportEngine(){', 'function reportEngine(){ if(testWorkflowReport)return testWorkflowReport;')
+    .replace('const client=createClient(C,', 'const client=testCloudClient||createClient(C,')
+    .replace("async function scanShow(showRow, destinationNames, onlySeason=null, sourcePolicy='default') {","async function scanShow(showRow, destinationNames, onlySeason=null, sourcePolicy='default') { if(testScan)return testScan(showRow,onlySeason,sourcePolicy);");
+  vm.runInNewContext(testSource,context);
+  await new Promise(resolve=>setImmediate(resolve));
+  return {values,elements,opened,requests,accesses,button:name=>elements.find(e=>e.tagName==='BUTTON'&&e.textContent===name)};
+}
+test('第四阶段安装和导入保持空闲，开始只检查，明确确认后移动并验证成功',async()=>{
+  const A=require('../season-archive.user.js'),name='测试剧 (2025)',category='日本剧集',source=A.SOURCE+'/'+category+'/'+name,target=A.DEST+'/'+category+'/'+name;
+  const task={name,category,showPath:source,path:source+'/Season 1',season:1,color:'green',data:{'来源登记集数':1}};
+  const file=(p,n,directory=false)=>({path:p+'/'+n,name:n,directory,size:directory?'':'1 GB',modified:'2026-10-21 10:00'});
+  const tree=new Map([[A.DEST,[file(A.DEST,category,true)]],[A.DEST+'/'+category,[]],[A.SOURCE+'/'+category,[file(A.SOURCE+'/'+category,name,true)]],[source,[file(source,'Season 1',true)]],[task.path,[file(task.path,'测试剧.S01E01.mkv')]]]);
+  const session={tasks:[task],errors:[],updates:new Map()};let lists=0,moves=0,confirmed=false;
+  const page=await launch({},[],{source:fs.readFileSync(require('node:path').join(__dirname,'../season-archive.user.js'),'utf8'),workflow:{read:()=>session},confirm:()=>confirmed,
+    cloudClient:{listing:async p=>{lists++;if(!tree.has(p))throw Error('not found');return structuredClone(tree.get(p));},moveShow:async()=>{moves++;tree.set(A.SOURCE+'/'+category,[]);tree.set(A.DEST+'/'+category,[file(A.DEST+'/'+category,name,true)]);tree.set(target,[file(target,'Season 1',true)]);tree.set(target+'/Season 1',[file(target+'/Season 1','测试剧.S01E01.mkv')]);tree.delete(source);tree.delete(task.path);}}});
+  assert.equal(lists,0);assert.equal(moves,0);
+  const input=page.elements.find(e=>e.type==='file');input.files=[{name:'归档测试.xlsx',size:10,arrayBuffer:async()=>new ArrayBuffer(10)}];await input.fire('change');
+  assert.equal(lists,0);assert.equal(moves,0);await page.button('开始检查').click();assert.ok(lists>0);assert.equal(moves,0);assert.equal(session.updates.get(task).color,null);
+  await page.button('执行已列归档清单').click();assert.equal(moves,0);confirmed=true;await page.button('执行已列归档清单').click();assert.equal(moves,1);assert.equal(session.updates.get(task).color,'archived');
+  assert.equal(page.opened.length,0);assert.equal(page.requests.length,0);
+});
+
+test('归档面板仅将无冲突且成功的季标紫，同季跳过仍保留原色及逐文件清单',async()=>{
+  const A=require('../season-archive.user.js'),name='天龙八部',category='日本剧集',source=A.SOURCE+'/'+category+'/'+name,target=A.DEST+'/'+category+'/'+name;
+  const file=(p,n,directory=false)=>({path:p+'/'+n,name:n,directory,size:directory?'':'1 GB',modified:'2026-10-21 10:00'});
+  const tasks=[1,2].map(season=>({name,category,showPath:source,path:source+'/Season '+season,season,color:'green',data:{'来源登记集数':1}}));
+  const tree=new Map([[A.DEST,[file(A.DEST,category,true)]],[A.DEST+'/'+category,[file(A.DEST+'/'+category,name,true)]],[A.SOURCE+'/'+category,[file(A.SOURCE+'/'+category,name,true)]],
+    [source,[file(source,'Season 1',true),file(source,'Season 2',true)]],[target,[file(target,'Season 1',true)]],[target+'/Season 1',[file(target+'/Season 1','旧版.S01E01.mkv')]],
+    ...tasks.map(t=>[t.path,[file(t.path,`视频.S0${t.season}E01.mkv`)]])]);
+  const session={tasks,errors:[],updates:new Map()};let moves=0;
+  const page=await launch({},[],{source:fs.readFileSync(require('node:path').join(__dirname,'../season-archive.user.js'),'utf8'),workflow:{read:()=>session},cloudClient:{listing:async p=>structuredClone(tree.get(p)),moveShow:async op=>{
+    moves++;assert.equal(op.source,tasks[1].path);tree.set(source,tree.get(source).filter(f=>f.path!==op.source));tree.get(target).push(file(target,'Season 2',true));tree.set(op.target,tree.get(op.source).map(f=>({...f,path:op.target+'/'+f.name})));tree.delete(op.source);
+  }}});
+  const input=page.elements.find(e=>e.type==='file');input.files=[{name:'归档.xlsx',size:10,arrayBuffer:async()=>new ArrayBuffer(10)}];await input.fire('change');await page.button('开始检查').click();
+  assert.equal(session.updates.get(tasks[0]).state,'同季冲突，已跳过');await page.button('执行已列归档清单').click();
+  assert.equal(moves,1);assert.equal(session.updates.get(tasks[0]).color,null);assert.equal(session.updates.get(tasks[1]).color,'archived');
+  const record=session.updates.get(tasks[1]).record;assert.equal(record.operations[0].state,'verified');assert.ok(record.preserved.some(f=>f.path===tasks[0].path));
+});
+test('初检持久进度必须手动恢复，恢复不查询云盘或豆瓣，也不自动续跑',async()=>{
+  const C=require('../season-inspect.user.js'),name='测试剧 (2025)',showPath=C.SOURCE+'/日本剧集/'+name;
+  const saved={schema:2,job:{id:'saved',category:'日本剧集',startedAt:'2026-10-21T00:00:00Z',mode:'read-only',status:'已完成',index:1,
+    queue:[{name,path:showPath,directory:true}],results:[{showName:name,showPath,path:showPath+'/Season 1',show:C.showInfo(name),season:1,pendingDouban:true,status:'豆瓣待补查',total:2}]}};
+  const page=await launch({'tv-inspect-v1:progress-available':true,'tv-inspect-v1:progress-v2':saved},[],{source:fs.readFileSync(require('node:path').join(__dirname,'../season-inspect.user.js'),'utf8')});
+  assert.equal(page.button('仅补查豆瓣待处理项').disabled,true);await page.button('恢复上次进度').click();
+  assert.equal(page.button('仅补查豆瓣待处理项').disabled,false);assert.equal(page.values.get('tv-inspect-v1:progress-v2').job.status,'已暂停');
+  assert.equal(page.requests.length,0);assert.equal(page.opened.length,0);
+});
+test('初检已有标签页可人工确认恢复，但冷却未结束不能解除且不会发请求',async()=>{
+  const gate={pages:[],batch:0,restUntil:0,hold:true,holdUntil:Date.now()+1800000,reason:'验证码'};
+  const page=await launch({'tv-inspect-v1:douban-budget-v1':gate},[],{source:fs.readFileSync(require('node:path').join(__dirname,'../season-inspect.user.js'),'utf8')});
+  const ready=page.elements.find(e=>e.type==='checkbox');assert.equal(ready.disabled,false);ready.checked=true;await ready.fire('change');
+  await page.button('人工确认豆瓣已恢复').click();assert.equal(page.values.get('tv-inspect-v1:douban-budget-v1').hold,true);
+  page.values.set('tv-inspect-v1:douban-budget-v1',{...gate,holdUntil:Date.now()-1});await page.button('人工确认豆瓣已恢复').click();
+  assert.equal(page.values.get('tv-inspect-v1:douban-budget-v1').hold,false);assert.equal(page.requests.length,0);assert.equal(page.opened.length,0);
+});
+test('独立初检脚本安装默认停止，没有导入、复核、删除、移动入口，不读旧版设置',async()=>{
+  const inspect=fs.readFileSync(require('node:path').join(__dirname,'../season-inspect.user.js'),'utf8');
+  const page=await launch({'tv-audit-v1:job':{status:'运行中'}},[],{source:inspect});
+  assert.equal(page.opened.length,0);assert.equal(page.requests.length,0);
+  assert.equal(page.button('开始检查').disabled,false);assert.equal(page.button('继续本轮').disabled,true);
+  assert.equal(page.button('导入 Excel，复核黄色项'),undefined);assert.equal(page.elements.some(e=>e.type==='file'),false);
+  assert.ok(page.button('导出 Excel（绿 / 蓝标记）'));
+  assert.ok(page.accesses.every(([,key])=>key.startsWith('tv-inspect-v1:')));
+});
+
+test('下载面板默认停止；导入 Excel 不查询接口、不提交下载，只启用开始/继续',async()=>{
+  const download=fs.readFileSync(require('node:path').join(__dirname,'../season-download.user.js'),'utf8');
+  const page=await launch({},[],{source:download,location:{hostname:'moviepilot.example',origin:'https://moviepilot.example'},workflow:{read:()=>({tasks:[{name:'测试剧',season:1}],errors:[],skipped:3,updates:new Map()})}});
+  assert.equal(page.button('开始补缺下载').disabled,true);assert.equal(page.requests.length,0);assert.equal(page.opened.length,0);
+  const file=page.elements.find(e=>e.type==='file');file.files=[{name:'检查.xlsx',size:10,arrayBuffer:async()=>new ArrayBuffer(10)}];await file.fire('change');
+  assert.equal(page.button('开始补缺下载').disabled,false);assert.equal(page.button('继续本轮').disabled,false);
+  assert.equal(page.requests.length,0);assert.equal(page.opened.length,0);assert.ok(page.elements.some(e=>e.textContent.includes('尚未执行')));
+});
+
+test('清理面板默认停止；导入只生成黄色队列，不查询豆瓣或删除；无清单不能执行清理',async()=>{
+  const review=fs.readFileSync(require('node:path').join(__dirname,'../season-review.user.js'),'utf8');
+  let mode;
+  const page=await launch({},[],{source:review,workflow:{read:(_bytes,options)=>{mode=options.mode;return {tasks:[{name:'测试剧',season:1}],errors:[],skipped:2,updates:new Map()};}}});
+  assert.equal(page.button('开始复核').disabled,true);assert.equal(page.button('执行已列清理清单').disabled,true);
+  const file=page.elements.find(e=>e.type==='file');file.files=[{name:'下载报告.xlsx',size:10,arrayBuffer:async()=>new ArrayBuffer(10)}];await file.fire('change');
+  assert.equal(mode,'review');assert.equal(page.button('开始复核').disabled,false);assert.equal(page.button('继续复核').disabled,false);
+  assert.equal(page.button('执行已列清理清单').disabled,true);assert.equal(page.opened.length,0);assert.equal(page.requests.length,0);
+  assert.ok(page.accesses.every(([,key])=>key.startsWith('tv-review-v1:')));
+});
+
+test('真实清理面板流程：开始只生成清单；拒绝确认不删；确认后验证并转绿',async()=>{
+  const review=fs.readFileSync(require('node:path').join(__dirname,'../season-review.user.js'),'utf8');
+  const dir='/115/Library_incs/nas/电视剧/日本剧集/测试剧 (2025)/Season 1';
+  const task={name:'测试剧 (2025)',season:1,path:dir,key:'cleanup-panel',data:{'来源登记集数':2,'播出状态':'已播完'}};
+  let files=['Test.S01E01.1080p-A.mkv','Test.S01E02.1080p-A.mkv','Test.S01E01.720p-B.mkv'].map(name=>({name,path:dir+'/'+name,size:'1 GB',modified:'2026-10-20 10:00',directory:false}));
+  const updates=new Map(),removed=[];let permit=false,queries=0;
+  const page=await launch({},[],{source:review,confirm:()=>permit,workflow:{read:()=>({tasks:[task],errors:[],skipped:0,updates})},cloudClient:{
+    worker(){},listing:async path=>{assert.equal(path,dir);return structuredClone(files);},queryDouban:async()=>{queries++;return {total:2,title:'测试剧 (2025)',releaseYears:['2025'],url:'https://movie.douban.com/subject/1/',broadcast:'已播完'};},
+    deleteFile:async f=>{removed.push(f.path);files=files.filter(r=>r.path!==f.path);}
+  }});
+  const input=page.elements.find(e=>e.type==='file');input.files=[{name:'下载报告.xlsx',size:10,arrayBuffer:async()=>new ArrayBuffer(10)}];await input.fire('change');
+  await page.button('开始复核').click();assert.equal(queries,1);assert.equal(removed.length,0);assert.equal(updates.get(task).state,'待确认清理');assert.equal(page.button('执行已列清理清单').disabled,false);
+  await page.button('执行已列清理清单').click();assert.equal(removed.length,0);
+  permit=true;await page.button('执行已列清理清单').click();assert.equal(removed.length,1);assert.equal(files.length,2);
+  assert.equal(updates.get(task).color,'green');assert.equal(updates.get(task).videoCount,2);assert.equal(updates.get(task).deleted.length,1);assert.equal(page.button('执行已列清理清单').disabled,true);
+});

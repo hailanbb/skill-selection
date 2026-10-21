@@ -17,8 +17,7 @@ skill-selection/
 │       └── codex-quota-mode/    # Astra medium + Luna medium 全局省额度开关
 ├── script-tools/               # 脚本工具（独立于 Skills）
 │   ├── README.md               # 脚本工具索引
-│   ├── tv-season-workflow/      # ① CloudDrive2 初检 + ② MoviePilot 补缺，附从零教程
-│   ├── clouddrive2-season-audit/ # CloudDrive2 剧集逐季核对与报告导出
+│   ├── tv-season-workflow/      # 一个项目：初检、下载、复核清理、归档
 │   └── moviepilot-unsubscribe/ # MoviePilot订阅批量取消脚本
 │       ├── README.md           # 安装、站点配置与操作指南
 │       ├── moviepilot-unsubscribe.user.js # Tampermonkey 安装文件
@@ -110,9 +109,7 @@ skill-selection/
 | 脚本名称 | 适用环境 | 核心功能 | 文件与说明 |
 | :--- | :--- | :--- | :--- |
 | **MoviePilot订阅批量取消脚本 · v2.4.0** | **Chrome + Tampermonkey + MoviePilot** | 从底部逐项取消订阅；支持电视剧零进度取消、2026年前未完成订阅维护、跳过名单、整季资源比较、可折叠面板与处理记录。 | [安装脚本](script-tools/moviepilot-unsubscribe/moviepilot-unsubscribe.user.js) · [👉 配置与使用指南](script-tools/moviepilot-unsubscribe/README.md) |
-| **① CloudDrive2 剧集初检 · v1.1.2** | **Chrome + Tampermonkey + CloudDrive2** | 按季只读核对；TMDB 主查、豆瓣缓存/限速补查；绿/蓝报告及进度恢复。 | [安装脚本](script-tools/tv-season-workflow/season-inspect.user.js) · [从零安装](script-tools/tv-season-workflow/INSTALL.md) · [完整说明](script-tools/tv-season-workflow/docs/01-inspect.md) |
-| **② MoviePilot 剧集补缺下载 · v1.2.2** | **Chrome + Tampermonkey + MoviePilot** | Excel 驱动补缺；整季优先、中文优先、≥5 做种优先小容量，导出逐资源明细。 | [安装脚本](script-tools/tv-season-workflow/season-download.user.js) · [从零安装](script-tools/tv-season-workflow/INSTALL.md) · [完整说明](script-tools/tv-season-workflow/docs/02-download.md) |
-| **CloudDrive2剧集整理助手 · 只读核对版 v0.5.0** | **Chrome + Tampermonkey + CloudDrive2** | 指定分类逐季核对；TMDB 主查、豆瓣复核未完结，重名检查及 Excel 绿色标记／CSV／JSON 导出，不移动文件。 | [安装脚本](script-tools/clouddrive2-season-audit/season-audit.user.js) · [👉 配置与使用指南](script-tools/clouddrive2-season-audit/README.md) |
+| **剧集整理工作流 · 四阶段** | **Chrome + Tampermonkey + CloudDrive2 / MoviePilot** | ① 初检 → ② 补缺下载 → ③ 复核清理 → ④ 归档；Excel 衔接，逐项记录下载、删除和移动。 | [项目与四个脚本](script-tools/tv-season-workflow/README.md) · [从零安装](script-tools/tv-season-workflow/INSTALL.md) · [报告与追溯](script-tools/tv-season-workflow/REPORT.md) |
 
 脚本需按指南配置自己的站点地址；安装后默认不运行。单项试跑与批量运行自由选择，不需要先安装 Agent Skill。更多工具见 [脚本工具索引](script-tools/README.md)。
 

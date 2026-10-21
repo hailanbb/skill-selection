@@ -2,7 +2,7 @@
   "name": "tv-season-workflow",
   "version": "1.2.2",
   "private": true,
-  "description": "CloudDrive2 初检与 MoviePilot 补缺下载",
+  "description": "剧集整理工作流：初检、下载、复核清理与归档",
   "engines": {
     "node": ">=20"
   },

@@ -78,6 +78,17 @@ function fixture(edit=()=>{}) {
   X.utils.book_append_sheet(book,X.utils.aoa_to_sheet([['人工维护'],['原样保留']]),'个人备注');
   edit(book,sheet);return new Uint8Array(X.write(book,{type:'array',bookType:'xlsx',compression:true}));
 }
+test('自定义云盘端口与中文归档根目录写入有效目标链接，并拒绝旧默认地址',()=>{
+  const origin='https://custom.example:9443',source='/云盘/待整理/剧集',destination='/云盘/已整理/剧集';
+  const replace=s=>s.replaceAll(options.origin,origin).replaceAll(encodeURIComponent(I.SOURCE),encodeURIComponent(source)).replaceAll(I.SOURCE,source);
+  const bytes=fixture((_book,sheet)=>{for(const [key,cell] of Object.entries(sheet))if(!key.startsWith('!')){if(typeof cell.v==='string')cell.v=replace(cell.v);if(cell.l?.Target)cell.l.Target=replace(cell.l.Target);}});
+  const s=R.read(bytes,{origin,source,destination,mode:'archive'});assert.equal(s.errors.length,0);assert.equal(s.tasks.length,4);
+  const row=s.tasks[0],target=destination+'/'+row.category+'/'+row.name,targetUrl=origin+'/?page=files&path='+encodeURIComponent(target+'/Season 1');
+  s.updates.set(row,{state:'已归档',color:'archived',target,targetUrl,record:{verified:true}});
+  const out=R.write(s),round=R.read(out,{origin,source,destination,mode:'archive'});assert.equal(round.tasks[0].data['归档目标路径'],target);
+  const rel=[...entries(out)].find(([p])=>p.endsWith('/xl/worksheets/_rels/sheet1.xml.rels'))[1].toString('utf8');assert.ok(rel.includes(targetUrl.replaceAll('&','&amp;')));
+  for(const bad of [targetUrl.replace(origin,options.origin),origin+'/?page=files&path='+encodeURIComponent('/115/Library_incs/nas.finish/电视剧/日本剧集/测试剧')]){s.updates.get(row).targetUrl=bad;assert.throws(()=>R.write(s),/归档链接/);}
+});
 function entries(bytes) {
   const zip=X.CFB.read(bytes,{type:'array'});
   return new Map(zip.FullPaths.map((p,i)=>[p,Buffer.from(zip.FileIndex[i].content||[])]));
