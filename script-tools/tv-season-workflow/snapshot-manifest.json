@@ -1,5 +1,5 @@
 {
-  "date": "2026-10-21",
+  "date": "2026-10-22",
   "versions": {
     "inspect": "1.1.2",
     "download": "1.2.2"
@@ -9,14 +9,14 @@
     ".gitattributes": "a79691a93b46e49ce460c26ef22afcc03d6eca1e63bf2edbc20e96159510f6c9",
     ".gitignore": "4d56952b0fb13bf8f9b6c13a6d4c34a075bac3af447636a1df4335d7576e2f97",
     "build.cjs": "35686f58dd98fafba68dfe53e7f340bdf9d2aaeb00755e6de51fccb318f82170",
-    "CHANGELOG.md": "63d75962e6f871964af4397d6eb823f119fb96853f269a4cd502ee7c39284e93",
-    "docs/01-inspect.md": "3ce7b5bb91c0850a58f808be1ba180d9d1065672f0cd2221816ee79e1c2be79a",
+    "CHANGELOG.md": "577719cae089d6b5747c8c168528cd1397acca05662733860f8c97ba60bca422",
+    "docs/01-inspect.md": "d45e0620a267e6e0fae6c6c5c6ea7a62879cc0a059dfa3ee972020a5e1694166",
     "docs/02-download.md": "142c964ab0da6a5c357c5d11f2f12bfdc7a5e08e6a68889cdad5ada046cd7bd0",
     "docs/requirements-01-inspect.md": "e517482baad4bde5c9937eb121646d2bcc4953ffafad42a272a3dd93c6be8456",
     "docs/requirements-02-download.md": "ff12e2dd9e86a738d5c0aa12439ffb57efcd6de58515f3af3067c19db9e00e0b",
     "INSTALL.md": "98acf18edfe8e7452e215adc45ed488a00b553e54b00d919cbe7d54f34396f78",
     "package.json": "f8cc5db2180bfb6da500f5367b224111bfe27bfd8b2413af3d8d81a9222da750",
-    "README.md": "b0c05d69d63fc3021f7e717b05619c4ae1ba1e887f55bb5b8407184c50b50dd1",
+    "README.md": "aa27d412169003095903027680a03aa4b89b89657d38378245dd5ed905a51d68",
     "season-download.user.js": "118afb91c1de27c25896c0a69421b001745598d534e034630f21498d70e21f18",
     "season-inspect.user.js": "2d143b398493c1fa8d38fa37461a8e14040ecb8b5e6a1604527314ce7ba6e273",
     "src/douban-policy.js": "7a6066a81b1d70884464234ae6409a647a29ea85187d83a30559c750bf68f932",
