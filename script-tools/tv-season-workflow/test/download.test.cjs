@@ -200,3 +200,24 @@ test('名称搜索读取所有页；无结果消息与其他失败严格区分',
   assert.equal((await adapter.search({...task(),tmdb:'',douban:''})).length,1);assert.deepEqual(pages,[0,1]);
   api.get=async()=>({success:false,message:'站点连接失败'});await assert.rejects(()=>adapter.search(task()),/未完成/);
 });
+
+test('先查下载管理，覆盖全部缺集时不搜索、不提交，并保存现有任务',async()=>{
+ const events=[],h=harness([],{active:async()=>{events.push('active');return [{hash:'already',title:'existing',media:{type:'电视剧',tmdb_id:123},season_episode:'S01E02-E04'}];},search:async()=>{assert.fail('不应搜索');}});
+ const r=await C.processTask(task(),h.deps);assert.deepEqual(events,['active']);assert.equal(h.calls.length,0);assert.equal(r.color,'yellow');assert.deepEqual(r.remaining,[]);assert.equal(r.records[0].id,'already');
+});
+test('已有第2集只补第4集，排除重叠整季和零散包',async()=>{
+ const h=harness([torrent('pack'),torrent('overlap',[2,4],100),torrent('E4',[4],5)],{active:async()=>[{hash:'old2',title:'Old2',media:{type:'电视剧',tmdb_id:123},season_episode:'S01E02'}]});
+ const r=await C.processTask(task(),h.deps);assert.deepEqual(h.calls.map(c=>c.torrent_info.title),['E4']);assert.deepEqual(r.remaining,[]);assert.equal(r.records.filter(r=>r.state==='existing').length,1);
+});
+test('搜索期间出现的任务在提交前重新识别，避免重复',async()=>{
+ let n=0;const h=harness([torrent('E2',[2]),torrent('E4',[4])],{active:async()=>++n===1?[]:[{hash:'new',title:'New',media:{type:'电视剧',tmdb_id:123},season_episode:'S01E02-E04'}]});
+ const r=await C.processTask(task(),h.deps);assert.equal(n,2);assert.equal(h.calls.length,0);assert.equal(r.color,'yellow');
+});
+test('另一季或明确不同剧ID的下载不阻止本季补缺',async()=>{
+ const h=harness([torrent()],{active:async()=>[{hash:'otherseason',media:{type:'电视剧',tmdb_id:123},season_episode:'S02E02'},{hash:'otherid',media:{type:'电视剧',tmdb_id:456},season_episode:'S01E02'}]});await C.processTask(task(),h.deps);assert.equal(h.calls.length,1);
+});
+test('下载管理不可读取时不搜索、不提交，不能当作空任务列表',async()=>{
+ const h=harness([],{active:async()=>({error:'unavailable'}),search:async()=>assert.fail('不应搜索')});await assert.rejects(C.processTask(task(),h.deps),/无法核查/);assert.equal(h.calls.length,0);
+});
+
+test('已有任务的资源即使做种不足2，也不会被防重复核查忽略',async()=>{const h=harness([torrent('OldLow',undefined,0)],{active:async()=>[{hash:'low',title:'OldLow',site_name:'测试站'}]});const r=await C.processTask(task(),h.deps);assert.equal(h.calls.length,0);assert.equal(r.color,'yellow');assert.equal(r.records[0].seeds,0);});

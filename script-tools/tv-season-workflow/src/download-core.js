@@ -144,7 +144,7 @@
       const matched=contexts.map(c=>c?.media_info).filter(m=>sameIdentity(task,m));
       if(['tmdb_id','douban_id'].some(k=>new Set(matched.map(m=>String(m[k]||'')).filter(Boolean)).size>1))return {selected:[],remaining:task.needed,ambiguous:true,identityAmbiguous:true};
     }
-    const all=contexts.map(c=>candidate(task,c)),eligible=[...new Map(all.filter(c=>c.kind==='eligible').map(c=>[c.key,c])).values()];
+    const all=contexts.map(c=>candidate(task,c)),eligible=[...new Map(all.filter(c=>c.kind==='eligible'&&!c.episodes.some(n=>covered.includes(n))).map(c=>[c.key,c])).values()];
     let remaining=task.needed?.filter(n=>!covered.includes(n))??null;
     if(remaining?.length===0)return {selected:[],remaining,ambiguous:false};
     const pack=!covered.length?pick(eligible.filter(c=>c.full)):null;
@@ -171,7 +171,11 @@
     if(!sameIdentity(task,media)&&!named)return null;
     const ss=[...String(item.season_episode||'').matchAll(/S(\d{1,3})/ig)].map(m=>Number(m[1]));
     if(!ss.length||ss.some(n=>n!==task.season))return null;
-    return {episodes:[],title:title||task.title,site:item.site_name||'',key:'existing:'+String(item.hash||title),seedNote:'只确认本季已有任务，未取得对应资源的做种数'};
+    // 下载管理中的明确集号直接用于排除；裸 S01 不能证明整季已下载，保守阻止本季重复添加。
+    const label=String(item.season_episode||'').trim(),match=/^S\d{1,3}\s*E(\d{1,4})(?:\s*[-~]\s*E?(\d{1,4}))?$/i.exec(label);
+    let covered=[];
+    if(match){const a=Number(match[1]),b=Number(match[2]||match[1]);if(positive(a)&&positive(b)&&b>=a&&b<=task.total)covered=range(b-a+1).map(n=>a+n-1);}
+    return {episodes:covered,title:title||task.title,site:item.site_name||'',key:'existing:'+String(item.hash||title),scope:covered.length===1?'episode':covered.length?'episodes':'unknown',selectionReason:'下载管理已有任务，本轮未提交',seedNote:'下载管理现有任务，未查询对应资源的做种数'};
   }
   function outcome(task,records,{state,note='',color=null,remaining}={}) {
     const success=records.filter(r=>['accepted','existing'].includes(r.state));
@@ -190,25 +194,35 @@
     if(task.needed?.length===0)return outcome(task,records,{state:'无需下载',note:'报告没有已确认的缺失集号；重复版本或播出状态问题交第三脚本复核'});
     const recorded=uniq(records.filter(r=>['accepted','existing'].includes(r.state)).flatMap(r=>r.episodes));
     if(task.needed?.length&&task.needed.every(n=>recorded.includes(n)))return outcome(task,records,{state:'已提交下载，待复核',color:'yellow',note:'防重复记录已覆盖报告缺集，本次不再搜索或提交'});
+    // 先读下载管理，再搜资源站；任务列表读取失败时不允许提交。
+    const coverage=()=>uniq(records.filter(r=>['accepted','existing'].includes(r.state)).flatMap(r=>r.episodes));
+    async function inspectActive(verified=[]) {
+      checkpoint();progress('核查下载管理中的现有任务');const current=await active();checkpoint();
+      if(!Array.isArray(current))throw Error('无法核查 MoviePilot 现有任务，停止提交');
+      let changed=false;
+      for(const item of current){const match=activeMatch(task,item,verified);if(!match)continue;
+        if(!records.some(r=>r.key===match.key||(item.hash&&r.id===String(item.hash)))){records.push(safeRecord({...match,state:'existing',id:item.hash||'',at:new Date().toISOString()}));changed=true;}
+      }
+      if(changed)save(task.key,records);
+      if(records.some(r=>r.state==='existing'&&!r.episodes.length))return outcome(task,records,{state:'已有下载任务，待复核',color:'yellow',note:'下载管理已有本季任务，但覆盖集号未明确；本轮不追加，避免重复下载'});
+      if(task.needed?.every(n=>coverage().includes(n)))return outcome(task,records,{state:'已有下载任务，待复核',color:'yellow',note:'下载管理或已提交记录已覆盖全部缺集，本轮无需追加'});
+      return null;
+    }
+    const prior=await inspectActive();if(prior)return prior;
     checkpoint();progress('查询本剧本季资源');
     const contexts=await search(task);checkpoint();
     if(!Array.isArray(contexts))throw Error('MoviePilot 搜索结果格式不支持');
     const accepted=records.filter(r=>['accepted','existing'].includes(r.state));
-    const plan=choose(task,contexts,uniq(accepted.flatMap(r=>r.episodes)));
+    let plan=choose(task,contexts,uniq(accepted.flatMap(r=>r.episodes)));
     if(plan.identityAmbiguous)return outcome(task,records,{state:'媒体身份待核实',note:'同名同年的结果对应多个媒体 ID，请先在报告中确认本剧 ID；本次不下载',color:accepted.length?'yellow':null});
-    // 仍要检查 MoviePilot 已有任务，不能只凭本地日志认为尚未下载。
-    progress('核查现有下载任务');const current=await active();checkpoint();
-    if(!Array.isArray(current))throw Error('无法核查 MoviePilot 现有任务，停止提交');
-    const verified=contexts.map(c=>candidate(task,c)).filter(c=>c.kind==='eligible');
-    const matches=current.map(i=>({item:i,match:activeMatch(task,i,verified)})).filter(x=>x.match);
-    if(matches.length) {
-      for(const {item,match} of matches)if(!records.some(r=>r.key===match.key))records.push(safeRecord({...match,state:'existing',id:item.hash||'',at:new Date().toISOString()}));
-      save(task.key,records);
-      return outcome(task,records,{state:'已有下载任务，待复核',color:'yellow',note:'检测到本季已有下载，保留待复核；本次不再追加'});
-    }
-    for(const c of plan.selected) {
+    // 现有任务不受新下载的最低做种门槛限制；比较时保留真实做种数，不伪造报告值。
+    const verified=contexts.map(context=>{const t=context.torrent_info||{},c=candidate(task,{...context,torrent_info:{...t,seeders:2,enclosure:t.enclosure||'existing-comparison-only'}});const n=typeof t.seeders==='number'?t.seeders:/^\d+$/.test(String(t.seeders))?Number(t.seeders):NaN;return {...c,seeds:Number.isFinite(n)&&n>=0?n:null};}).filter(c=>c.kind==='eligible');
+    // 搜索期间或多资源提交之间可能出现新任务，每次提交前重读并重新计算未覆盖集号。
+    while(true) {
+      if(task.needed?.every(n=>coverage().includes(n)))break;
+      const existing=await inspectActive(verified);if(existing)return existing;
+      plan=choose(task,contexts,coverage());const c=plan.selected[0];if(!c)break;
       checkpoint();
-      if(records.some(r=>r.key===c.key&&['accepted','existing'].includes(r.state)))continue;
       const record=safeRecord({key:c.key,state:'submitting',id:'',title:c.title,site:c.site,episodes:c.episodes,seeds:c.seeds,at:new Date().toISOString(),scope:c.full?'season':c.episodes.length===1?'episode':'episodes',sizeBytes:c.sizeBytes,estimatedBytes:c.estimatedBytes,chineseMark:c.chineseMark,selectionReason:c.selectionReason,seedNote:'提交前的站点搜索快照，不代表当前实时做种数'});
       records=records.filter(r=>r.key!==c.key);records.push(record);
       save(task.key,records); // 持久化成功是提交前置条件，保存失败时不发出请求。
@@ -230,7 +244,7 @@
       }
     }
     const successful=records.some(r=>['accepted','existing'].includes(r.state));
-    if(successful)return outcome(task,records,{state:'已提交下载，待复核',color:'yellow',note:plan.remaining?.length?'只覆盖部分缺集，其余集号见下载未覆盖集号':'已提交，需等待实际下载完成后再复核'});
+    if(successful)return outcome(task,records,{state:records.some(r=>r.state==='accepted')?'已提交下载，待复核':'已有下载任务，待复核',color:'yellow',note:plan.remaining?.length?'已有任务或本轮提交只覆盖部分缺集，其余集号见下载未覆盖集号':'已有任务或本轮提交已覆盖缺集，等待实际下载完成后再复核'});
     if(plan.ambiguous)return outcome(task,records,{state:'待核实',note:'媒体身份、资源集号、做种数或报告缺集信息不足，不能自动确认可下载范围'});
     return outcome(task,records,{state:'无合格资源',color:'red',note:'未找到匹配本剧本季且做种人数不少于 2 的可用资源',remaining:plan.remaining});
   }
