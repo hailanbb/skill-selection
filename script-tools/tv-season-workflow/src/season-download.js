@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         剧集工作流 ② · MoviePilot 补缺下载
 // @namespace    local.tv-season-download
-// @version      1.2.3
+// @version      1.3.0
 // @description  手动补缺；整季优先、中文标记优先，做种≥5时优先小容量；逐资源导出选择依据。
 // @match        https://moviepilot.example/*
 // @grant        unsafeWindow
@@ -24,11 +24,14 @@
   const SOURCE='/115/Library_incs/nas/电视剧';
   const simplify=/* build:opencc */ null;
   const Titles=(/* build:title-text */ null)(simplify);
-  const Core=(/* build:download-core */ null)(Titles);
+  const VersionCloud=(/* build:cloud-core */ null)(simplify);
+  const VersionHelpers=(/* build:version-helpers */ null)(VersionCloud);
+  const Versions=(/* build:version-download */ null)(VersionHelpers);
+  const Core=(/* build:download-core */ null)(Titles,Versions);
   let excel,report;
   const excelEngine=()=>excel||=(/* build:xlsx */ null);
   function reportEngine(){return report||=(/* build:workflow-report */ null)(excelEngine());}
-  if(typeof module!=='undefined'&&module.exports){module.exports={...Core,reportEngine};return;}
+  if(typeof module!=='undefined'&&module.exports){module.exports={...Core,Versions,reportEngine};return;}
   if(location.origin!==ORIGIN)return;
   const NS='tv-download-v1:';
   let session=null,index=0,running=false,importing=false,stopping=false,ui;

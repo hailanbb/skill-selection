@@ -36,6 +36,11 @@ if(reviewClient.split(listingStart).length!==2||reviewClient.split(listingEnd).l
 const cloudListing=reviewClient.slice(reviewClient.indexOf(listingStart),reviewClient.indexOf(listingEnd))
   .replace("return path.startsWith(SOURCE+'/')&&!path.split('/').some(s=>s==='.'||s==='..');","return [SOURCE,DEST].some(root=>path===root||path.startsWith(root+'/'))&&!path.split('/').some(s=>s==='.'||s==='..')&&!/[\\\\\\x00-\\x1f]/.test(path);")
   .replaceAll('停止清理','停止归档').replaceAll('数量或删除结果','数量或移动结果');
+// 共享第三阶段 versionOf 的原函数，避免两套版本分组规则漂移；不嵌入删除状态机。
+const cleanupSource=read('src/cleanup-core.js');
+const versionFunction=cleanupSource.slice(cleanupSource.indexOf('  function versionOf('),cleanupSource.indexOf('  function sidecarOwners('));
+if(!versionFunction.startsWith('  function versionOf('))throw Error('Version helper boundary changed');
+const versionHelpers='(function(C){const stem=name=>name.replace(/\\.[^.]+$/,\'\');'+versionFunction+';return {versionOf};})';
 for(const name of ['season-inspect','season-download','season-review','season-archive']) {
   const src=read(`src/${name}.js`);
   for(const required of [marker,excelMarker])if(src.split(required).length!==2)throw Error(`${name}: expected one ${required}`);
@@ -48,6 +53,7 @@ for(const name of ['season-inspect','season-download','season-review','season-ar
       output=output.replace(marker,()=>read(file));
     }
   }
+  output=output.replace('/* build:version-helpers */ null',()=>versionHelpers).replace('/* build:version-download */ null',()=>read('src/version-download.js'));
   output=output.replace('/* build:cloud-core */ null',()=>cloudCore).replace('/* build:douban-worker */',()=>doubanWorker).replace('/* build:cloud-listing */',()=>cloudListing).replace('/* build:title-text */ null',()=>titleTextCore);
   fs.writeFileSync(path.join(root,`${name}.user.js`),output,'utf8');
   console.log(`Built ${name}.user.js with offline OpenCC-js and Excel support`);

@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         剧集工作流 ② · MoviePilot 补缺下载
 // @namespace    local.tv-season-download
-// @version      1.2.3
+// @version      1.3.0
 // @description  手动补缺；整季优先、中文标记优先，做种≥5时优先小容量；逐资源导出选择依据。
 // @match        https://moviepilot.example/*
 // @grant        unsafeWindow
@@ -312,6 +312,232 @@ return exports.Converter({from:'tw',to:'cn'});
 
 return {norm,cleanTitleText};
 }))(simplify);
+  const VersionCloud=((function createCloudCore(toSimplified) {
+  const MEDIA = /\.(?:mp4|mkv|avi|mov|m4v|ts|m2ts|wmv|flv|webm|mpg|mpeg|strm)$/i;
+  const norm = s => toSimplified(String(s || '').normalize('NFKC')).replace(/[\u200b-\u200f\u202a-\u202e\ufeff]/g, '').replace(/[\s\p{P}\p{S}]/gu, '').toLowerCase();
+  const parent = p => p.slice(0, p.lastIndexOf('/'));
+  const base = p => p.slice(p.lastIndexOf('/') + 1);
+  const mapKey = (show, season) => `${show.tmdb || norm(show.title) + ':' + show.year}:S${season}`;
+  const seasonNumber = s => /^Season\s+(\d+)$/i.exec(s.trim())?.[1] * 1 || null;
+  function showInfo(name) {
+    const year = /[（(]((?:19|20)\d{2})[)）]/.exec(name)?.[1] || '';
+    const tmdb = /\[tmdbid=(\d+)\]/i.exec(name)?.[1] || '';
+    const title = name.replace(/\[tmdbid=\d+\]/ig, '').replace(/[（(](?:19|20)\d{2}[)）]/g, '').trim();
+    return { title, year, tmdb };
+  }
+  function chineseNumber(s) {
+    if (/^\d+$/.test(s)) return Number(s);
+    const d = { '零': 0, '一': 1, '二': 2, '两': 2, '三': 3, '四': 4, '五': 5, '六': 6, '七': 7, '八': 8, '九': 9 };
+    if (s === '十') return 10;
+    if (s.includes('十')) { const [a, b] = s.split('十'); return (a ? d[a] : 1) * 10 + (b ? d[b] : 0); }
+    return d[s] ?? null;
+  }
+  function titleIdentity(text) {
+    const clean = String(text).replace(/[\u200b-\u200f]/g, '').trim();
+    const year = /[（(]((?:19|20)\d{2})[)）]/.exec(clean)?.[1] || '';
+    const cn = /第\s*([\d一二三四五六七八九十两]+)\s*季/.exec(clean);
+    const en = /\bSeason\s+(\d+)\b/i.exec(clean);
+    const season = cn ? chineseNumber(cn[1]) : en ? Number(en[1]) : null;
+    const title = clean.replace(/[（(](?:19|20)\d{2}[)）]/g, '').replace(/第\s*[\d一二三四五六七八九十两]+\s*季/g, '').replace(/\bSeason\s+\d+\b/ig, '').trim();
+    return { title, year, season };
+  }
+  // 供各阶段共用的片名文本清理；不处理云盘路径，不移除季号/年份/特别篇标签。
+  function cleanTitleText(value) {
+    return String(value||'').normalize('NFKC').replace(/[\u200b-\u200f\u202a-\u202e\ufeff]/g,'')
+      .replace(/\s*\((?:台|臺|港|台湾|臺灣|香港|大陆|大陸|中国大陆|中國大陸)\)\s*$/u,'').trim();
+  }
+  function sameTitle(candidateTitle, expectedTitle, allowHanPair = false) {
+    const title = cleanTitleText(titleIdentity(candidateTitle).title);
+    const c = norm(title), s = norm(cleanTitleText(titleIdentity(expectedTitle).title));
+    if (!s) return false;
+    if (c === s || c === s + s) return true;
+    if (/(?:特别篇|特別篇|总集篇|總集篇|剧场版|劇場版|スペシャル)/.test(title)) return false;
+    // 简繁在 norm 中统一；只在完整双语片名之间分段，不把英文单词前缀当作剧名。
+    // 中文名允许 X医生 这类拉丁字母混排；外文段须有日/韩/拉丁文字证据。
+    // 纯汉字中日双标题仍只在搜索时暂准，详情须有日本制片证据。
+    const chinese = value => /\p{Script=Han}/u.test(value) && /^[\p{Script=Han}\p{Script=Latin}\p{M}\s\p{P}\p{N}]+$/u.test(value) &&
+      !value.split(/\s+/).some(word=>/\p{Script=Latin}/u.test(word)&&!/\p{Script=Han}/u.test(word));
+    const foreign = value => {
+      value=value.normalize('NFKC'); // 半角片假名统一；日文长音符属于 Common，需要明确允许。
+      if(/[\p{Script=Hiragana}\p{Script=Katakana}]/u.test(value)&&/^[\p{Script=Han}\p{Script=Hiragana}\p{Script=Katakana}\u30fc\p{M}\s\p{P}\p{N}]+$/u.test(value))return 'ja';
+      if(/\p{Script=Hangul}/u.test(value)&&/^[\p{Script=Hangul}\p{M}\s\p{P}\p{N}]+$/u.test(value))return 'ko';
+      if(/\p{Script=Latin}/u.test(value)&&/^[\p{Script=Latin}\p{M}\s\p{P}\p{N}]+$/u.test(value))return 'latin';
+      return null;
+    };
+    // 片名内部也可混排英文：“睁眼一看是 SUPER TV / 눈 떠보니 슈퍼TV”。
+    // 外文段必须从日韩文字开始，防止把未匹配的英文尾词挪进后一片名。
+    const mixedChinese=value=>/\p{Script=Han}/u.test(value)&&/^[\p{Script=Han}\p{Script=Latin}\p{M}\s\p{P}\p{N}]+$/u.test(value);
+    const mixedOriginal=value=>(/^\p{Script=Hangul}/u.test(value)&&/^[\p{Script=Hangul}\p{Script=Latin}\p{M}\s\p{P}\p{N}]+$/u.test(value))||
+      (/^[\p{Script=Han}\p{Script=Hiragana}\p{Script=Katakana}]/u.test(value)&&/[\p{Script=Hiragana}\p{Script=Katakana}]/u.test(value)&&/^[\p{Script=Han}\p{Script=Hiragana}\p{Script=Katakana}\p{Script=Latin}\u30fc\p{M}\s\p{P}\p{N}]+$/u.test(value));
+    return [...title.matchAll(/\s+/g)].some(m => {
+      const left = title.slice(0, m.index).trim(), right = title.slice(m.index + m[0].length).trim();
+      const lf=foreign(left),rf=foreign(right);
+      return !!left && !!right && ((chinese(left)&&rf)||(lf&&chinese(right))||(lf&&rf&&lf!==rf)||
+        (mixedChinese(left)&&mixedOriginal(right))||(mixedOriginal(left)&&mixedChinese(right))||
+        (allowHanPair && /^[\p{Script=Han}\s\p{P}\p{N}]+$/u.test(left + right))) &&
+        (norm(left) === s || norm(right) === s);
+    });
+  }
+  function candidateMatches(candidate, show, season, { inspectDetails = false } = {}) {
+    // 搜索阶段可以进入详情核验，但最终必须确认具体季；相似标题不能替代身份匹配。
+    const c = titleIdentity(candidate.title);
+    const namesMatch = [candidate.title, ...(candidate.aliases || [])].some(t => sameTitle(t, show.title, inspectDetails || candidate.japanese === true));
+    const seasonMatch = season === 1 ? c.season === null || c.season === 1 : c.season === season;
+    const yearMatch = !!show.year && (c.year === show.year || (candidate.releaseYears || []).includes(show.year));
+    return !!candidate.tv && namesMatch && seasonMatch && (season !== 1 || inspectDetails || yearMatch);
+  }
+  function chooseCandidate(candidates, show, season, options = {}) {
+    const matches = [...new Map(candidates.filter(c => candidateMatches(c, show, season, options)).map(c => [c.url, c])).values()];
+    return matches.length === 1 ? matches[0] : null;
+  }
+  function matchFailure(candidates, show, season, detail = false) {
+    if (!candidates.length) return '豆瓣未返回可读取的剧集候选';
+    if (!candidates.some(c => c.tv)) return '搜索候选没有剧集标记，无法确认类型';
+    if (!candidates.some(c => [c.title, ...(c.aliases || [])].some(t => sameTitle(t, show.title)))) return '剧名或别名不一致（已处理简繁体及重复双标题）';
+    const matching = candidates.filter(c => candidateMatches(c, show, season, { inspectDetails: true }));
+    if (!matching.length) return `候选季数与 Season ${season} 不一致，需要核实分季或改名情况`;
+    if (new Set(matching.map(c => c.url)).size > 1) return '存在多个同名同季条目，无法唯一确认';
+    if (detail && season === 1) return `目录年份 ${show.year || '缺失'} 与豆瓣标题及首播年份均不一致`;
+    return '需要人工核实豆瓣条目';
+  }
+  function episodeFromName(name, season) {
+    // “S01E01 - 01.mkv”尾部重复数字是同一集；真正的合并集、跨季及歧义编号不猜测。
+    const pairs = [...name.matchAll(/(?:^|[^a-z0-9])S(\d{1,3})[ ._-]*E(\d{1,4})(?!\d)/ig)];
+    if (pairs.length) {
+      const ids = [...new Set(pairs.map(m => `${Number(m[1])}:${Number(m[2])}`))];
+      if (ids.length !== 1 || Number(pairs[0][1]) !== season) return null;
+      // An explicit second E is still a combined episode. Permit only an exact
+      // repeated numeric suffix at the end: "S01E01 - 01.mkv" is one episode.
+      if (/(?:S\d+[ ._-]*E\d+)[ ._-]*E\d+/i.test(name)) return null;
+      for (const pair of pairs) {
+        const tail = name.slice(pair.index + pair[0].length);
+        if (/^\s*[-~～]\s*\d/.test(tail)) {
+          const repeated = /^\s+-\s+(\d{1,4})\.[a-z0-9]+$/i.exec(tail);
+          if (!repeated || Number(repeated[1]) !== Number(pair[2])) return null;
+        }
+      }
+      return Number(pairs[0][2]) || null;
+    }
+    const cn = [...name.matchAll(/第\s*(\d{1,4})\s*集/g)];
+    if (cn.length === 1) return Number(cn[0][1]) || null;
+    const en = [...name.matchAll(/(?:^|[\s._-])(?:EP?|Episode)[ ._-]*(\d{1,4})(?!\d)/ig)];
+    if (en.length === 1) return Number(en[0][1]) || null;
+    // Only accept a purely numeric basename; never guess from year/resolution/release tags.
+    const numeric = /^(\d{1,4})\.[a-z0-9]+$/i.exec(name);
+    return numeric ? Number(numeric[1]) || null : null;
+  }
+
+  function parseDoubanBroadcast(text) {
+    // Never infer completion from episode count, premiere date or synopsis.
+    const m=/(?:^|\n)\s*(?:播出状态|完结状态)\s*[:：]\s*(已完结|已播完|连载中|播出中|未播出|待播)\s*(?:\n|$)/.exec(text);
+    const broadcast=!m?'未确认':/已完结|已播完/.test(m[1])?'已播完':/连载中|播出中/.test(m[1])?'连载中':'待播';
+    return {broadcast,broadcastEvidence:m?'豆瓣详情明确标注：'+m[1]:'豆瓣提供集数，但没有可确认的本季播出状态'};
+  }
+  function validSubjectUrl(value) {
+    try { const u = new URL(value); return u.protocol === 'https:' && u.hostname === 'movie.douban.com' && !u.port && !u.username && !u.password && /^\/subject\/\d+\/$/.test(u.pathname) ? u.origin + u.pathname : null; } catch { return null; }
+  }
+
+  function parseTotal(text) { const m = /(?:^|\n)\s*集数\s*[:：]\s*(\d+)\s*(?:\n|$)/m.exec(text); return m && Number(m[1]) > 0 && Number(m[1]) <= 10000 ? Number(m[1]) : null; }
+  function doubanAccessProblem({ text = '', hasContent = false, hasLoginForm = false }) {
+    if (!hasContent && (hasLoginForm || /请先登录|登录后(?:才能|即可|继续)|需要登录才能|登录豆瓣帐号/.test(text))) return '豆瓣需要登录。请先在豆瓣网页手动登录，再回到云存储确认准备完成并继续。';
+    if (!hasContent && /验证码|异常请求|访问过于频繁|检测到有异常请求|访问豆瓣的方式有点像机器人/.test(text)) return '豆瓣要求人工验证。请在豆瓣网页手动完成后，再回到云存储确认准备完成并继续。';
+    return null;
+  }
+  function validateListing(rows, path, count, {emptyConfirmed=false}={}) {
+    if (!Number.isInteger(count) || count < 0 || (!count&&!emptyConfirmed) || rows.length !== count) throw new Error('列表尚未加载完成、空目录未确认或未读取全部条目');
+    if (new Set(rows.map(r => r.path)).size !== count || rows.some(r => parent(r.path) !== path || base(r.path) !== r.name)) throw new Error('目录路径与列表不一致');
+    return rows;
+  }
+  function createListingSettler(path) {
+    // 只有明确空目录提示及稳定列表才接受 0；非空目录必须确认读取全部条目。
+    let previous='',since=0;
+    return ({rows,count,loading=false,emptyConfirmed=false,allSelected=false},at) => {
+      const reset=()=>{previous='';since=at;return null;};
+      if(loading || (count!==0&&!allSelected))return reset();
+      try{validateListing(rows,path,count,{emptyConfirmed});}catch{return reset();}
+      const fingerprint=JSON.stringify(rows);
+      if(fingerprint!==previous){previous=fingerprint;since=at;return null;}
+      return at-since>=(count===0?600:1800)?rows:null;
+    };
+  }
+
+  function modifiedTime(value) {
+    const m=/^(\d{4})-(\d{2})-(\d{2}) (\d{2}):(\d{2})(?::(\d{2}))?$/.exec(value||'');
+    if(!m)return NaN;
+    const [,y,mo,d,h,mi,se='00']=m, date=new Date(`${y}-${mo}-${d}T${h}:${mi}:${se}+08:00`);
+    if(!Number.isFinite(+date))return NaN;
+    const local=new Date(+date+8*3600*1000).toISOString().slice(0,19);
+    return local===`${y}-${mo}-${d}T${h}:${mi}:${se}`?+date:NaN;
+  }
+
+return {norm,parent,base,mapKey,showInfo,titleIdentity,candidateMatches,chooseCandidate,matchFailure,episodeFromName,validSubjectUrl,parseTotal,parseDoubanBroadcast,doubanAccessProblem,validateListing,createListingSettler,modifiedTime};
+}))(simplify);
+  const VersionHelpers=((function(C){const stem=name=>name.replace(/\.[^.]+$/,'');  function versionOf(row,season) {
+    if(/\.strm$/i.test(row.name))return null; // 不把播放指针当作经过验证的视频副本。
+    const ext=/\.([^.]+)$/.exec(row.name)?.[1].toLowerCase();if(!ext)return null;
+    let name=stem(row.name);
+    // 仅清除明确的系统“副本”后缀，不把普通 (1)、数字发布版本或 REPACK 混为一类。
+    name=name.replace(/(?:\s+-\s+副本(?:\s*\d+)?|\s*\((?:copy|副本)(?:\s+\d+)?\))$/i,'');
+    const episode=C.episodeFromName(name+'.'+ext,season);if(!episode)return null;
+    let template=name.replace(/(?:^|[^a-z0-9])S(\d{1,3})[ ._-]*E(\d{1,4})(?!\d)/ig,m=>m.replace(/S\d+[ ._-]*E\d+/i,`S${season}E{集}`));
+    if(template===name)template=name.replace(/第\s*\d{1,4}\s*集/g,'第{集}集').replace(/(?:^|[\s._-])(?:EP?|Episode)[ ._-]*\d{1,4}(?!\d)/ig,m=>m.replace(/(?:EP?|Episode)[ ._-]*\d+/i,'E{集}'));
+    if(/^\d+$/.test(name))template='{集}';
+    const tail=/\s+-\s+(\d{1,4})$/.exec(template);
+    if(tail&&Number(tail[1])===episode)template=template.slice(0,tail.index)+' - {集}';
+    if(template===name)return null;
+    const key=template.normalize('NFKC').replace(/\s+/g,' ').trim().toLowerCase()+'.'+ext;
+    return {episode,key,label:template+'.'+ext,time:C.modifiedTime(row.modified),row};
+  }
+;return {versionOf};}))(VersionCloud);
+  const Versions=(/* 按第三阶段同一文件名模板分组；仅生成补缺建议，不删除或移动云盘文件。
+ * 匹配资源站版本要求发布组及明确技术参数一致，不能靠相同分辨率推断同版本。
+ */
+(function createVersionDownload(V) {
+  'use strict';
+  const range=n=>Array.from({length:n},(_,i)=>i+1);
+  function signature(name) {
+    const s=String(name||'').normalize('NFKC').replace(/\.(mkv|mp4|avi|ts|m2ts)$/i,'');
+    const group=/-([a-z0-9][a-z0-9._]*)\s*$/i.exec(s)?.[1].toLowerCase();
+    const resolution=/\b(2160|1080|720|480)[pi]\b/i.exec(s)?.[0].toLowerCase();
+    const source=/\b(web[ ._-]?dl|web[ ._-]?rip|blu[ ._-]?ray|hdtv|bdrip|remux)\b/i.exec(s)?.[0].replace(/[ ._-]/g,'').toLowerCase();
+    const codec=/\b(x26[45]|h[ ._-]?26[45]|hevc|avc)\b/i.exec(s)?.[0].replace(/[ ._-]/g,'').toLowerCase();
+    if(!group||/^(dl|rip|webdl|webrip|hdtv|x264|x265|hevc|avc|hdr|sdr|aac|ddp|truehd|atmos|1080p|2160p)$/i.test(group)||!resolution||(!source&&!codec))return null;
+    const audio=(s.match(/\b(?:ddp|dd|aac|dts(?:[ ._-]?hd)?|truehd|atmos|flac)(?:[ ._-]?\d(?:\.\d)?)?\b/ig)||[]).map(v=>v.toLowerCase().replace(/[ _-]/g,'')).sort();
+    const hdr=(s.match(/\b(?:hdr10\+?|hdr|dolby[ ._-]?vision|dv|sdr|10bit|8bit)\b/ig)||[]).map(v=>v.toLowerCase()).sort();
+    return JSON.stringify([group,resolution,source||'',codec||'',audio,hdr,/\brepack\b/i.test(s),/\bproper\b/i.test(s)]);
+  }
+  function joined(data,column){return String(data[column]||'')+Object.keys(data).filter(k=>new RegExp('^'+column+'续\\d+$').test(k)).sort((a,b)=>Number(a.slice(column.length+1))-Number(b.slice(column.length+1))).map(k=>String(data[k]||'')).join('');}
+  function inspect(task) {
+    const d=task.data||{},review=joined(d,'复核清理记录'),raw=joined(d,'版本文件清单');let rows;
+    if(review){const r=JSON.parse(review);if(r.journal?.pending)return {blocked:'上次清理结果不明，先完成第三脚本核实'};if(Array.isArray(r.groups))rows=r.groups.flatMap(g=>g.files||[]);if(r.issues?.some(x=>/子目录|临时|无法确定|无效|大小/.test(x)))return {blocked:'复核记录存在文件或版本异常，先重新复核'};}
+    if(!rows&&raw){const r=JSON.parse(raw);if(r.schema!==1||r.path!==task.path||!Array.isArray(r.files))return {blocked:'版本清单格式或季目录不一致'};rows=r.files;}
+    if(!rows){if(String(d['重复集号']||'').trim()&&!/^(无|0)$/.test(String(d['重复集号']).trim())||/混版|多个版本/.test(String(d['复核结果']||'')+String(d['核对说明']||'')))return {blocked:'报告存在混版迹象但缺少版本清单，请用新版第一脚本重检或第三脚本复核后导出'};return null;}
+    if(rows.length>10000)return {blocked:'版本清单过大，请人工核实'};
+    const groups=new Map(),seen=new Set();
+    for(const f of rows){if(f.directory||/\.(part|tmp|download|crdownload|!qb)$/i.test(f.name))return {blocked:'版本清单存在子目录或下载临时文件'};if(!/\.(mkv|mp4|avi|mov|m4v|ts|m2ts|wmv|flv|webm|mpg|mpeg|strm)$/i.test(f.name))continue;
+      if(f.path!==task.path+'/'+f.name||/[\\/]/.test(f.name)||seen.has(f.path))return {blocked:'版本文件路径越界或重复'};seen.add(f.path);
+      const p=V.versionOf(f,task.season);if(!p||p.episode>task.total||!Number.isFinite(p.time)||!/^\d+(?:\.\d+)?\s*(?:B|KB|MB|GB|TB|KiB|MiB|GiB|TiB)$/i.test(f.size||'')||parseFloat(f.size)<=0)return {blocked:'文件集号、修改时间、大小或版本模板无法确认'};
+      if(!groups.has(p.key))groups.set(p.key,{key:p.key,label:p.label,episodes:[],latest:p.time,modified:f.modified,signature:signature(f.name),copies:{}});
+      const g=groups.get(p.key);g.copies[p.episode]=(g.copies[p.episode]||0)+1;if(!g.episodes.includes(p.episode))g.episodes.push(p.episode);if(p.time>g.latest){g.latest=p.time;g.modified=f.modified;}
+    }
+    if(groups.size<=1)return null;
+    const all=[...groups.values()],complete=all.filter(g=>g.episodes.length===task.total);
+    if(complete.length>1||complete.some(g=>range(task.total).every(n=>g.copies[n]>1)))return {blocked:'多个完整版本，交第三脚本人工判断，不自动补下载'};
+    if(complete.length===1)return {complete:complete[0],note:'已有独立完整版本，不再补下载；交第三脚本复核清理'};
+    if(all.some(g=>!g.signature)||new Set(all.map(g=>g.signature)).size!==all.length)return {blocked:'混版缺少唯一发布组/技术标识，不能可靠匹配拟保留版本'};
+    return {groups:all};
+  }
+  function select(task,info,contexts,choose) {
+    const options=info.groups.map(g=>{const needed=range(task.total).filter(n=>!g.episodes.includes(n)&&!task.excluded.includes(n));const pool=contexts.filter(c=>signature(c.torrent_info?.title)===g.signature);const local={...task,needed};const plan=choose(local,pool,g.episodes);return {g,needed,pool,plan,canComplete:!plan.remaining?.length&&plan.selected?.length>0};});
+    if(options.some(o=>o.plan.identityAmbiguous))return {blocked:'同名同年资源对应多个媒体ID，请先确认本剧ID再选择版本'};
+    const available=options.filter(o=>o.plan.selected?.length);if(!available.length)return {blocked:'没有与现有版本明确匹配的缺集资源，不新增混版'};
+    available.sort((a,b)=>Number(b.canComplete)-Number(a.canComplete)||b.g.latest-a.g.latest);
+    if(available[1]&&available[0].canComplete===available[1].canComplete&&available[0].g.latest===available[1].g.latest)return {blocked:'可补版本的云盘最新修改时间相同，需人工指定版本'};
+    const best=available[0];return {...best,note:'拟保留版本：'+best.g.label+'；缺集：'+best.needed.join('、')+'；云盘最新修改时间：'+best.g.modified+'；'+(best.canComplete?'同版本资源可补齐':'暂只能补齐部分，保持同版本')};
+  }
+  return {inspect,select,signature};
+})
+)(VersionHelpers);
   const Core=(/* 下载决策与任务状态机。
  * 1. 仅匹配本剧、本季；完整包优先，做种数不足 2 的不选。
  * 2. 同类优先中文标记；做种不少于 5 且容量均已知时优先小容量，否则优先做种数。
@@ -319,7 +545,7 @@ return {norm,cleanTitleText};
  * 3. 写入“准备提交”记录后才发出下载请求；超时保留结果不明，禁止盲目重试。
  * 4. 对外报告仅含白名单字段，种子链接、站点 Cookie 和登录凭据不进入记录。
  */
-(function createDownloadCore(Titles) {
+(function createDownloadCore(Titles,Versions) {
   'use strict';
   const norm=s=>Titles.norm(Titles.cleanTitleText(s));
   const uniq=a=>[...new Set(a)].sort((a,b)=>a-b);
@@ -494,12 +720,18 @@ return {norm,cleanTitleText};
   function outcome(task,records,{state,note='',color=null,remaining}={}) {
     const success=records.filter(r=>['accepted','existing'].includes(r.state));
     const covered=uniq(success.flatMap(r=>r.episodes));
-    return {state:state||'待核实',note,color,records:records.map(safeRecord),covered,
+    return {state:state||'待核实',note:task.versionChoice?task.versionChoice.note+'；'+note:note,color,records:records.map(safeRecord),covered,
       remaining:remaining===undefined?task.needed?.filter(n=>!covered.includes(n))??null:remaining,at:new Date().toISOString()};
   }
   async function processTask(task,{search,active,submit,load,save,checkpoint,progress=()=>{}}) {
+    const versionInfo=Versions?.inspect(task);
     let records=readRecords(load(task.key)||[]);
     const combined=new Map(task.records.map(r=>[r.key,r]));for(const r of records)combined.set(r.key,r);records=[...combined.values()];
+    if(versionInfo?.blocked)return outcome(task,records,{state:'版本待核实',note:versionInfo.blocked});
+    if(versionInfo?.complete)return outcome(task,records,{state:'已有完整版本，待清理',color:'yellow',note:versionInfo.note+'：'+versionInfo.complete.label});
+    if(versionInfo?.groups)task={...task,needed:range(task.total).filter(n=>!task.excluded.includes(n))};
+
+    if(versionInfo?.groups&&records.length)return outcome(task,records,{state:'版本补缺待复核',color:'yellow',note:'混版目录已有本季下载记录，请先完成下载及第三脚本复核，避免用不同版本记录抵扣集数'});
     if(records.some(r=>r.episodes.some(n=>n>task.total)))return outcome(task,records,{state:'待核实',note:'历史下载集号与本次来源数量不一致'});
     // uncertain/submitting 跨刷新保留，人工核实前绝不再次提交。
     if(records.some(r=>['submitting','uncertain'].includes(r.state)))return outcome(task,records,{state:'提交结果待核实',note:'已有可能成功的提交，请在 MoviePilot 核实；本次不重复下载',color:records.some(r=>r.state==='accepted')?'yellow':null});
@@ -509,7 +741,7 @@ return {norm,cleanTitleText};
     const recorded=uniq(records.filter(r=>['accepted','existing'].includes(r.state)).flatMap(r=>r.episodes));
     if(task.needed?.length&&task.needed.every(n=>recorded.includes(n)))return outcome(task,records,{state:'已提交下载，待复核',color:'yellow',note:'防重复记录已覆盖报告缺集，本次不再搜索或提交'});
     // 先读下载管理，再搜资源站；任务列表读取失败时不允许提交。
-    const coverage=()=>uniq(records.filter(r=>['accepted','existing'].includes(r.state)).flatMap(r=>r.episodes));
+    const coverage=()=>uniq([...(task.versionChoice?.g.episodes||[]),...records.filter(r=>['accepted','existing'].includes(r.state)).flatMap(r=>r.episodes)]);
     async function inspectActive(verified=[]) {
       checkpoint();progress('核查下载管理中的现有任务');const current=await active();checkpoint();
       if(!Array.isArray(current))throw Error('无法核查 MoviePilot 现有任务，停止提交');
@@ -518,14 +750,21 @@ return {norm,cleanTitleText};
         if(!records.some(r=>r.key===match.key||(item.hash&&r.id===String(item.hash)))){records.push(safeRecord({...match,state:'existing',id:item.hash||'',at:new Date().toISOString()}));changed=true;}
       }
       if(changed)save(task.key,records);
+      if(versionInfo?.groups&&records.some(r=>r.state==='existing'))return outcome(task,records,{state:'已有下载任务，版本待复核',color:'yellow',note:'混版目录已有本季任务，先等现有任务完成并复核版本，本轮不追加'});
       if(records.some(r=>r.state==='existing'&&!r.episodes.length))return outcome(task,records,{state:'已有下载任务，待复核',color:'yellow',note:'下载管理已有本季任务，但覆盖集号未明确；本轮不追加，避免重复下载'});
       if(task.needed?.every(n=>coverage().includes(n)))return outcome(task,records,{state:'已有下载任务，待复核',color:'yellow',note:'下载管理或已提交记录已覆盖全部缺集，本轮无需追加'});
       return null;
     }
     const prior=await inspectActive();if(prior)return prior;
     checkpoint();progress('查询本剧本季资源');
-    const contexts=await search(task);checkpoint();
+    let contexts=await search(task);checkpoint();
     if(!Array.isArray(contexts))throw Error('MoviePilot 搜索结果格式不支持');
+    if(versionInfo?.groups){
+      const selection=Versions.select(task,versionInfo,contexts,choose);
+      if(selection.blocked)return outcome(task,records,{state:'版本待核实',note:selection.blocked});
+      task={...task,needed:selection.needed,versionChoice:selection};contexts=selection.pool;
+      progress(selection.note);
+    }
     const accepted=records.filter(r=>['accepted','existing'].includes(r.state));
     let plan=choose(task,contexts,uniq(accepted.flatMap(r=>r.episodes)));
     if(plan.identityAmbiguous)return outcome(task,records,{state:'媒体身份待核实',note:'同名同年的结果对应多个媒体 ID，请先在报告中确认本剧 ID；本次不下载',color:accepted.length?'yellow':null});
@@ -537,7 +776,7 @@ return {norm,cleanTitleText};
       const existing=await inspectActive(verified);if(existing)return existing;
       plan=choose(task,contexts,coverage());const c=plan.selected[0];if(!c)break;
       checkpoint();
-      const record=safeRecord({key:c.key,state:'submitting',id:'',title:c.title,site:c.site,episodes:c.episodes,seeds:c.seeds,at:new Date().toISOString(),scope:c.full?'season':c.episodes.length===1?'episode':'episodes',sizeBytes:c.sizeBytes,estimatedBytes:c.estimatedBytes,chineseMark:c.chineseMark,selectionReason:c.selectionReason,seedNote:'提交前的站点搜索快照，不代表当前实时做种数'});
+      const record=safeRecord({key:c.key,state:'submitting',id:'',title:c.title,site:c.site,episodes:c.episodes,seeds:c.seeds,at:new Date().toISOString(),scope:c.full?'season':c.episodes.length===1?'episode':'episodes',sizeBytes:c.sizeBytes,estimatedBytes:c.estimatedBytes,chineseMark:c.chineseMark,selectionReason:task.versionChoice?task.versionChoice.note+'；'+c.selectionReason:c.selectionReason,seedNote:'提交前的站点搜索快照，不代表当前实时做种数'});
       records=records.filter(r=>r.key!==c.key);records.push(record);
       save(task.key,records); // 持久化成功是提交前置条件，保存失败时不发出请求。
       progress('提交下载：'+c.title);
@@ -595,7 +834,7 @@ return {norm,cleanTitleText};
   }
   return {Pause,episodes,taskFromRow,sameIdentity,candidate,choose,processTask,readRecords,safeRecord,outcome,createAdapter,activeMatch};
 })
-)(Titles);
+)(Titles,Versions);
   let excel,report;
   const excelEngine=()=>excel||=((() => {
 /* xlsx-js-style 1.2.0, https://github.com/gitbrent/xlsx-js-style
@@ -1332,7 +1571,7 @@ return exports;
   return {read,write,colorKind,FIELDS,REVIEW_FIELDS,ARCHIVE_FIELDS};
 })
 )(excelEngine());}
-  if(typeof module!=='undefined'&&module.exports){module.exports={...Core,reportEngine};return;}
+  if(typeof module!=='undefined'&&module.exports){module.exports={...Core,Versions,reportEngine};return;}
   if(location.origin!==ORIGIN)return;
   const NS='tv-download-v1:';
   let session=null,index=0,running=false,importing=false,stopping=false,ui;

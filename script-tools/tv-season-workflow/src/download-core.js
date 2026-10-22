@@ -5,7 +5,7 @@
  * 3. 写入“准备提交”记录后才发出下载请求；超时保留结果不明，禁止盲目重试。
  * 4. 对外报告仅含白名单字段，种子链接、站点 Cookie 和登录凭据不进入记录。
  */
-(function createDownloadCore(Titles) {
+(function createDownloadCore(Titles,Versions) {
   'use strict';
   const norm=s=>Titles.norm(Titles.cleanTitleText(s));
   const uniq=a=>[...new Set(a)].sort((a,b)=>a-b);
@@ -180,12 +180,18 @@
   function outcome(task,records,{state,note='',color=null,remaining}={}) {
     const success=records.filter(r=>['accepted','existing'].includes(r.state));
     const covered=uniq(success.flatMap(r=>r.episodes));
-    return {state:state||'待核实',note,color,records:records.map(safeRecord),covered,
+    return {state:state||'待核实',note:task.versionChoice?task.versionChoice.note+'；'+note:note,color,records:records.map(safeRecord),covered,
       remaining:remaining===undefined?task.needed?.filter(n=>!covered.includes(n))??null:remaining,at:new Date().toISOString()};
   }
   async function processTask(task,{search,active,submit,load,save,checkpoint,progress=()=>{}}) {
+    const versionInfo=Versions?.inspect(task);
     let records=readRecords(load(task.key)||[]);
     const combined=new Map(task.records.map(r=>[r.key,r]));for(const r of records)combined.set(r.key,r);records=[...combined.values()];
+    if(versionInfo?.blocked)return outcome(task,records,{state:'版本待核实',note:versionInfo.blocked});
+    if(versionInfo?.complete)return outcome(task,records,{state:'已有完整版本，待清理',color:'yellow',note:versionInfo.note+'：'+versionInfo.complete.label});
+    if(versionInfo?.groups)task={...task,needed:range(task.total).filter(n=>!task.excluded.includes(n))};
+
+    if(versionInfo?.groups&&records.length)return outcome(task,records,{state:'版本补缺待复核',color:'yellow',note:'混版目录已有本季下载记录，请先完成下载及第三脚本复核，避免用不同版本记录抵扣集数'});
     if(records.some(r=>r.episodes.some(n=>n>task.total)))return outcome(task,records,{state:'待核实',note:'历史下载集号与本次来源数量不一致'});
     // uncertain/submitting 跨刷新保留，人工核实前绝不再次提交。
     if(records.some(r=>['submitting','uncertain'].includes(r.state)))return outcome(task,records,{state:'提交结果待核实',note:'已有可能成功的提交，请在 MoviePilot 核实；本次不重复下载',color:records.some(r=>r.state==='accepted')?'yellow':null});
@@ -195,7 +201,7 @@
     const recorded=uniq(records.filter(r=>['accepted','existing'].includes(r.state)).flatMap(r=>r.episodes));
     if(task.needed?.length&&task.needed.every(n=>recorded.includes(n)))return outcome(task,records,{state:'已提交下载，待复核',color:'yellow',note:'防重复记录已覆盖报告缺集，本次不再搜索或提交'});
     // 先读下载管理，再搜资源站；任务列表读取失败时不允许提交。
-    const coverage=()=>uniq(records.filter(r=>['accepted','existing'].includes(r.state)).flatMap(r=>r.episodes));
+    const coverage=()=>uniq([...(task.versionChoice?.g.episodes||[]),...records.filter(r=>['accepted','existing'].includes(r.state)).flatMap(r=>r.episodes)]);
     async function inspectActive(verified=[]) {
       checkpoint();progress('核查下载管理中的现有任务');const current=await active();checkpoint();
       if(!Array.isArray(current))throw Error('无法核查 MoviePilot 现有任务，停止提交');
@@ -204,14 +210,21 @@
         if(!records.some(r=>r.key===match.key||(item.hash&&r.id===String(item.hash)))){records.push(safeRecord({...match,state:'existing',id:item.hash||'',at:new Date().toISOString()}));changed=true;}
       }
       if(changed)save(task.key,records);
+      if(versionInfo?.groups&&records.some(r=>r.state==='existing'))return outcome(task,records,{state:'已有下载任务，版本待复核',color:'yellow',note:'混版目录已有本季任务，先等现有任务完成并复核版本，本轮不追加'});
       if(records.some(r=>r.state==='existing'&&!r.episodes.length))return outcome(task,records,{state:'已有下载任务，待复核',color:'yellow',note:'下载管理已有本季任务，但覆盖集号未明确；本轮不追加，避免重复下载'});
       if(task.needed?.every(n=>coverage().includes(n)))return outcome(task,records,{state:'已有下载任务，待复核',color:'yellow',note:'下载管理或已提交记录已覆盖全部缺集，本轮无需追加'});
       return null;
     }
     const prior=await inspectActive();if(prior)return prior;
     checkpoint();progress('查询本剧本季资源');
-    const contexts=await search(task);checkpoint();
+    let contexts=await search(task);checkpoint();
     if(!Array.isArray(contexts))throw Error('MoviePilot 搜索结果格式不支持');
+    if(versionInfo?.groups){
+      const selection=Versions.select(task,versionInfo,contexts,choose);
+      if(selection.blocked)return outcome(task,records,{state:'版本待核实',note:selection.blocked});
+      task={...task,needed:selection.needed,versionChoice:selection};contexts=selection.pool;
+      progress(selection.note);
+    }
     const accepted=records.filter(r=>['accepted','existing'].includes(r.state));
     let plan=choose(task,contexts,uniq(accepted.flatMap(r=>r.episodes)));
     if(plan.identityAmbiguous)return outcome(task,records,{state:'媒体身份待核实',note:'同名同年的结果对应多个媒体 ID，请先在报告中确认本剧 ID；本次不下载',color:accepted.length?'yellow':null});
@@ -223,7 +236,7 @@
       const existing=await inspectActive(verified);if(existing)return existing;
       plan=choose(task,contexts,coverage());const c=plan.selected[0];if(!c)break;
       checkpoint();
-      const record=safeRecord({key:c.key,state:'submitting',id:'',title:c.title,site:c.site,episodes:c.episodes,seeds:c.seeds,at:new Date().toISOString(),scope:c.full?'season':c.episodes.length===1?'episode':'episodes',sizeBytes:c.sizeBytes,estimatedBytes:c.estimatedBytes,chineseMark:c.chineseMark,selectionReason:c.selectionReason,seedNote:'提交前的站点搜索快照，不代表当前实时做种数'});
+      const record=safeRecord({key:c.key,state:'submitting',id:'',title:c.title,site:c.site,episodes:c.episodes,seeds:c.seeds,at:new Date().toISOString(),scope:c.full?'season':c.episodes.length===1?'episode':'episodes',sizeBytes:c.sizeBytes,estimatedBytes:c.estimatedBytes,chineseMark:c.chineseMark,selectionReason:task.versionChoice?task.versionChoice.note+'；'+c.selectionReason:c.selectionReason,seedNote:'提交前的站点搜索快照，不代表当前实时做种数'});
       records=records.filter(r=>r.key!==c.key);records.push(record);
       save(task.key,records); // 持久化成功是提交前置条件，保存失败时不发出请求。
       progress('提交下载：'+c.title);

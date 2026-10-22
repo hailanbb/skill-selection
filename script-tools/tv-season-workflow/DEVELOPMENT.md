@@ -21,6 +21,7 @@ npm test
 | 文件 | 职责 |
 | --- | --- |
 | src/season-inspect.js | ① 初检、来源判断、缓存和豆瓣补查 |
+| src/version-download.js | 复用第三阶段模板分组，为混版目录选择同版本补缺资源 |
 | src/season-download.js | ② 资源选择、提交与防重复 |
 | src/season-review.js / cleanup-core.js / cloud-review-client.js | ③ 面板、清理计划与执行、云盘及豆瓣页面适配 |
 | src/season-archive.js / archive-core.js / cloud-archive-client.js | ④ 面板、移动计划与核实、云盘移动适配 |

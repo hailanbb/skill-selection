@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         剧集工作流 ① · 初检（只读）
 // @namespace    local.tv-season-inspect
-// @version      1.1.2
+// @version      1.2.0
 // @description  手动初检；TMDB 主查、豆瓣分季缓存与逐页限速，风控暂停、待补查和进度恢复。无云端写操作。
 // @match        https://clouddrive.example/*
 // @match        https://movie.douban.com/*
@@ -1035,19 +1035,24 @@ return exports;
     return '\ufeff'+[REPORT_FIELDS.map(([name])=>csvCell(name)).join(','),...results.map(r=>REPORT_FIELDS.map(([,key])=>key==='cloudLink'?csvCloudLink(r.path):csvCell(reportValue(r,key))).join(','))].join('\r\n')+'\r\n';
   }
   function resultWorkbook(results) {
+    // 文件清单分片到每格30000字符，保留长季清单；不改变既有列位置。
+    const split=text=>{const parts=[];for(let start=0;start<text.length;){let end=Math.min(start+30000,text.length);if(end<text.length&&/[\uD800-\uDBFF]/.test(text[end-1]))end--;parts.push(text.slice(start,end));start=end;}return parts;};
+    const snapshots=results.map(r=>split(r.versionSnapshot||'')),chunks=Math.max(0,...snapshots.map(p=>p.length));
+    const fields=[...REPORT_FIELDS,...Array.from({length:chunks},(_,i)=>[i?'版本文件清单续'+i:'版本文件清单','versionChunk'+i])];
+    results=results.map((r,index)=>({...r,...Object.fromEntries(Array.from({length:chunks},(_,i)=>['versionChunk'+i,snapshots[index][i]||'']))}));
     const X=excelEngine(),book=X.utils.book_new();
-    const sheet=X.utils.aoa_to_sheet([REPORT_FIELDS.map(([name])=>name),...results.map(r=>REPORT_FIELDS.map(([,key])=>reportValue(r,key)))]);
-    const widths=REPORT_FIELDS.map(([label])=>/链接|路径|依据|说明|文件|记录ID/.test(label)?52:/标题|目录/.test(label)?40:18);
+    const sheet=X.utils.aoa_to_sheet([fields.map(([name])=>name),...results.map(r=>fields.map(([,key])=>reportValue(r,key)))]);
+    const widths=fields.map(([label])=>/链接|路径|依据|说明|文件|记录ID/.test(label)?52:/标题|目录/.test(label)?40:18);
     sheet['!cols']=widths.map(wch=>({wch}));sheet['!rows']=[{hpt:30},...results.map(()=>({hpt:42}))];
-    sheet['!autofilter']={ref:`A1:${X.utils.encode_col(REPORT_FIELDS.length-1)}${results.length+1}`};
-    for(let row=0;row<=results.length;row++)for(let col=0;col<REPORT_FIELDS.length;col++) {
+    sheet['!autofilter']={ref:`A1:${X.utils.encode_col(fields.length-1)}${results.length+1}`};
+    for(let row=0;row<=results.length;row++)for(let col=0;col<fields.length;col++) {
       const cell=sheet[X.utils.encode_cell({r:row,c:col})];if(!cell)continue;
       cell.s={font:{name:'Microsoft YaHei',sz:11,color:{rgb:row===0?'FFFFFF':'243746'}},alignment:{vertical:'center',wrapText:true}};
       if(row===0){cell.s.fill={patternType:'solid',fgColor:{rgb:'24546A'}};cell.s.font.bold=true;continue;}
       const color=col===1?resultColor(results[row-1]):null;
       if(color){cell.s.fill={patternType:'solid',fgColor:{rgb:color.fill}};cell.s.font.color={rgb:color.font};}
       if([2,4,5,6].includes(col)&&cell.v!==''){cell.t='n';cell.v=Number(cell.v);cell.s.numFmt='0';}
-      if(['cloudLink','sourceUrl','doubanUrl','tmdbUrl'].includes(REPORT_FIELDS[col][1])&&/^https:\/\//.test(String(cell.v))) {cell.l={Target:String(cell.v)};cell.s.font.color={rgb:'0563C1'};cell.s.font.underline=true;}
+      if(['cloudLink','sourceUrl','doubanUrl','tmdbUrl'].includes(fields[col][1])&&/^https:\/\//.test(String(cell.v))) {cell.l={Target:String(cell.v)};cell.s.font.color={rgb:'0563C1'};cell.s.font.underline=true;}
     }
     X.utils.book_append_sheet(book,sheet,'剧集检查');return book;
   }
@@ -1500,6 +1505,7 @@ return exports;
       message(`正在核对 ${showRow.name} / ${seasonRow.name}`);
       try {
         const files=await listing(seasonRow.path);
+        result.versionSnapshot=JSON.stringify({schema:1,path:seasonRow.path,scannedAt:result.scannedAt,files:files.map(f=>({name:f.name,path:f.path,directory:!!f.directory,size:f.size,modified:f.modified}))});
         Object.assign(result,auditEpisodes(files,n,null));
         const primary=await querySources(result.show,n);
         const required=supplementOptions?.force?{...primary,completionConfirmed:false}:primary;
