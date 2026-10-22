@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         剧集工作流 ③ · 豆瓣复核与版本清理
 // @namespace    local.tv-season-review
-// @version      1.1.5
+// @version      1.2.0
 // @description  导入黄色项，手动开始豆瓣分季复核；列出保留/删除清单，经确认后普通删除多余版本及专属刮削文件。
 // @match        https://clouddrive.example/*
 // @match        https://movie.douban.com/*
@@ -821,7 +821,38 @@ return {norm,parent,base,mapKey,showInfo,titleIdentity,candidateMatches,chooseCa
   return {listing,queryDouban,deleteFile,worker:doubanWorker,currentPath,readRows,requireListReady};
 })
 ;
-  let excel,report;
+  let excel,report,reviewStage=null;
+  const createStageReport=/* 独立的只读复核阶段报表。保留每次尝试的快照，后续删除不会把拟删清单改成已删除。 */
+(function createReviewStageReport(X) {
+  'use strict';
+  function write(stage) {
+    if(!stage?.startedAt)throw Error('请先开始复核，再导出复核阶段报告');
+    const book=X.utils.book_new(),attempts=stage.attempts||[];
+    const text=v=>v==null?'未确认':Array.isArray(v)?v.join('、'):v;
+    function sheet(name,headers,rows){
+      const s=X.utils.aoa_to_sheet([headers,...rows.map(r=>r.map(text))]);
+      s['!cols']=headers.map(h=>({wch:/路径|说明|版本|文件|链接/.test(h)?54:22}));
+      s['!autofilter']={ref:X.utils.encode_range({r:0,c:0},{r:rows.length,c:headers.length-1})};
+      for(const [ref,c] of Object.entries(s))if(!ref.startsWith('!')){const head=/^[A-Z]+1$/.test(ref);c.s={font:{name:'Microsoft YaHei',sz:11,color:{rgb:head?'FFFFFF':'243746'},bold:head},fill:head?{patternType:'solid',fgColor:{rgb:'24546A'}}:{patternType:'none'},alignment:{vertical:'top',wrapText:true}};}
+      X.utils.book_append_sheet(book,s,name);
+    }
+    sheet('复核概况',['项目','内容'],[['原报告',stage.fileName],['阶段开始时间（UTC）',stage.startedAt],['最近结束时间（UTC）',stage.updatedAt],['阶段状态',stage.status],['待复核黄色项',stage.total],['已尝试不同季数',new Set(attempts.map(a=>a.key)).size],['复核尝试次数',attempts.length],['说明','仅记录点击开始/继续复核后的信息；拟删不代表已删除。实际清理结果请使用“导出复核清理报告”。']]);
+    sheet('逐项复核',['序号','剧集目录','季数','季目录路径','开始时间（UTC）','结束时间（UTC）','结束环节','复核结果','豆瓣登记集数','豆瓣链接','视频文件数','已识别集数','缺失集号','拟保留版本','拟删文件数','说明'],attempts.map((a,i)=>{const r=a.result||{};return [i+1,a.name,a.season,a.path,a.startedAt,a.endedAt,a.phase,r.state,r.total??a.source?.total,r.sourceUrl||a.source?.url,r.videoCount,r.current,r.missing,r.version,(r.remove||r.record?.remove||[]).length,r.note];}));
+    const groups=[],files=[];
+    attempts.forEach((a,i)=>{const r=a.result||{},rec=r.record||{};
+      for(const g of rec.groups||[])groups.push([i+1,a.name,a.season,g.label,g.complete?'齐全':'缺集',g.episodes,g.missing,g.latestModified]);
+      for(const f of rec.keep||[])files.push([i+1,a.name,a.season,'拟保留视频',f.path,f.size,f.modified,'保留版本']);
+      for(const f of rec.remove||[])files.push([i+1,a.name,a.season,'拟删除（尚未执行）',f.path,f.size,f.modified,f.reason]);
+      for(const f of rec.preserved||[])files.push([i+1,a.name,a.season,'保留配套文件',f.path,f.size,f.modified,f.reason]);
+    });
+    sheet('版本分析',['复核序号','剧集目录','季数','版本','完整性','已有集号','缺失集号','最新云盘修改时间'],groups);
+    sheet('文件计划',['复核序号','剧集目录','季数','计划类型','文件路径','文件大小','云盘修改时间','说明'],files);
+    return X.write(book,{bookType:'xlsx',type:'array',compression:true});
+  }
+  return {write};
+})
+;
+  function stageReportEngine(){return createStageReport(excelEngine());}
   function excelEngine(){return excel||=((() => {
 /* xlsx-js-style 1.2.0, https://github.com/gitbrent/xlsx-js-style
                                  Apache License
@@ -1557,7 +1588,7 @@ return exports;
   return {read,write,colorKind,FIELDS,REVIEW_FIELDS,ARCHIVE_FIELDS};
 })
 )(excelEngine());}
-  if(typeof module!=='undefined'&&module.exports){module.exports={...C,...K,createClient,reportEngine};return;}
+  if(typeof module!=='undefined'&&module.exports){module.exports={...C,...K,createClient,reportEngine,stageReportEngine};return;}
   const NS='tv-review-v1:';
   const get=(k,d)=>GM_getValue(NS+k,d),put=(k,v)=>GM_setValue(NS+k,v),del=k=>GM_deleteValue(NS+k);
   let session=null,index=0,running=false,importing=false,stopping=false,opened=false,ui;
@@ -1603,22 +1634,31 @@ return exports;
   async function review() {
     if(!session)return;
     await exclusive(async()=>{
+      reviewStage||={fileName:session.fileName,total:session.tasks.length,startedAt:new Date().toISOString(),attempts:[]};
+      reviewStage.status='执行中';
+      try {
       for(;index<session.tasks.length;) {
         checkpoint();const row=session.tasks[index];let rows=null;
+        const attempt={key:row.key,name:row.name,season:row.season,path:row.path,startedAt:new Date().toISOString(),phase:'读取文件列表'};
         try {
           message(`豆瓣复核 ${index+1}/${session.tasks.length}：${row.name} / Season ${row.season}`);
           rows=await client.listing(row.path,{skipMissing:true});checkpoint();
+          attempt.phase='查询豆瓣';
           const source=await client.queryDouban(row,sourceLink(row));checkpoint();
+          attempt.source=structuredClone(source);attempt.phase='再次核对文件列表';
           const refreshed=await client.listing(row.path,{skipMissing:true});checkpoint();
           if(!K.equal(rows,refreshed))throw Error('复核期间文件列表发生变化，请等待下载/整理结束后重查');
+          attempt.phase='分析版本与清理计划';
           const p=K.plan(row,rows,source,crypto.randomUUID()),journal=load(row.key);
           plans.set(row,p);
           if(journal?.pending)session.updates.set(row,describe(row,p,{state:'上次删除结果未确认',journal,note:'先核实上次操作，不再发起删除'}));
           else session.updates.set(row,describe(row,p,{journal}));
           index++;render();
         }catch(e){session.updates.set(row,issue(row,e,rows));plans.delete(row);if(e.name==='Pause')throw e;index++;render();}
+        finally {attempt.endedAt=new Date().toISOString();attempt.result=structuredClone(session.updates.get(row));reviewStage.attempts.push(attempt);}
       }
       message('复核完成。请检查各季的保留/拟删清单；只有点击“执行已列清理清单”并确认后才会删除。也可直接导出复核报告。');
+      }finally{reviewStage.updatedAt=new Date().toISOString();reviewStage.status=index>=session.tasks.length?'已完成':'已暂停，可继续';}
     });
   }
   async function cleanup() {
@@ -1667,7 +1707,7 @@ return exports;
   function render() {
     if(!ui)return;const busy=running||importing;
     ui.import.disabled=busy;ui.file.disabled=busy;ui.start.disabled=ui.resume.disabled=busy||!session||index>=session.tasks.length;
-    ui.pause.disabled=!running;ui.export.disabled=busy||!session;ui.prepare.disabled=busy;ui.ready.disabled=busy||!opened;
+    ui.stageExport.disabled=busy||!reviewStage?.startedAt;ui.pause.disabled=!running;ui.export.disabled=busy||!session;ui.prepare.disabled=busy;ui.ready.disabled=busy||!opened;
     ui.clean.disabled=busy||![...plans].some(([row,p])=>p.eligible&&!load(row.key)?.pending);
     ui.status.textContent=session?`${running?'执行中':index>=session.tasks.length?'复核已完成':'待开始 / 可继续'} · ${index}/${session.tasks.length} 个黄色项 · 无效 ${session.errors.length} 项`:'尚未导入；安装默认停止';
     ui.list.replaceChildren();
@@ -1694,6 +1734,11 @@ return exports;
       if(load(row.key)?.pending){const b=button('核实上次删除结果',()=>reconcile(row));b.disabled=busy;box.append(b);}
       ui.list.append(box);
     }
+  }
+  function exportStageReport() {
+    if(running||importing||!reviewStage?.startedAt)return;
+    const bytes=stageReportEngine().write(reviewStage),url=URL.createObjectURL(new Blob([bytes],{type:'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'}));
+    const a=el('a',null,{href:url,download:session.fileName.replace(/\.xlsx$/i,'')+'_复核阶段报告.xlsx'});a.click();setTimeout(()=>URL.revokeObjectURL(url),10000);
   }
   function exportReport() {
     if(running||!session)return;
@@ -1768,7 +1813,7 @@ return exports;
     ui.file=el('input',null,{type:'file',accept:'.xlsx'});ui.file.style.display='none';
     ui.import=button('导入 Excel，选择黄色项',()=>ui.file.click());ui.start=button('开始复核',review);ui.resume=button('继续复核',review);
     ui.pause=button('暂停',()=>{stopping=true;message('正在暂停；已发出的删除会先核实结果，未发出的不执行。');});
-    ui.clean=button('执行已列清理清单',cleanup);ui.clean.className='danger';ui.export=button('导出复核清理报告',exportReport);
+    ui.clean=button('执行已列清理清单',cleanup);ui.clean.className='danger';ui.export=button('导出复核清理报告',exportReport);ui.stageExport=button('复核阶段报告',exportStageReport);
     ui.file.addEventListener('change',async()=>{
       const file=ui.file.files?.[0];ui.file.value='';if(!file||running||importing)return;
       importing=true;render();
@@ -1776,11 +1821,11 @@ return exports;
         if(!/\.xlsx$/i.test(file.name)||file.size>30*1024*1024)throw Error('请选择不超过 30 MB 的 .xlsx 报告');
         if(session?.updates.size&&!confirm('请先导出当前结果，再替换报告。是否继续导入？'))return;
         const imported=reportEngine().read(await file.arrayBuffer(),{origin:ORIGIN,source:SOURCE,mode:'review'});
-        session={...imported,fileName:file.name};index=0;plans.clear();bindings.clear();approvedPlans.clear();
+        session={...imported,fileName:file.name};reviewStage=null;index=0;plans.clear();bindings.clear();approvedPlans.clear();
         message(`已导入 ${session.tasks.length} 个黄色项，尚未开始。`+(session.errors.length?' 无效项：'+session.errors.map(e=>`${e.sheetName}!${e.ref} ${e.error}`).join('；'):''));
       }catch(e){message(e.message);}finally{importing=false;render();}
     });
-    body.append(ui.status,ui.prepare,readyLabel,ui.import,ui.file,ui.start,ui.pause,ui.resume,ui.clean,ui.export,
+    body.append(ui.status,ui.prepare,readyLabel,ui.import,ui.file,ui.start,ui.pause,ui.resume,ui.clean,ui.stageExport,ui.export,
       el('small','普通删除多余视频和唯一对应的图片/NFO；不删除目录、通用海报、归属不明文件或多个完整版本。文件修改时间取云盘显示值。'),
       el('small','先检查清单再执行。刷新前请导出；上次删除结果不明时不会自动重试。'),ui.message,ui.list);render();
     panelLayout=setupPanelLayout({host,box,body,handle,toggle,load:()=>get('panel-layout-v1',null),save:value=>put('panel-layout-v1',value)});

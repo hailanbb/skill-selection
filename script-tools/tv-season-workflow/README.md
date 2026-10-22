@@ -12,7 +12,7 @@
 | --- | --- | --- | --- | --- |
 | [① 剧集初检](season-inspect.user.js) | 1.2.0 | CloudDrive2、豆瓣 | 只读核对本地集号，TMDB 主查、豆瓣按需补查，导出报告 | [需求](docs/01-inspect/requirements.md) · [安装](docs/01-inspect/install.md) · [使用](docs/01-inspect/usage.md) |
 | [② 补缺下载](season-download.user.js) | 1.3.0 | MoviePilot | 读取报告，选择整季或零散资源，提交下载并记录明细 | [需求](docs/02-download/requirements.md) · [安装](docs/02-download/install.md) · [使用](docs/02-download/usage.md) |
-| [③ 复核清理](season-review.user.js) | 1.1.5 | CloudDrive2、豆瓣 | 以豆瓣本季集数复核黄色项，确认清单后删除多余版本及专属刮削文件 | [需求](docs/03-review/requirements.md) · [安装](docs/03-review/install.md) · [使用](docs/03-review/usage.md) |
+| [③ 复核清理](season-review.user.js) | 1.2.0 | CloudDrive2、豆瓣 | 以豆瓣本季集数复核黄色项，确认清单后删除多余版本及专属刮削文件 | [需求](docs/03-review/requirements.md) · [安装](docs/03-review/install.md) · [使用](docs/03-review/usage.md) |
 | [④ 剧集归档](season-archive.user.js) | 1.1.5 | CloudDrive2 | 确认清单后移动绿色剧集，支持同剧缺季合入、同季冲突跳过 | [需求](docs/04-archive/requirements.md) · [安装](docs/04-archive/install.md) · [使用](docs/04-archive/usage.md) |
 
 **所有脚本默认不运行，导入报告只排队。** ② 点击开始后会提交下载；③、④先只读检查，确认具体清单后才删除或移动。建议同一云盘标签页只启用当前阶段。

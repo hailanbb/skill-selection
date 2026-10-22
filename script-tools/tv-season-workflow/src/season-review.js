@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         剧集工作流 ③ · 豆瓣复核与版本清理
 // @namespace    local.tv-season-review
-// @version      1.1.5
+// @version      1.2.0
 // @description  导入黄色项，手动开始豆瓣分季复核；列出保留/删除清单，经确认后普通删除多余版本及专属刮削文件。
 // @match        https://clouddrive.example/*
 // @match        https://movie.douban.com/*
@@ -29,10 +29,12 @@
   const C=(/* build:cloud-core */ null)(simplify);
   const K=(/* build:cleanup-core */ null)(C);
   const createClient=/* build:cloud-client */ null;
-  let excel,report;
+  let excel,report,reviewStage=null;
+  const createStageReport=/* build:review-stage-report */ null;
+  function stageReportEngine(){return createStageReport(excelEngine());}
   function excelEngine(){return excel||=(/* build:xlsx */ null);}
   function reportEngine(){return report||=(/* build:workflow-report */ null)(excelEngine());}
-  if(typeof module!=='undefined'&&module.exports){module.exports={...C,...K,createClient,reportEngine};return;}
+  if(typeof module!=='undefined'&&module.exports){module.exports={...C,...K,createClient,reportEngine,stageReportEngine};return;}
   const NS='tv-review-v1:';
   const get=(k,d)=>GM_getValue(NS+k,d),put=(k,v)=>GM_setValue(NS+k,v),del=k=>GM_deleteValue(NS+k);
   let session=null,index=0,running=false,importing=false,stopping=false,opened=false,ui;
@@ -78,22 +80,31 @@
   async function review() {
     if(!session)return;
     await exclusive(async()=>{
+      reviewStage||={fileName:session.fileName,total:session.tasks.length,startedAt:new Date().toISOString(),attempts:[]};
+      reviewStage.status='执行中';
+      try {
       for(;index<session.tasks.length;) {
         checkpoint();const row=session.tasks[index];let rows=null;
+        const attempt={key:row.key,name:row.name,season:row.season,path:row.path,startedAt:new Date().toISOString(),phase:'读取文件列表'};
         try {
           message(`豆瓣复核 ${index+1}/${session.tasks.length}：${row.name} / Season ${row.season}`);
           rows=await client.listing(row.path,{skipMissing:true});checkpoint();
+          attempt.phase='查询豆瓣';
           const source=await client.queryDouban(row,sourceLink(row));checkpoint();
+          attempt.source=structuredClone(source);attempt.phase='再次核对文件列表';
           const refreshed=await client.listing(row.path,{skipMissing:true});checkpoint();
           if(!K.equal(rows,refreshed))throw Error('复核期间文件列表发生变化，请等待下载/整理结束后重查');
+          attempt.phase='分析版本与清理计划';
           const p=K.plan(row,rows,source,crypto.randomUUID()),journal=load(row.key);
           plans.set(row,p);
           if(journal?.pending)session.updates.set(row,describe(row,p,{state:'上次删除结果未确认',journal,note:'先核实上次操作，不再发起删除'}));
           else session.updates.set(row,describe(row,p,{journal}));
           index++;render();
         }catch(e){session.updates.set(row,issue(row,e,rows));plans.delete(row);if(e.name==='Pause')throw e;index++;render();}
+        finally {attempt.endedAt=new Date().toISOString();attempt.result=structuredClone(session.updates.get(row));reviewStage.attempts.push(attempt);}
       }
       message('复核完成。请检查各季的保留/拟删清单；只有点击“执行已列清理清单”并确认后才会删除。也可直接导出复核报告。');
+      }finally{reviewStage.updatedAt=new Date().toISOString();reviewStage.status=index>=session.tasks.length?'已完成':'已暂停，可继续';}
     });
   }
   async function cleanup() {
@@ -142,7 +153,7 @@
   function render() {
     if(!ui)return;const busy=running||importing;
     ui.import.disabled=busy;ui.file.disabled=busy;ui.start.disabled=ui.resume.disabled=busy||!session||index>=session.tasks.length;
-    ui.pause.disabled=!running;ui.export.disabled=busy||!session;ui.prepare.disabled=busy;ui.ready.disabled=busy||!opened;
+    ui.stageExport.disabled=busy||!reviewStage?.startedAt;ui.pause.disabled=!running;ui.export.disabled=busy||!session;ui.prepare.disabled=busy;ui.ready.disabled=busy||!opened;
     ui.clean.disabled=busy||![...plans].some(([row,p])=>p.eligible&&!load(row.key)?.pending);
     ui.status.textContent=session?`${running?'执行中':index>=session.tasks.length?'复核已完成':'待开始 / 可继续'} · ${index}/${session.tasks.length} 个黄色项 · 无效 ${session.errors.length} 项`:'尚未导入；安装默认停止';
     ui.list.replaceChildren();
@@ -170,6 +181,11 @@
       ui.list.append(box);
     }
   }
+  function exportStageReport() {
+    if(running||importing||!reviewStage?.startedAt)return;
+    const bytes=stageReportEngine().write(reviewStage),url=URL.createObjectURL(new Blob([bytes],{type:'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'}));
+    const a=el('a',null,{href:url,download:session.fileName.replace(/\.xlsx$/i,'')+'_复核阶段报告.xlsx'});a.click();setTimeout(()=>URL.revokeObjectURL(url),10000);
+  }
   function exportReport() {
     if(running||!session)return;
     const bytes=reportEngine().write(session),url=URL.createObjectURL(new Blob([bytes],{type:'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'}));
@@ -188,7 +204,7 @@
     ui.file=el('input',null,{type:'file',accept:'.xlsx'});ui.file.style.display='none';
     ui.import=button('导入 Excel，选择黄色项',()=>ui.file.click());ui.start=button('开始复核',review);ui.resume=button('继续复核',review);
     ui.pause=button('暂停',()=>{stopping=true;message('正在暂停；已发出的删除会先核实结果，未发出的不执行。');});
-    ui.clean=button('执行已列清理清单',cleanup);ui.clean.className='danger';ui.export=button('导出复核清理报告',exportReport);
+    ui.clean=button('执行已列清理清单',cleanup);ui.clean.className='danger';ui.export=button('导出复核清理报告',exportReport);ui.stageExport=button('复核阶段报告',exportStageReport);
     ui.file.addEventListener('change',async()=>{
       const file=ui.file.files?.[0];ui.file.value='';if(!file||running||importing)return;
       importing=true;render();
@@ -196,11 +212,11 @@
         if(!/\.xlsx$/i.test(file.name)||file.size>30*1024*1024)throw Error('请选择不超过 30 MB 的 .xlsx 报告');
         if(session?.updates.size&&!confirm('请先导出当前结果，再替换报告。是否继续导入？'))return;
         const imported=reportEngine().read(await file.arrayBuffer(),{origin:ORIGIN,source:SOURCE,mode:'review'});
-        session={...imported,fileName:file.name};index=0;plans.clear();bindings.clear();approvedPlans.clear();
+        session={...imported,fileName:file.name};reviewStage=null;index=0;plans.clear();bindings.clear();approvedPlans.clear();
         message(`已导入 ${session.tasks.length} 个黄色项，尚未开始。`+(session.errors.length?' 无效项：'+session.errors.map(e=>`${e.sheetName}!${e.ref} ${e.error}`).join('；'):''));
       }catch(e){message(e.message);}finally{importing=false;render();}
     });
-    body.append(ui.status,ui.prepare,readyLabel,ui.import,ui.file,ui.start,ui.pause,ui.resume,ui.clean,ui.export,
+    body.append(ui.status,ui.prepare,readyLabel,ui.import,ui.file,ui.start,ui.pause,ui.resume,ui.clean,ui.stageExport,ui.export,
       el('small','普通删除多余视频和唯一对应的图片/NFO；不删除目录、通用海报、归属不明文件或多个完整版本。文件修改时间取云盘显示值。'),
       el('small','先检查清单再执行。刷新前请导出；上次删除结果不明时不会自动重试。'),ui.message,ui.list);render();
     panelLayout=setupPanelLayout({host,box,body,handle,toggle,load:()=>get('panel-layout-v1',null),save:value=>put('panel-layout-v1',value)});

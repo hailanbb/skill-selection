@@ -31,9 +31,10 @@ async function launch(initial={},responses=[],adapters={}) {
     GM_xmlhttpRequest:options=>{requests.push(options);queueMicrotask(()=>options.onload(responses.shift()||{status:200,response:{success:true}}));return {abort(){}};},
     GM_openInTab:(url,options)=>{opened.push({url,options});return {close(){}};},setTimeout,clearTimeout};
   context.testReview=adapters.review;context.testScan=adapters.scan;
-  context.testWorkflowReport=adapters.workflow;
+  context.testWorkflowReport=adapters.workflow;context.testStageReport=adapters.stageReport;
   context.testCloudClient=adapters.cloudClient;
   const testSource=(adapters.source||source).replace('function excelReviewEngine() {','function excelReviewEngine() { if(testReview)return testReview;')
+    .replace('function stageReportEngine(){','function stageReportEngine(){ if(testStageReport)return testStageReport;')
     .replace('function reportEngine(){', 'function reportEngine(){ if(testWorkflowReport)return testWorkflowReport;')
     .replace('const client=createClient(C,', 'const client=testCloudClient||createClient(C,')
     .replace("async function scanShow(showRow, destinationNames, onlySeason=null, sourcePolicy='default') {","async function scanShow(showRow, destinationNames, onlySeason=null, sourcePolicy='default') { if(testScan)return testScan(showRow,onlySeason,sourcePolicy);");
@@ -161,4 +162,15 @@ test('目录不存在跳过本季并继续下一剧，保持黄色且不查询�
  const page=await launch({},[],{source,workflow:{read:()=>({tasks,errors:[],skipped:0,updates})},cloudClient:{worker(){},listing:async(p,options)=>{assert.equal(options.skipMissing,true);reads.push(p);if(p===tasks[0].path)throw Object.assign(Error('目录不存在：'+p),{name:'DirectoryMissing'});return [];},queryDouban:async t=>{queries.push(t.key);return {title:t.name,total:1,releaseYears:['2025'],url:'https://movie.douban.com/subject/1/',broadcast:'已播完'};},deleteFile(){assert.fail('复核不得删除');}}});
  const input=page.elements.find(e=>e.type==='file');input.files=[{name:'报告.xlsx',size:10,arrayBuffer:async()=>new ArrayBuffer(10)}];await input.fire('change');await page.button('开始复核').click();
  assert.equal(updates.size,2);assert.equal(updates.get(tasks[0]).state,'目录不存在，已跳过');assert.equal(updates.get(tasks[0]).color,null);assert.equal(updates.get(tasks[0]).videoCount,null);assert.deepEqual(queries,['乙']);assert.equal(reads.length,3);assert.equal(page.button('继续复核').disabled,true);
+});
+
+test('复核阶段报告按钮仅开始后启用，保留暂停与继续尝试，重新导入后重置',async()=>{
+ const source=fs.readFileSync(require('node:path').join(__dirname,'../season-review.user.js'),'utf8');let failed=true,captured;
+ const task={name:'测试剧 (2025)',season:1,path:'/115/Library_incs/nas/电视剧/日本剧集/测试剧 (2025)/Season 1',key:'stage',data:{}};
+ const page=await launch({},[],{source,stageReport:{write:stage=>{captured=structuredClone(stage);return new Uint8Array([1]);}},workflow:{read:()=>({tasks:[task],errors:[],updates:new Map()})},cloudClient:{worker(){},listing:async()=>{if(failed)throw Object.assign(Error('文件列表加载失败'),{name:'Pause'});return [];},queryDouban:async()=>({total:1,title:task.name,releaseYears:['2025'],url:'https://movie.douban.com/subject/1/',broadcast:'已播完'})}});
+ const button=page.button('复核阶段报告');assert.ok(button);assert.equal(button.disabled,true);
+ const input=page.elements.find(e=>e.type==='file');const importFile=async()=>{input.files=[{name:'原报告.xlsx',size:10,arrayBuffer:async()=>new ArrayBuffer(10)}];await input.fire('change');};
+ await importFile();assert.equal(button.disabled,true);await page.button('开始复核').click();assert.equal(button.disabled,false);await button.click();assert.equal(captured.attempts.length,1);assert.equal(captured.status,'已暂停，可继续');
+ failed=false;await page.button('继续复核').click();await button.click();assert.equal(captured.attempts.length,2);assert.equal(captured.attempts[0].result.state,'已暂停');assert.equal(captured.status,'已完成');assert.ok(page.elements.some(e=>e.download==='原报告_复核阶段报告.xlsx'));
+ await importFile();assert.equal(button.disabled,true);
 });
