@@ -20,7 +20,7 @@ async function simulate(options={}){
  const text=textContent=>({textContent}),confirm={textContent:'删除',click(){confirmations++;if(options.after)throw Error('response lost');open=false;}},cancel={textContent:'取消',click(){cancelled++;open=false;}};
  const rows=files.map(f=>({getAttribute:()=>f.path,classList:{contains:()=>false},querySelector:s=>({'.file-name-text':text(f.name),'.file-size':text(f.size),'.file-modified':text(f.modified),'.file-icon':{dispatchEvent(){picked.has(f.path)?picked.delete(f.path):picked.add(f.path);}}}[s])}));
  const dialog={getClientRects:()=>open?[{}]:[],textContent:options.permanent?'永久删除':'删除文件',querySelector:()=>null,querySelectorAll:s=>s==='button'?[cancel,confirm]:s==='.delete-file-item'?(options.short?files.slice(0,1):files).map(f=>({querySelector:q=>q==='.delete-file-name'?text(options.wrong?'错误.mkv':f.name):q==='.delete-file-size'?text(f.size):null})):[]};
- const document={querySelector:s=>s==='select.page-size-select'?{value:'all'}:s==='.file-list-status'?text('2 items'):null,querySelectorAll:s=>{
+ const document={querySelector:s=>s==='button.toolbar-refresh-btn'?{click(){}}:s==='select.page-size-select'?{value:'all'}:s==='.file-list-status'?text('2 items'):null,querySelectorAll:s=>{
  if(s==='table.file-list tr.file-row[data-path]')return rows;
  if(s==='table.file-list tr.file-row.selected')return options.extra?[...rows,...rows]:rows.filter(r=>picked.has(r.getAttribute('data-path')));
  if(s==='.files-breadcrumb-bar .breadcrumb-item:not(.breadcrumb-root)')return dir.split('/').slice(1).map(text);

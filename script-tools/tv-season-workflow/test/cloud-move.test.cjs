@@ -4,7 +4,7 @@ async function simulate(options={}) {
   const category='日本剧集',showName='测试剧 (2025)',name=options.file?'tvshow.nfo':options.season?'Season 2':showName,showSource=A.SOURCE+'/'+category+'/'+showName,showTarget=A.DEST+'/'+category+'/'+showName,
     source=(options.season||options.file)?showSource+'/'+name:showSource,target=(options.season||options.file)?showTarget+'/'+name:showTarget;
   const entry={name,path:source,directory:!options.file,size:'',modified:'2026-10-21 10:00'};
-  const state={selected:false,menu:false,dialog:false,input:false,confirmed:0,cancelled:0,destination:''};
+  const state={selected:false,menu:false,dialog:false,input:false,confirmed:0,refreshed:0,cancelled:0,destination:''};
   const text=textContent=>({textContent});
   class Input {constructor(){this.tagName='INPUT';}set value(v){this._value=v;}get value(){return this._value;}dispatchEvent(e){if(e.type==='keydown')state.destination=this._value;}}
   const input=new Input();
@@ -18,7 +18,7 @@ async function simulate(options={}) {
   const menu={getClientRects:()=>state.menu?[{}]:[],querySelectorAll:()=>[{textContent:'移动/复制到...',click(){state.dialog=true;state.menu=false;}}]};
   const row={getAttribute:()=>source,classList:{contains:()=>!options.file},querySelector:s=>({'.file-name-text':text(name),'.file-modified':text(options.changed&&state.dialog?'2026-10-22 10:00':entry.modified),'.file-size':text(''),
     '.file-icon':{dispatchEvent(){state.selected=!state.selected;}},'.file-name-ellipsis':{click(){state.selected=true;state.menu=true;}}}[s])};
-  const document={querySelector:s=>s==='.health-indicator.connected'?(options.disconnected?null:{}):s==='select.page-size-select'?{value:options.pagination?'50':'all'}:s==='.file-list-status'?text('1 items'):null,
+  const document={querySelector:s=>s==='button.toolbar-refresh-btn'?{click(){state.refreshed++;}}:s==='.health-indicator.connected'?(options.disconnected?null:{}):s==='select.page-size-select'?{value:options.pagination?'50':'all'}:s==='.file-list-status'?text('1 items'):null,
     querySelectorAll:s=>{
       if(s==='.files-load-error')return options.loadError?[{getClientRects:()=>[{}]}]:[];
       if(s==='.file-list-scroll-area .loading-bar')return options.loading?[{getClientRects:()=>[{}]}]:[];
@@ -36,7 +36,7 @@ async function simulate(options={}) {
   }finally{Object.assign(global,previous);}
 }
 test('精确选择单个剧集和目标分类后，仅提交一次移动',async()=>{
-  const {state,error}=await simulate();assert.equal(error,undefined);assert.equal(state.confirmed,1);assert.equal(state.destination,A.DEST+'/日本剧集');
+  const {state,error}=await simulate();assert.equal(error,undefined);assert.equal(state.confirmed,1);assert.equal(state.refreshed,1);assert.equal(state.destination,A.DEST+'/日本剧集');
 });
 test('精确移动单季到已存在的同剧目录；同季别名或越界目标不提交',async()=>{
   const ok=await simulate({season:true});assert.equal(ok.error,undefined);assert.equal(ok.state.confirmed,1);assert.ok(ok.state.destination.endsWith('/测试剧 (2025)'));

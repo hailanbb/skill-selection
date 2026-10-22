@@ -1,4 +1,4 @@
-/* CloudDrive2 归档页面适配器：只开放已配置源/目标树内的读取、整剧/季/根文件移动及已验证源空目录的普通删除。
+/* CloudDrive2 归档页面适配器：只开放已配置源/目标树内的读取、整剧/季/根文件移动及已验证源目录的普通删除。
  * 复用只读列表代码；空目录清理有独立的范围、空内容、选择与确认检查。
  * 目标必须是现有分类或同剧目录；遇到冲突或额外确认窗口停止，不选择覆盖、合并或复制。
  */
@@ -56,16 +56,21 @@
           if(dialogs().some(d=>d!==dialog))throw Error('出现额外确认/冲突窗口，请人工核实；脚本不会覆盖或合并');
           return !visible(dialog);
         },'移动请求尚未结束，请核实结果');
+        await refreshAfterOperation(parent(plan.source));
       }finally{finishing--;}
     }catch(e){if(!submitted){cancel();e.notSubmitted=true;}throw e;}
   }
   async function removeEmpty(plan,_expectedRows,entry) {
     let submitted=false,dialog;
     try {
-      if(plan.mode!=='seasons'||plan.cleanup?.source!==plan.source||entry?.path!==plan.source||!entry.directory||parent(plan.source)!==SOURCE+'/'+plan.category||plan.target!==DEST+'/'+plan.category+'/'+entry.name)throw Error('源空目录清理范围不符');
+      if(plan.mode!=='seasons'||plan.cleanup?.source!==plan.source||entry?.path!==plan.source||!entry.directory||parent(plan.source)!==SOURCE+'/'+plan.category||plan.target!==DEST+'/'+plan.category+'/'+entry.name)throw Error('源目录清理范围不符');
       checkpoint();if(dialogs().length)throw Error('请先关闭已有对话框');
-      // 再读一次真实空目录；不使用缓存、计数猜测或递归删除兜底。
-      if((await listing(plan.source)).length)throw Error('源目录出现新内容，禁止删除');
+      // 再读取源清单及目标保留资料；只接受空目录或列明的根共用资料，禁止清单外内容。
+      const expected=C.cleanupFiles(plan);
+      const fingerprint=rows=>JSON.stringify(rows.map(f=>[f.path,f.name,!!f.directory,f.size||'',f.modified||'']).sort((a,b)=>a[0].localeCompare(b[0])));
+      const kept=await listing(plan.target);
+      for(const f of expected){const before=plan.destinationBefore.find(t=>!t.directory&&t.name.normalize('NFC').toLowerCase()===f.name.normalize('NFC').toLowerCase());if(!before||!kept.some(t=>fingerprint([t])===fingerprint([before])))throw Error('目标共用资料已变化，禁止清理源');}
+      if(fingerprint(await listing(plan.source))!==fingerprint(expected))throw Error('源目录出现新内容或清理资料变化，禁止删除');
       const parents=await listing(parent(plan.source)),current=parents.find(f=>f.path===plan.source&&f.directory);
       if(!current||current.name!==entry.name)throw Error('源目录已变化');
       const unchanged=()=>{
@@ -81,12 +86,12 @@
       const remove=[...menu.querySelectorAll('button,[role="menuitem"]')].find(b=>cleanText(b)==='删除');if(!remove)throw Error('找不到普通删除入口');remove.click();
       dialog=await waitFor(()=>[...document.querySelectorAll('[aria-labelledby="delete-confirm-title"]')].find(visible),'删除确认窗口未出现');
       const names=[...dialog.querySelectorAll('.delete-file-name')];
-      if(names.length!==1||cleanText(names[0])!==entry.name||selected().length!==1||selected()[0].getAttribute('data-path')!==plan.source)throw Error('删除确认范围不是计划中的单个源空目录');
+      if(names.length!==1||cleanText(names[0])!==entry.name||selected().length!==1||selected()[0].getAttribute('data-path')!==plan.source)throw Error('删除确认范围不是计划中的单个源目录');
       if(dialog.querySelector('input:checked')||/永久|不可恢复|permanent/i.test(cleanText(dialog)))throw Error('拒绝永久删除');
       unchanged();
       const confirm=[...dialog.querySelectorAll('button')].find(b=>cleanText(b)==='删除');if(!confirm||confirm.disabled)throw Error('删除按钮不可用');
       finishing++;submitted=true;
-      try{confirm.click();await waitFor(()=>!visible(dialog),'源空目录删除结果待核实');}finally{finishing--;}
+      try{confirm.click();await waitFor(()=>!visible(dialog),'源目录删除结果待核实');await listing(parent(plan.source),{uninterruptible:true});}finally{finishing--;}
     }catch(e){if(!submitted){if(dialog)[...dialog.querySelectorAll('button')].find(b=>cleanText(b)==='取消')?.click();e.notSubmitted=true;}throw e;}
   }
   return {listing,moveShow,removeEmpty,currentPath,readRows,requireListReady};

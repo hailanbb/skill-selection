@@ -1681,7 +1681,7 @@ return exports;
           if(!f.path||!(f.path===task.path||f.path.startsWith(task.path+'/')||!f.path.includes('/Season ')))continue;
           // 根部共用文件属于整剧；同一季文件只出现在对应报告行，避免跨季误记。
           if(f.path!==task.path&&!f.path.startsWith(task.path+'/')&&/\/season\s+\d+(?:\/|$)/i.test(f.path))continue;
-          add(task,[op.kind==='empty-directory'?'删除源空目录':'移动',op.planId||journal.planId||record.planId||'',f.path,op.target&&op.source?op.target+f.path.slice(op.source.length):'',f.directory?'目录':'文件',f.size||'',f.modified||'',op.reason||'绿色剧集归档','',(op.kind==='empty-directory'?{verified:'删除已验证',pending:'删除结果待核实','not-submitted':'未提交删除',planned:'尚未执行'}:{verified:'移动已验证',pending:'移动结果待核实','not-submitted':'未提交移动',planned:'尚未执行'})[op.state]||op.state||'尚未执行',op.at||'',op.finishedAt||'',op.error||'']);
+          add(task,[op.kind==='source-directory'?'删除源目录及已列多余资料':op.kind==='empty-directory'?'删除源空目录':'移动',op.planId||journal.planId||record.planId||'',f.path,op.target&&op.source?op.target+f.path.slice(op.source.length):'',f.directory?'目录':'文件',f.size||'',f.modified||'',op.reason||'绿色剧集归档','',(['empty-directory','source-directory'].includes(op.kind)?{verified:'删除已验证',pending:'删除结果待核实','not-submitted':'未提交删除',planned:'尚未执行'}:{verified:'移动已验证',pending:'移动结果待核实','not-submitted':'未提交移动',planned:'尚未执行'})[op.state]||op.state||'尚未执行',op.at||'',op.finishedAt||'',op.error||'']);
         }
         for(const f of record.preserved||journal.preserved||[]) {
           const skip=(record.skipped||journal.skipped||[]).find(s=>f.path===s.source||f.path.startsWith(s.source+'/'));

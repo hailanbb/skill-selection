@@ -7,6 +7,11 @@ const C=require('../season-download.user.js'),I=require('../season-inspect.user.
 const bundle=fs.readFileSync(path.join(__dirname,'../vendor/xlsx-js-style/package/dist/xlsx.bundle.js'),'utf8');
 const X=new Function('const exports={};const module=undefined,require=undefined,window=undefined,define=undefined;'+bundle+';return exports;')();
 const options={origin:'https://clouddrive.example',source:I.SOURCE};
+test('源多余共用资料删除逐项列出，不能写成移动',()=>{
+  const s=R.read(fixture(),{...options,mode:'archive'}),t=s.tasks[0];
+  s.updates.set(t,{state:'已归档',record:{operations:[],cleanup:{kind:'source-directory',source:t.showPath,state:'verified',at:'start',finishedAt:'end',reason:'保留目标同名资料',manifest:[{path:t.showPath,directory:true},{path:t.showPath+'/poster.jpg',size:'1 MB',modified:'2026-10-23 08:00'}]}}});
+  const rows=X.utils.sheet_to_json(X.read(R.write(s)).Sheets['归档明细_1']);assert.equal(rows.length,2);assert.ok(rows.every(r=>r['操作']==='删除源目录及已列多余资料'&&r['执行结果']==='删除已验证'));assert.equal(rows[1]['文件大小'],'1 MB');
+});
 test('整理修复记录跨阶段分片往返，原下载日志和人工备注保留，独立输出历史删除明细',()=>{
   const s=R.read(fixture(),options),t=s.tasks[1],repair={schema:1,taskKey:t.key,state:'submitted',at:new Date().toISOString(),episodes:[2],note:'等待云盘复核',items:[{id:9,episode:2,source:'/downloads/剧.S01E02.mkv',target:'/media/剧/Season 1/剧.S01E02.mkv',history:{id:9,title:'测试剧'},steps:[{action:'仅删除整理历史',state:'verified',at:'start',finishedAt:'end'}]}],previousItems:[]};
   repair.note+='长记录'.repeat(12000);s.updates.set(t,{...result(),repair});

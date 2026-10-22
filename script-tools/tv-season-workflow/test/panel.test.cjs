@@ -38,6 +38,7 @@ async function launch(initial={},responses=[],adapters={}) {
     .replace('const Repair=','const Repair=testRepair||')
     .replace('function stageReportEngine(){','function stageReportEngine(){ if(testStageReport)return testStageReport;')
     .replace('function reportEngine(){', 'function reportEngine(){ if(testWorkflowReport)return testWorkflowReport;')
+    .replace('const client=createClient({...C,cleanupFiles:K.cleanupFiles},', 'const client=testCloudClient||createClient({...C,cleanupFiles:K.cleanupFiles},')
     .replace('const client=createClient(C,', 'const client=testCloudClient||createClient(C,')
     .replace("async function scanShow(showRow, destinationNames, onlySeason=null, sourcePolicy='default') {","async function scanShow(showRow, destinationNames, onlySeason=null, sourcePolicy='default') { if(testScan)return testScan(showRow,onlySeason,sourcePolicy);");
   vm.runInNewContext(testSource,context);

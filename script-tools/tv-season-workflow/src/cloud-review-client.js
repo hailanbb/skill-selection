@@ -61,6 +61,17 @@
     const mode=document.querySelector('button[aria-label="列表视图"]');if(visible(mode))mode.click();
     const filter=document.querySelector('.unified-header .uh-filter-input');if(filter?.value)setInput(filter,'');
   }
+  // 请求结束先刷新实际发起操作的目录；即使用户点暂停也先完成刷新，再交核心验证。
+  async function refreshAfterOperation(path) {
+    finishing++;
+    try {
+      if(currentPath()!==path||breadcrumbPath()!==path)throw Error('操作后路径改变，结果待核实');
+      const refresh=await waitFor(()=>document.querySelector('button.toolbar-refresh-btn'),'操作后刷新控件不存在');refresh.click();
+      await sleep(250);
+      await waitFor(()=>{if(currentPath()!==path||breadcrumbPath()!==path)throw Error('刷新时工作目录改变');requireListReady({allowLoading:true});return !listLoading();},'操作后刷新未完成，结果待核实');
+      requireListReady();
+    }finally{finishing--;}
+  }
   async function listing(path,{uninterruptible=false,skipMissing=false}={}) {
     if(uninterruptible)finishing++;
     try {
@@ -133,7 +144,7 @@
       const confirm=[...dialog.querySelectorAll('button')].find(b=>cleanText(b)==='删除');if(!confirm||confirm.disabled)throw Error('删除确认按钮不可用');
       // 用户已在脚本面板确认本次具体清单，这里只确认已逐字核对的普通单文件删除。
       finishing++;submitted=true;
-      try {confirm.click();await waitFor(()=>!visible(dialog),'删除请求未结束');}finally{finishing--;}
+      try {confirm.click();await waitFor(()=>!visible(dialog),'删除请求未结束');await refreshAfterOperation(parent(file.path));}finally{finishing--;}
     }catch(e){if(!submitted){cancelDelete();e.notSubmitted=true;}throw e;}
   }
   // 不使用全选；只多选计划内普通文件，且通过工具栏入口保持整个选择集合。
@@ -163,7 +174,7 @@
       if(dialog.querySelector('input:checked')||/永久|不可恢复|permanent/i.test(dialog.textContent))throw Error('检测到永久删除选项，本脚本不执行');
       unchanged();exactSelection();const confirm=[...dialog.querySelectorAll('button')].find(b=>cleanText(b)==='删除');if(!confirm||confirm.disabled)throw Error('批量删除确认按钮不可用');
       finishing++;submitted=true;
-      try{confirm.click();await waitFor(()=>!visible(dialog),'批量删除请求未结束');}finally{finishing--;}
+      try{confirm.click();await waitFor(()=>!visible(dialog),'批量删除请求未结束');await refreshAfterOperation(folder);}finally{finishing--;}
     }catch(e){if(!submitted){cancelDelete();e.notSubmitted=true;}throw e;}
   }
   return {deleteFiles,listing,queryDouban,deleteFile,worker:doubanWorker,currentPath,readRows,requireListReady};

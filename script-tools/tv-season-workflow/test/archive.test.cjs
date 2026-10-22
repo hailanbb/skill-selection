@@ -128,7 +128,7 @@ function mergeFixture(extra=false) {
     f.tree.get(A.parent(op.target)).push({...entry,path:op.target,modified:entry.directory?'2026-10-22 10:00':entry.modified});
     for(const [path,files] of [...f.tree])if(path===op.source||path.startsWith(op.source+'/')){f.tree.set(op.target+path.slice(op.source.length),files.map(r=>({...r,path:op.target+r.path.slice(op.source.length)})));f.tree.delete(path);}
   };
-  f.api.removeEmpty=async()=>{assert.equal(f.tree.get(f.source).length,0);f.tree.delete(f.source);f.tree.set(A.parent(f.source),f.tree.get(A.parent(f.source)).filter(r=>r.path!==f.source));};
+  f.api.removeEmpty=async()=>{assert.ok(A.equal(f.tree.get(f.source),A.cleanupFiles(f.journal)));f.tree.delete(f.source);f.tree.set(A.parent(f.source),f.tree.get(A.parent(f.source)).filter(r=>r.path!==f.source));};
   return {f,rows,moves};
 }
 test('目标已有第一季时移入第二季及源根文件，验证后删除源空目录',async()=>{
@@ -190,9 +190,31 @@ test('归档按真实路径处理混排片名，不把译名/简繁近似目录�
 });
 
 test('根文件同名冲突整剧暂缓并列出路径，不覆盖文件',async()=>{
-  const {f,rows,moves}=mergeFixture();f.tree.get(f.target).push(f.file(f.target,'TVSHOW.NFO'));
-  const p=await A.plan(rows,f.list,'conflict');assert.equal(p.eligible,false);assert.equal(p.operations.length,0);assert.equal(p.skipped[0].source,f.source+'/tvshow.nfo');
+  const {f,rows,moves}=mergeFixture();f.tree.get(f.source).push(f.file(f.source,'custom.txt'));f.tree.get(f.target).push(f.file(f.target,'custom.txt'));
+  const p=await A.plan(rows,f.list,'conflict');assert.equal(p.eligible,false);assert.equal(p.operations.length,0);assert.equal(p.skipped[0].source,f.source+'/custom.txt');
   await assert.rejects(A.execute(p,f.api));assert.equal(moves.length,0);
+});
+test('共用图片及tvshow.nfo保留目标，移动季后删除已列源资料，目标季和父目录均刷新读取',async()=>{
+  const {f,rows,moves}=mergeFixture();
+  for(const name of ['clearlogo.png','poster.jpg'])if(!f.tree.get(f.source).some(x=>x.name===name))f.tree.get(f.source).push(f.file(f.source,name));
+  f.tree.get(f.target).push(f.file(f.target,'clearlogo.png'),f.file(f.target,'tvshow.nfo'));
+  const before=structuredClone(f.tree.get(f.target)),p=await A.plan(rows,f.list,'shared');
+  assert.equal(p.eligible,true);assert.equal(p.skipped.length,0);assert.equal(p.cleanup.discardFiles.length,3);assert.equal(p.operations.length,1);
+  const reads=[],list=f.api.list;f.api.list=async path=>{reads.push(path);return list(path);};
+  const r=await A.execute(p,f.api);assert.equal(r.verified,true);assert.equal(f.tree.has(f.source),false);assert.equal(moves.length,1);
+  for(const old of before)assert.deepEqual(f.tree.get(f.target).find(x=>x.path===old.path),old);
+  const index=reads.indexOf(p.operations[0].target);assert.ok(index>=0);assert.equal(reads[index+1],f.target);
+  assert.equal(r.cleanup.manifest.filter(x=>!x.directory).length,3);
+});
+test('目标共用文件为零、目录或移动后被修改，均不删除源剧集',async()=>{
+  for(const variant of ['zero','directory','changed']){
+    const {f,rows}=mergeFixture();const target=f.file(f.target,'tvshow.nfo');f.tree.get(f.target).push(target);
+    if(variant==='zero')target.size='0 B';if(variant==='directory'){target.directory=true;f.tree.set(target.path,[]);}
+    const p=await A.plan(rows,f.list,'guard');
+    if(variant!=='changed'){assert.equal(p.eligible,false);continue;}
+    let removed=0;f.api.removeEmpty=async()=>{removed++;};const move=f.api.move;f.api.move=async(...args)=>{await move(...args);target.size='99 GB';};
+    await assert.rejects(A.execute(p,f.api));assert.equal(removed,0);assert.equal(f.tree.has(f.source),true);
+  }
 });
 test('空目录清理前新增文件或目标变更，不删除且不标成功',async()=>{
   for(const variant of ['source','target']) {

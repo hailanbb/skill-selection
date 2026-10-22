@@ -5,7 +5,7 @@ const C=require('../season-review.user.js');
 const dir='/115/Library_incs/nas/电视剧/日本剧集/测试剧 (2025)/Season 1';
 const file={path:dir+'/Test.S01E01.720p-B.mkv',name:'Test.S01E01.720p-B.mkv',modified:'2026-10-21 10:00',size:'1 GB',directory:false};
 async function simulate(options={}) {
-  const state={selected:false,menu:false,dialog:false,confirmed:0,cancelled:0};
+  const state={selected:false,menu:false,dialog:false,confirmed:0,refreshed:0,cancelled:0};
   const text=value=>({textContent:value});
   const confirm={textContent:'删除',disabled:!!options.disabled,click(){state.confirmed++;if(options.serverThrow)throw Error('server failure');state.dialog=false;}};
   const cancel={textContent:'取消',click(){state.dialog=false;state.cancelled++;}};
@@ -17,7 +17,7 @@ async function simulate(options={}) {
     '.file-name-text':text(file.name),'.file-modified':text(options.changed||(options.changedAfterDialog&&state.dialog)?'2026-10-21 11:00':file.modified),'.file-size':text(file.size),
     '.file-icon':{dispatchEvent(){state.selected=!state.selected;}},'.file-name-ellipsis':{click(){state.selected=true;state.menu=true;}}
   }[s])};
-  const document={querySelector:s=>s==='.health-indicator.connected'?(options.disconnected?null:{}):s==='select.page-size-select'?{value:options.changedPage?'50':'all'}:s==='.file-list-status'?text('1 items'):null,
+  const document={querySelector:s=>s==='button.toolbar-refresh-btn'?{click(){state.refreshed++;}}:s==='.health-indicator.connected'?(options.disconnected?null:{}):s==='select.page-size-select'?{value:options.changedPage?'50':'all'}:s==='.file-list-status'?text('1 items'):null,
     querySelectorAll:s=>{
       if(s==='.files-load-error')return options.loadError?[{getClientRects:()=>[{}]}]:[];
       if(s==='.file-list-scroll-area .loading-bar')return options.loading?[{getClientRects:()=>[{}]}]:[];
@@ -38,7 +38,7 @@ async function simulate(options={}) {
   }finally{Object.assign(global,previous);}
 }
 test('匹配单文件、名称/大小及普通删除窗口后，适配器只点一次确认',async()=>{
-  const {state,error}=await simulate();assert.equal(error,undefined);assert.equal(state.confirmed,1);assert.equal(state.dialog,false);
+  const {state,error}=await simulate();assert.equal(error,undefined);assert.equal(state.confirmed,1);assert.equal(state.refreshed,1);assert.equal(state.dialog,false);
 });
 test('列表加载失败或未结束、目录不符、文件变化、选择范围不符时不确认删除',async()=>{
   for(const name of ['loadError','loading','wrongPath','changed','wrongSelection','changedAfterDialog','changedPage','missingSnapshot']) {

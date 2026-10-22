@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         剧集工作流 ③ · 豆瓣复核与版本清理
 // @namespace    local.tv-season-review
-// @version      1.4.0
+// @version      1.4.1
 // @description  导入黄色项，手动开始豆瓣分季复核；列出保留/删除清单，经确认后普通删除多余版本及专属刮削文件。
 // @match        https://clouddrive.example/*
 // @match        https://movie.douban.com/*
@@ -721,6 +721,17 @@ return {norm,parent,base,mapKey,showInfo,titleIdentity,candidateMatches,chooseCa
     const mode=document.querySelector('button[aria-label="列表视图"]');if(visible(mode))mode.click();
     const filter=document.querySelector('.unified-header .uh-filter-input');if(filter?.value)setInput(filter,'');
   }
+  // 请求结束先刷新实际发起操作的目录；即使用户点暂停也先完成刷新，再交核心验证。
+  async function refreshAfterOperation(path) {
+    finishing++;
+    try {
+      if(currentPath()!==path||breadcrumbPath()!==path)throw Error('操作后路径改变，结果待核实');
+      const refresh=await waitFor(()=>document.querySelector('button.toolbar-refresh-btn'),'操作后刷新控件不存在');refresh.click();
+      await sleep(250);
+      await waitFor(()=>{if(currentPath()!==path||breadcrumbPath()!==path)throw Error('刷新时工作目录改变');requireListReady({allowLoading:true});return !listLoading();},'操作后刷新未完成，结果待核实');
+      requireListReady();
+    }finally{finishing--;}
+  }
   async function listing(path,{uninterruptible=false,skipMissing=false}={}) {
     if(uninterruptible)finishing++;
     try {
@@ -869,7 +880,7 @@ return {norm,parent,base,mapKey,showInfo,titleIdentity,candidateMatches,chooseCa
       const confirm=[...dialog.querySelectorAll('button')].find(b=>cleanText(b)==='删除');if(!confirm||confirm.disabled)throw Error('删除确认按钮不可用');
       // 用户已在脚本面板确认本次具体清单，这里只确认已逐字核对的普通单文件删除。
       finishing++;submitted=true;
-      try {confirm.click();await waitFor(()=>!visible(dialog),'删除请求未结束');}finally{finishing--;}
+      try {confirm.click();await waitFor(()=>!visible(dialog),'删除请求未结束');await refreshAfterOperation(parent(file.path));}finally{finishing--;}
     }catch(e){if(!submitted){cancelDelete();e.notSubmitted=true;}throw e;}
   }
   // 不使用全选；只多选计划内普通文件，且通过工具栏入口保持整个选择集合。
@@ -899,7 +910,7 @@ return {norm,parent,base,mapKey,showInfo,titleIdentity,candidateMatches,chooseCa
       if(dialog.querySelector('input:checked')||/永久|不可恢复|permanent/i.test(dialog.textContent))throw Error('检测到永久删除选项，本脚本不执行');
       unchanged();exactSelection();const confirm=[...dialog.querySelectorAll('button')].find(b=>cleanText(b)==='删除');if(!confirm||confirm.disabled)throw Error('批量删除确认按钮不可用');
       finishing++;submitted=true;
-      try{confirm.click();await waitFor(()=>!visible(dialog),'批量删除请求未结束');}finally{finishing--;}
+      try{confirm.click();await waitFor(()=>!visible(dialog),'批量删除请求未结束');await refreshAfterOperation(folder);}finally{finishing--;}
     }catch(e){if(!submitted){cancelDelete();e.notSubmitted=true;}throw e;}
   }
   return {deleteFiles,listing,queryDouban,deleteFile,worker:doubanWorker,currentPath,readRows,requireListReady};
@@ -1540,7 +1551,7 @@ return exports;
           if(!f.path||!(f.path===task.path||f.path.startsWith(task.path+'/')||!f.path.includes('/Season ')))continue;
           // 根部共用文件属于整剧；同一季文件只出现在对应报告行，避免跨季误记。
           if(f.path!==task.path&&!f.path.startsWith(task.path+'/')&&/\/season\s+\d+(?:\/|$)/i.test(f.path))continue;
-          add(task,[op.kind==='empty-directory'?'删除源空目录':'移动',op.planId||journal.planId||record.planId||'',f.path,op.target&&op.source?op.target+f.path.slice(op.source.length):'',f.directory?'目录':'文件',f.size||'',f.modified||'',op.reason||'绿色剧集归档','',(op.kind==='empty-directory'?{verified:'删除已验证',pending:'删除结果待核实','not-submitted':'未提交删除',planned:'尚未执行'}:{verified:'移动已验证',pending:'移动结果待核实','not-submitted':'未提交移动',planned:'尚未执行'})[op.state]||op.state||'尚未执行',op.at||'',op.finishedAt||'',op.error||'']);
+          add(task,[op.kind==='source-directory'?'删除源目录及已列多余资料':op.kind==='empty-directory'?'删除源空目录':'移动',op.planId||journal.planId||record.planId||'',f.path,op.target&&op.source?op.target+f.path.slice(op.source.length):'',f.directory?'目录':'文件',f.size||'',f.modified||'',op.reason||'绿色剧集归档','',(['empty-directory','source-directory'].includes(op.kind)?{verified:'删除已验证',pending:'删除结果待核实','not-submitted':'未提交删除',planned:'尚未执行'}:{verified:'移动已验证',pending:'移动结果待核实','not-submitted':'未提交移动',planned:'尚未执行'})[op.state]||op.state||'尚未执行',op.at||'',op.finishedAt||'',op.error||'']);
         }
         for(const f of record.preserved||journal.preserved||[]) {
           const skip=(record.skipped||journal.skipped||[]).find(s=>f.path===s.source||f.path.startsWith(s.source+'/'));
