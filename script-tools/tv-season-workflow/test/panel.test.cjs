@@ -184,3 +184,25 @@ test('批次结果核实只读检查保留清单，分别记录已消失和仍�
  const input=page.elements.find(e=>e.type==='file');input.files=[{name:'报告.xlsx',size:10,arrayBuffer:async()=>new ArrayBuffer(10)}];await input.fire('change');await page.button('开始复核').click();await page.button('核实上次删除结果').click();
  const record=page.values.get(key);assert.equal(record.pending,null);assert.equal(record.records[0].state,'manual-verified');assert.equal(record.records[1].state,'cancelled');assert.equal(page.button('继续复核').disabled,false);
 });
+
+test('独立暂停执行等待当前批次核实，继续仅删除剩余批次且不重复确认',async()=>{
+ const source=fs.readFileSync(require('node:path').join(__dirname,'../season-review.user.js'),'utf8'),dir='/115/Library_incs/nas/电视剧/日本剧集/测试剧 (2025)/Season 1';
+ const task={name:'测试剧 (2025)',season:1,path:dir,key:'pause-batch',data:{'来源登记集数':2,'播出状态':'已播完'}},updates=new Map();
+ const file=name=>({name,path:dir+'/'+name,directory:false,size:'1 GB',modified:'2026-10-20 10:00'});
+ let files=['Test.S01E01.1080p-A.mkv','Test.S01E02.1080p-A.mkv',...Array.from({length:51},(_,i)=>'Test.S01E01.720p-B (copy '+(i+1)+').mkv')].map(file),confirmations=0,release,started;
+ const entered=new Promise(r=>started=r),gate=new Promise(r=>release=r),batches=[];
+ const page=await launch({},[],{source,confirm:()=>{confirmations++;return true;},workflow:{read:()=>({tasks:[task],errors:[],updates})},cloudClient:{worker(){},listing:async()=>structuredClone(files),queryDouban:async()=>({total:2,title:task.name,releaseYears:['2025'],url:'https://movie.douban.com/subject/1/',broadcast:'已播完'}),deleteFiles:async batch=>{batches.push(batch.map(f=>f.path));if(batches.length===1){started();await gate;}files=files.filter(f=>!batch.some(b=>b.path===f.path));}}});
+ assert.equal(page.button('暂停执行').disabled,true);assert.equal(page.button('继续执行').disabled,true);
+ const input=page.elements.find(e=>e.type==='file');input.files=[{name:'报告.xlsx',size:10,arrayBuffer:async()=>new ArrayBuffer(10)}];await input.fire('change');await page.button('开始复核').click();
+ assert.equal(page.button('继续执行').disabled,true);const executing=page.button('执行已列清理清单').click();await entered;
+ assert.equal(page.button('暂停执行').disabled,false);assert.equal(page.button('暂停').disabled,true);await page.button('暂停执行').click();assert.equal(page.button('继续执行').disabled,true);
+ release();await executing;assert.equal(batches.length,1);assert.equal(batches[0].length,50);assert.equal(files.length,3);assert.equal(page.button('继续执行').disabled,false);
+ assert.equal(page.values.get('tv-review-v1:cleanup:'+task.key).pending,null);await page.button('继续执行').click();
+ assert.deepEqual(batches.map(b=>b.length),[50,1]);assert.equal(new Set(batches.flat()).size,51);assert.equal(confirmations,1);assert.equal(updates.get(task).color,'green');assert.equal(page.button('继续执行').disabled,true);assert.equal(page.button('暂停执行').disabled,true);
+});
+test('清理结果未知时继续执行不可用，必须先核实待处理批次',async()=>{
+ const source=fs.readFileSync(require('node:path').join(__dirname,'../season-review.user.js'),'utf8'),dir='/115/Library_incs/nas/电视剧/日本剧集/测试剧 (2025)/Season 1',task={name:'测试剧 (2025)',season:1,path:dir,key:'unknown-batch',data:{}};
+ const files=['Test.S01E01.1080p-A.mkv','Test.S01E02.1080p-A.mkv','Test.S01E01.720p-B.mkv'].map(name=>({name,path:dir+'/'+name,size:'1 GB',modified:'2026-10-20 10:00',directory:false}));let calls=0;
+ const page=await launch({},[],{source,workflow:{read:()=>({tasks:[task],errors:[],updates:new Map()})},cloudClient:{worker(){},listing:async()=>structuredClone(files),queryDouban:async()=>({total:2,title:task.name,releaseYears:['2025'],url:'https://movie.douban.com/subject/1/',broadcast:'已播完'}),deleteFiles:async()=>{calls++;throw Error('响应未知');}}});
+ const input=page.elements.find(e=>e.type==='file');input.files=[{name:'报告.xlsx',size:10,arrayBuffer:async()=>new ArrayBuffer(10)}];await input.fire('change');await page.button('开始复核').click();await page.button('执行已列清理清单').click();assert.equal(calls,1);assert.equal(page.button('继续执行').disabled,true);await page.button('继续执行').click();assert.equal(calls,1);assert.ok(page.button('核实上次删除结果'));
+});
