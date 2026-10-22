@@ -109,7 +109,7 @@ skill-selection/
 | 脚本名称 | 适用环境 | 核心功能 | 文件与说明 |
 | :--- | :--- | :--- | :--- |
 | **MoviePilot订阅批量取消脚本 · v2.4.0** | **Chrome + Tampermonkey + MoviePilot** | 从底部逐项取消订阅；支持电视剧零进度取消、2026年前未完成订阅维护、跳过名单、整季资源比较、可折叠面板与处理记录。 | [安装脚本](script-tools/moviepilot-unsubscribe/moviepilot-unsubscribe.user.js) · [👉 配置与使用指南](script-tools/moviepilot-unsubscribe/README.md) |
-| **剧集整理工作流 · 四阶段** | **Chrome + Tampermonkey + CloudDrive2 / MoviePilot** | ① 初检 → ② 补缺下载 → ③ 复核清理 → ④ 归档；Excel 衔接，逐项记录下载、删除和移动。 | [项目与四个脚本](script-tools/tv-season-workflow/README.md) · [从零安装](script-tools/tv-season-workflow/INSTALL.md) · [报告与追溯](script-tools/tv-season-workflow/REPORT.md) |
+| **剧集整理工作流(油猴版)** | **Chrome + Tampermonkey + CloudDrive2 / MoviePilot** | ① 初检 → ② 补缺下载 → ③ 复核清理 → ④ 归档；Excel 衔接，逐项记录下载、删除和移动。 | [项目与四个脚本](script-tools/tv-season-workflow/README.md) · [从零安装](script-tools/tv-season-workflow/INSTALL.md) · [报告与追溯](script-tools/tv-season-workflow/REPORT.md) |
 
 脚本需按指南配置自己的站点地址；安装后默认不运行。单项试跑与批量运行自由选择，不需要先安装 Agent Skill。更多工具见 [脚本工具索引](script-tools/README.md)。
 
