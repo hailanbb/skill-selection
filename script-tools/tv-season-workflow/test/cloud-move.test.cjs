@@ -20,6 +20,8 @@ async function simulate(options={}) {
     '.file-icon':{dispatchEvent(){state.selected=!state.selected;}},'.file-name-ellipsis':{click(){state.selected=true;state.menu=true;}}}[s])};
   const document={querySelector:s=>s==='.health-indicator.connected'?(options.disconnected?null:{}):s==='select.page-size-select'?{value:options.pagination?'50':'all'}:s==='.file-list-status'?text('1 items'):null,
     querySelectorAll:s=>{
+      if(s==='.files-load-error')return options.loadError?[{getClientRects:()=>[{}]}]:[];
+      if(s==='.file-list-scroll-area .loading-bar')return options.loading?[{getClientRects:()=>[{}]}]:[];
       if(s==='table.file-list tr.file-row[data-path]')return [row];
       if(s==='table.file-list tr.file-row.selected')return state.selected?(options.selection?[row,row]:[row]):[];
       if(s==='.files-breadcrumb-bar .breadcrumb-item:not(.breadcrumb-root)')return A.parent(source).split('/').slice(1).map(text);
@@ -40,8 +42,8 @@ test('精确移动单季到已存在的同剧目录；同季别名或越界目�
   const ok=await simulate({season:true});assert.equal(ok.error,undefined);assert.equal(ok.state.confirmed,1);assert.ok(ok.state.destination.endsWith('/测试剧 (2025)'));
   for(const extra of [{alias:true},{outside:true}]){const r=await simulate({season:true,...extra});assert.ok(r.error);assert.equal(r.state.confirmed,0);assert.equal(r.error.notSubmitted,true);}
 });
-test('错路径、离线、分页变化、选择变化、清单变化和越界目标不提交',async()=>{
-  for(const key of ['path','disconnected','pagination','selection','changed','outside']) {
+test('错路径、列表失败或加载中、分页变化、选择变化、清单变化和越界目标不提交',async()=>{
+  for(const key of ['path','loadError','loading','pagination','selection','changed','outside']) {
     const {state,error}=await simulate({[key]:true});assert.ok(error,key);assert.equal(state.confirmed,0,key);assert.equal(error.notSubmitted,true,key);
   }
 });
@@ -52,4 +54,9 @@ test('目标出现同名目录、警告、禁用按钮或提交前暂停均取�
 });
 test('发出移动后响应异常必须保留不确定状态，不能标作未提交',async()=>{
   const {state,error}=await simulate({throwAfter:true});assert.ok(error);assert.equal(state.confirmed,1);assert.equal(error.notSubmitted,undefined);
+});
+
+test('指示器缺少 connected 时，匹配目录及移动确认仍可执行；真实列表错误照常拦截',async()=>{
+  const ok=await simulate({disconnected:true});assert.equal(ok.error,undefined);assert.equal(ok.state.confirmed,1);
+  const bad=await simulate({disconnected:true,loadError:true});assert.equal(bad.error.name,'Pause');assert.equal(bad.state.confirmed,0);assert.equal(bad.error.notSubmitted,true);
 });

@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         剧集工作流 ④ · 绿色剧集归档
 // @namespace    local.tv-season-archive
-// @version      1.1.2
+// @version      1.1.3
 // @description  确认清单后归档绿色季；支持同剧缺季合入、跳过同季冲突，逐文件输出操作明细，验证成功标紫色。
 // @match        https://clouddrive.example/*
 // @grant        GM_getValue
@@ -635,7 +635,13 @@ return {norm,parent,base,mapKey,showInfo,titleIdentity,candidateMatches,chooseCa
   function currentPath(){return new URL(location.href).searchParams.get('path')?.replace(/\/$/,'')||'/';}
   function breadcrumbPath(){return '/'+[...document.querySelectorAll('.files-breadcrumb-bar .breadcrumb-item:not(.breadcrumb-root)')].map(e=>e.textContent.trim()).join('/');}
   function allowed(path){return [SOURCE,DEST].some(root=>path===root||path.startsWith(root+'/'))&&!path.split('/').some(s=>s==='.'||s==='..')&&!/[\\\x00-\x1f]/.test(path);}
-  function requireConnected(){if(!document.querySelector('.health-indicator.connected'))throw Error('云盘未确认连接，停止归档');}
+  // 顶部 health-indicator 不是文件列表是否可用的可靠依据，不能作为读取或操作门槛。
+  // 与初检一致，依据刷新后的完整、稳定列表；删除/移动还需原有快照、确认窗口及事后验证。
+  function listLoading(){return [...document.querySelectorAll('.file-list-scroll-area .loading-bar')].some(visible);}
+  function requireListReady({allowLoading=false}={}) {
+    if([...document.querySelectorAll('.files-load-error')].some(visible))throw pause('云盘文件列表加载失败，已暂停当前任务；请恢复文件浏览后点击继续');
+    if(!allowLoading&&listLoading())throw pause('云盘文件列表仍在加载，已暂停当前任务；请等待加载完成后点击继续');
+  }
   function readRows(){return [...document.querySelectorAll('table.file-list tr.file-row[data-path]')].map(e=>({path:e.getAttribute('data-path'),name:e.querySelector('.file-name-text')?.textContent.trim()||'',directory:e.classList.contains('directory'),modified:e.querySelector('.file-modified')?.textContent.trim()||'',size:e.querySelector('.file-size')?.textContent.trim()||''}));}
   function readCount(){const m=/^\s*([\d,]+)\s*items\b/.exec(document.querySelector('.file-list-status')?.textContent||'');return m?Number(m[1].replace(/,/g,'')):null;}
   async function navigate(path) {
@@ -654,7 +660,6 @@ return {norm,parent,base,mapKey,showInfo,titleIdentity,candidateMatches,chooseCa
     if(uninterruptible)finishing++;
     try {
       await navigate(path);
-      requireConnected();
       const refresh=await waitFor(()=>document.querySelector('button.toolbar-refresh-btn'),'刷新控件不存在');refresh.click();
       const select=await waitFor(()=>document.querySelector('select.page-size-select'),'分页控件不存在');
       if(![...select.options].some(o=>o.value==='all'))throw Error('无法读取全部条目');
@@ -662,13 +667,13 @@ return {norm,parent,base,mapKey,showInfo,titleIdentity,candidateMatches,chooseCa
       const settle=createListingSettler(path);
       return await waitFor(()=>{
         if(currentPath()!==path||breadcrumbPath()!==path)throw pause('工作目录已切换，停止当前操作');
-        requireConnected();
-        if([...document.querySelectorAll('.files-load-error')].some(visible))throw Error('云盘列表加载失败，不能使用缓存结果');
-        const rows=readRows(),count=readCount(),loading=[...document.querySelectorAll('.file-list-scroll-area .loading-bar')].some(visible);
+        requireListReady({allowLoading:true});
+        const rows=readRows(),count=readCount(),loading=listLoading();
         const emptyConfirmed=[...document.querySelectorAll('table.file-list .empty-state .empty-content p')].some(e=>visible(e)&&/^(此文件夹为空|This folder is empty)[.!。！]?$/i.test(e.textContent.trim()));
         return settle({rows,count,loading,emptyConfirmed,allSelected:document.querySelector('select.page-size-select')?.value==='all'},Date.now());
       },'文件列表未读全，不能确认数量或移动结果');
-    }finally{if(uninterruptible)finishing--;}
+    }catch(e){if(e.name==='Pause')throw e;throw pause('目录读取未完成，已暂停当前任务：'+e.message);}
+    finally{if(uninterruptible)finishing--;}
   }
 
   const cleanText=e=>(e?.textContent||'').replace(/[\uE000-\uF8FF]/g,'').trim();
@@ -680,7 +685,7 @@ return {norm,parent,base,mapKey,showInfo,titleIdentity,candidateMatches,chooseCa
     function unchanged() {
       const key=r=>JSON.stringify([r.path,r.name,!!r.directory,r.modified,r.size]),expected=new Map(expectedRows.map(r=>[r.path,key(r)])),current=readRows();
       if(currentPath()!==parent(plan.source)||breadcrumbPath()!==parent(plan.source)||current.length!==expectedRows.length||current.some(r=>expected.get(r.path)!==key(r))||readCount()!==current.length||document.querySelector('select.page-size-select')?.value!=='all')throw Error('移动确认前源列表或分页发生变化');
-      requireConnected();checkpoint();
+      requireListReady();checkpoint();
     }
     try {
       const seasonMove=plan.kind==='season'&&parent(plan.source)===plan.showSource&&parent(plan.showSource)===SOURCE+'/'+plan.category&&plan.showTarget===DEST+'/'+plan.category+'/'+C.base(plan.showSource)&&/^Season\s+[0-9]+$/i.test(entry?.name||'')&&plan.target===plan.showTarget+'/'+entry?.name;
@@ -721,7 +726,7 @@ return {norm,parent,base,mapKey,showInfo,titleIdentity,candidateMatches,chooseCa
       }finally{finishing--;}
     }catch(e){if(!submitted){cancel();e.notSubmitted=true;}throw e;}
   }
-  return {listing,moveShow,currentPath,readRows,requireConnected};
+  return {listing,moveShow,currentPath,readRows,requireListReady};
 })
 ;
   let excel,report;

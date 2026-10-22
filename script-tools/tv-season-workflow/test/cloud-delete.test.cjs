@@ -19,6 +19,8 @@ async function simulate(options={}) {
   }[s])};
   const document={querySelector:s=>s==='.health-indicator.connected'?(options.disconnected?null:{}):s==='select.page-size-select'?{value:options.changedPage?'50':'all'}:s==='.file-list-status'?text('1 items'):null,
     querySelectorAll:s=>{
+      if(s==='.files-load-error')return options.loadError?[{getClientRects:()=>[{}]}]:[];
+      if(s==='.file-list-scroll-area .loading-bar')return options.loading?[{getClientRects:()=>[{}]}]:[];
       if(s==='table.file-list tr.file-row[data-path]')return [row];
       if(s==='table.file-list tr.file-row.selected')return state.selected?(options.wrongSelection?[row,row]:[row]):[];
       if(s==='.files-breadcrumb-bar .breadcrumb-item:not(.breadcrumb-root)')return dir.split('/').slice(1).map(text);
@@ -38,8 +40,8 @@ async function simulate(options={}) {
 test('匹配单文件、名称/大小及普通删除窗口后，适配器只点一次确认',async()=>{
   const {state,error}=await simulate();assert.equal(error,undefined);assert.equal(state.confirmed,1);assert.equal(state.dialog,false);
 });
-test('未连接、目录不符、文件变化、选择范围不符时不确认删除',async()=>{
-  for(const name of ['disconnected','wrongPath','changed','wrongSelection','changedAfterDialog','changedPage','missingSnapshot']) {
+test('列表加载失败或未结束、目录不符、文件变化、选择范围不符时不确认删除',async()=>{
+  for(const name of ['loadError','loading','wrongPath','changed','wrongSelection','changedAfterDialog','changedPage','missingSnapshot']) {
     const {state,error}=await simulate({[name]:true});assert.ok(error,name);assert.equal(error.notSubmitted,true);assert.equal(state.confirmed,0);
   }
 });
@@ -51,4 +53,9 @@ test('确认窗口名称/大小错误、永久删除、已勾选选项或按钮�
 test('点击确认前暂停可证明未提交；确认后异常则不能声称未提交',async()=>{
   const before=await simulate({pause:true});assert.equal(before.error.notSubmitted,true);assert.equal(before.state.confirmed,0);
   const after=await simulate({serverThrow:true});assert.ok(after.error);assert.equal(after.error.notSubmitted,undefined);assert.equal(after.state.confirmed,1);
+});
+
+test('指示器缺少 connected 时，匹配文件及普通删除确认仍可执行；真实列表错误照常拦截',async()=>{
+  const ok=await simulate({disconnected:true});assert.equal(ok.error,undefined);assert.equal(ok.state.confirmed,1);
+  const bad=await simulate({disconnected:true,loadError:true});assert.equal(bad.error.name,'Pause');assert.equal(bad.state.confirmed,0);assert.equal(bad.error.notSubmitted,true);
 });

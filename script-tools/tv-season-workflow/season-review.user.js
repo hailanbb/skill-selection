@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         剧集工作流 ③ · 豆瓣复核与版本清理
 // @namespace    local.tv-season-review
-// @version      1.1.2
+// @version      1.1.3
 // @description  导入黄色项，手动开始豆瓣分季复核；列出保留/删除清单，经确认后普通删除多余版本及专属刮削文件。
 // @match        https://clouddrive.example/*
 // @match        https://movie.douban.com/*
@@ -606,7 +606,7 @@ return {norm,parent,base,mapKey,showInfo,titleIdentity,candidateMatches,chooseCa
 )(C);
   const createClient=/* CloudDrive2 / 豆瓣页面适配层。
  * 读取通过当前界面完成，不读取登录秘密值；删除仅使用普通文件菜单及可核对的确认窗口。
- * 永久删除、目录删除、未连接、分页不全、选择范围改变时均停止。
+ * 永久删除、目录删除、列表加载失败、分页不全、选择范围改变时均停止。
  */
 (function createCloudReviewClient(C,options) {
   'use strict';
@@ -631,7 +631,13 @@ return {norm,parent,base,mapKey,showInfo,titleIdentity,candidateMatches,chooseCa
   function currentPath(){return new URL(location.href).searchParams.get('path')?.replace(/\/$/,'')||'/';}
   function breadcrumbPath(){return '/'+[...document.querySelectorAll('.files-breadcrumb-bar .breadcrumb-item:not(.breadcrumb-root)')].map(e=>e.textContent.trim()).join('/');}
   function allowed(path){return path.startsWith(SOURCE+'/')&&!path.split('/').some(s=>s==='.'||s==='..');}
-  function requireConnected(){if(!document.querySelector('.health-indicator.connected'))throw Error('云盘未确认连接，停止清理');}
+  // 顶部 health-indicator 不是文件列表是否可用的可靠依据，不能作为读取或操作门槛。
+  // 与初检一致，依据刷新后的完整、稳定列表；删除/移动还需原有快照、确认窗口及事后验证。
+  function listLoading(){return [...document.querySelectorAll('.file-list-scroll-area .loading-bar')].some(visible);}
+  function requireListReady({allowLoading=false}={}) {
+    if([...document.querySelectorAll('.files-load-error')].some(visible))throw pause('云盘文件列表加载失败，已暂停当前任务；请恢复文件浏览后点击继续');
+    if(!allowLoading&&listLoading())throw pause('云盘文件列表仍在加载，已暂停当前任务；请等待加载完成后点击继续');
+  }
   function readRows(){return [...document.querySelectorAll('table.file-list tr.file-row[data-path]')].map(e=>({path:e.getAttribute('data-path'),name:e.querySelector('.file-name-text')?.textContent.trim()||'',directory:e.classList.contains('directory'),modified:e.querySelector('.file-modified')?.textContent.trim()||'',size:e.querySelector('.file-size')?.textContent.trim()||''}));}
   function readCount(){const m=/^\s*([\d,]+)\s*items\b/.exec(document.querySelector('.file-list-status')?.textContent||'');return m?Number(m[1].replace(/,/g,'')):null;}
   async function navigate(path) {
@@ -650,7 +656,6 @@ return {norm,parent,base,mapKey,showInfo,titleIdentity,candidateMatches,chooseCa
     if(uninterruptible)finishing++;
     try {
       await navigate(path);
-      requireConnected();
       const refresh=await waitFor(()=>document.querySelector('button.toolbar-refresh-btn'),'刷新控件不存在');refresh.click();
       const select=await waitFor(()=>document.querySelector('select.page-size-select'),'分页控件不存在');
       if(![...select.options].some(o=>o.value==='all'))throw Error('无法读取全部条目');
@@ -658,13 +663,13 @@ return {norm,parent,base,mapKey,showInfo,titleIdentity,candidateMatches,chooseCa
       const settle=createListingSettler(path);
       return await waitFor(()=>{
         if(currentPath()!==path||breadcrumbPath()!==path)throw pause('工作目录已切换，停止当前操作');
-        requireConnected();
-        if([...document.querySelectorAll('.files-load-error')].some(visible))throw Error('云盘列表加载失败，不能使用缓存结果');
-        const rows=readRows(),count=readCount(),loading=[...document.querySelectorAll('.file-list-scroll-area .loading-bar')].some(visible);
+        requireListReady({allowLoading:true});
+        const rows=readRows(),count=readCount(),loading=listLoading();
         const emptyConfirmed=[...document.querySelectorAll('table.file-list .empty-state .empty-content p')].some(e=>visible(e)&&/^(此文件夹为空|This folder is empty)[.!。！]?$/i.test(e.textContent.trim()));
         return settle({rows,count,loading,emptyConfirmed,allSelected:document.querySelector('select.page-size-select')?.value==='all'},Date.now());
       },'文件列表未读全，不能确认数量或删除结果');
-    }finally{if(uninterruptible)finishing--;}
+    }catch(e){if(e.name==='Pause')throw e;throw pause('目录读取未完成，已暂停当前任务：'+e.message);}
+    finally{if(uninterruptible)finishing--;}
   }
   // 标准词条读取逻辑在构建时从初检源码复用；请求键独立为 tv_review，不会与初检串话。
     function blockedDouban() {
@@ -770,7 +775,7 @@ return {norm,parent,base,mapKey,showInfo,titleIdentity,candidateMatches,chooseCa
       if(current.length!==expectedRows.length||current.some(r=>expected.get(r.path)!==key(r))||readCount()!==expectedRows.length||document.querySelector('select.page-size-select')?.value!=='all')throw Error('确认前文件列表或分页发生变化');
     }
     try {
-      checkpoint();requireConnected();
+      checkpoint();requireListReady();
       if(file.directory||!allowed(file.path)||currentPath()!==parent(file.path)||breadcrumbPath()!==parent(file.path))throw Error('拒绝删除目录、越界文件或其他工作目录中的文件');
       if([...document.querySelectorAll('[role="dialog"]')].some(visible))throw Error('已有其他对话框打开，请先关闭后重新执行');
       unchanged();
@@ -788,7 +793,7 @@ return {norm,parent,base,mapKey,showInfo,titleIdentity,candidateMatches,chooseCa
       if(names.length!==1||names[0].textContent.trim()!==file.name)throw Error('确认窗口中的文件清单与计划不一致');
       if(dialog.querySelector('input:checked')||/永久|不可恢复|permanent/i.test(dialog.textContent))throw Error('检测到永久删除选项，本脚本不执行');
       if(dialog.querySelector('.delete-file-size')?.textContent.trim()!==file.size)throw Error('确认窗口中的文件大小不一致');
-      checkpoint();requireConnected();
+      checkpoint();requireListReady();
       unchanged();
       if(currentPath()!==parent(file.path)||selected().length!==1||selected()[0].getAttribute('data-path')!==file.path)throw Error('确认前目录或选择发生变化');
       const confirm=[...dialog.querySelectorAll('button')].find(b=>cleanText(b)==='删除');if(!confirm||confirm.disabled)throw Error('删除确认按钮不可用');
@@ -797,7 +802,7 @@ return {norm,parent,base,mapKey,showInfo,titleIdentity,candidateMatches,chooseCa
       try {confirm.click();await waitFor(()=>!visible(dialog),'删除请求未结束');}finally{finishing--;}
     }catch(e){if(!submitted){cancelDelete();e.notSubmitted=true;}throw e;}
   }
-  return {listing,queryDouban,deleteFile,worker:doubanWorker,currentPath,readRows,requireConnected};
+  return {listing,queryDouban,deleteFile,worker:doubanWorker,currentPath,readRows,requireListReady};
 })
 ;
   let excel,report;

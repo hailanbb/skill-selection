@@ -17,7 +17,7 @@
     function unchanged() {
       const key=r=>JSON.stringify([r.path,r.name,!!r.directory,r.modified,r.size]),expected=new Map(expectedRows.map(r=>[r.path,key(r)])),current=readRows();
       if(currentPath()!==parent(plan.source)||breadcrumbPath()!==parent(plan.source)||current.length!==expectedRows.length||current.some(r=>expected.get(r.path)!==key(r))||readCount()!==current.length||document.querySelector('select.page-size-select')?.value!=='all')throw Error('移动确认前源列表或分页发生变化');
-      requireConnected();checkpoint();
+      requireListReady();checkpoint();
     }
     try {
       const seasonMove=plan.kind==='season'&&parent(plan.source)===plan.showSource&&parent(plan.showSource)===SOURCE+'/'+plan.category&&plan.showTarget===DEST+'/'+plan.category+'/'+C.base(plan.showSource)&&/^Season\s+[0-9]+$/i.test(entry?.name||'')&&plan.target===plan.showTarget+'/'+entry?.name;
@@ -58,5 +58,5 @@
       }finally{finishing--;}
     }catch(e){if(!submitted){cancel();e.notSubmitted=true;}throw e;}
   }
-  return {listing,moveShow,currentPath,readRows,requireConnected};
+  return {listing,moveShow,currentPath,readRows,requireListReady};
 })

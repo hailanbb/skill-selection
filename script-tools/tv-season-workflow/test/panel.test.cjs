@@ -41,6 +41,24 @@ async function launch(initial={},responses=[],adapters={}) {
   await new Promise(resolve=>setImmediate(resolve));
   return {values,elements,opened,requests,accesses,button:name=>elements.find(e=>e.tagName==='BUTTON'&&e.textContent===name)};
 }
+test('复核列表失败只暂停当前季，不将错误写入全部剧集；恢复后继续当前季',async()=>{
+  const review=fs.readFileSync(require('node:path').join(__dirname,'../season-review.user.js'),'utf8');
+  const tasks=['甲','乙'].map(n=>({name:'测试剧'+n+' (2025)',season:1,path:'/115/Library_incs/nas/电视剧/日本剧集/测试剧'+n+' (2025)/Season 1',key:n,data:{}}));
+  const updates=new Map(),reads=[],queries=[];let failed=true;
+  const page=await launch({},[],{source:review,workflow:{read:()=>({tasks,errors:[],skipped:0,updates})},cloudClient:{worker(){},listing:async p=>{reads.push(p);if(failed)throw Object.assign(Error('文件列表加载失败，已暂停'),{name:'Pause'});return [];},queryDouban:async t=>{queries.push(t.key);return {title:t.name,total:1,releaseYears:['2025'],url:'https://movie.douban.com/subject/1/',broadcast:'已播完'};},deleteFile(){assert.fail('只读复核不得删除');}}});
+  const input=page.elements.find(e=>e.type==='file');input.files=[{name:'报告.xlsx',size:10,arrayBuffer:async()=>new ArrayBuffer(10)}];await input.fire('change');
+  await page.button('开始复核').click();assert.equal(updates.size,1);assert.equal(updates.get(tasks[0]).state,'已暂停');assert.equal(reads.length,1);assert.equal(queries.length,0);assert.equal(page.button('继续复核').disabled,false);
+  failed=false;await page.button('继续复核').click();assert.equal(reads[1],tasks[0].path);assert.deepEqual(queries,['甲','乙']);assert.equal(updates.size,2);assert.notEqual(updates.get(tasks[0]).state,'已暂停');
+});
+test('归档列表失败暂停当前剧，继续时仍检查同一剧，不污染后续行',async()=>{
+  const archive=fs.readFileSync(require('node:path').join(__dirname,'../season-archive.user.js'),'utf8'),A=require('../season-archive.user.js');
+  const tasks=['甲','乙'].map(n=>({category:'日本剧集',name:'测试剧'+n,showPath:A.SOURCE+'/日本剧集/测试剧'+n,path:A.SOURCE+'/日本剧集/测试剧'+n+'/Season 1',season:1,color:'green',data:{}}));
+  const updates=new Map();let reads=0;
+  const page=await launch({},[],{source:archive,workflow:{read:()=>({tasks,errors:[],updates})},cloudClient:{listing:async()=>{reads++;throw Object.assign(Error('列表加载失败'),{name:'Pause'});},moveShow(){assert.fail('检查不得移动');}}});
+  const input=page.elements.find(e=>e.type==='file');input.files=[{name:'报告.xlsx',size:10,arrayBuffer:async()=>new ArrayBuffer(10)}];await input.fire('change');
+  await page.button('开始检查').click();assert.equal(reads,1);assert.equal(updates.size,1);assert.equal(updates.get(tasks[0]).state,'已暂停');assert.equal(page.button('继续检查').disabled,false);
+  await page.button('继续检查').click();assert.equal(reads,2);assert.equal(updates.size,1);assert.equal(updates.has(tasks[1]),false);
+});
 test('第四阶段安装和导入保持空闲，开始只检查，明确确认后移动并验证成功',async()=>{
   const A=require('../season-archive.user.js'),name='测试剧 (2025)',category='日本剧集',source=A.SOURCE+'/'+category+'/'+name,target=A.DEST+'/'+category+'/'+name;
   const task={name,category,showPath:source,path:source+'/Season 1',season:1,color:'green',data:{'来源登记集数':1}};
