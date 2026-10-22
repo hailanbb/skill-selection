@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         剧集工作流 ② · MoviePilot 补缺下载
 // @namespace    local.tv-season-download
-// @version      1.3.0
+// @version      1.4.0
 // @description  手动补缺；整季优先、中文标记优先，做种≥5时优先小容量；逐资源导出选择依据。
 // @match        https://moviepilot.example/*
 // @grant        unsafeWindow
@@ -538,6 +538,40 @@ return {norm,parent,base,mapKey,showInfo,titleIdentity,candidateMatches,chooseCa
   return {inspect,select,signature};
 })
 )(VersionHelpers);
+  const Broadcast=(/* 资源覆盖是检索快照，不是完整播出表。按同剧同季的来源日期确认连载，不以资源站最高集号猜已播范围。 */
+(function createBroadcastAudit() {
+  'use strict';
+  const validDate=s=>/^\d{4}-\d{2}-\d{2}$/.test(s||'')&&Number.isFinite(Date.parse(s+'T00:00:00Z'))&&new Date(s+'T00:00:00Z').toISOString().slice(0,10)===s;
+  function assess(task,coverage,evidence,today=new Date(Date.now()+8*3600000).toISOString().slice(0,10)) {
+    const max=coverage.length?Math.max(...coverage):null,at=new Date().toISOString();
+    const audit={maximum:max,coverage,at,status:'未复核',basis:'',sourceUrl:task.tmdb?'https://www.themoviedb.org/tv/'+task.tmdb+'/season/'+task.season:'',confirmed:false,exclude:[]};
+    if(max==null||max>=task.total){audit.basis=max==null?'本轮未取得可确认的本季资源集号':'未出现资源站最高集号低于登记总数的差异';return audit;}
+    audit.status='疑似连载，待核实';audit.basis='资源站最高集号 '+max+'，来源登记 '+task.total+' 集；资源不全不能证明仍在播出';
+    if(evidence?.error||!evidence?.media||!Array.isArray(evidence?.episodes)) {
+      if(task.data?.['播出状态']==='连载中'){audit.status='连载中';audit.confirmed=true;audit.basis+='；沿用原报告已确认的连载结论（本轮未刷新来源）';}
+      else if(task.data?.['播出状态']==='已播完'){audit.status='已播完，资源不全';audit.basis+='；原报告明确已播完，不能据此改判连载';}
+      audit.basis+='；'+(evidence?.error||'本轮来源信息不可用');return audit;
+    }
+    const list=evidence.episodes,m=evidence.media;
+    if(list.some(e=>!Number.isInteger(e.episode_number)||e.episode_number<1||e.episode_number>task.total||e.season_number!==task.season)||new Set(list.map(e=>e.episode_number)).size!==list.length){audit.status='来源集目待核实';audit.basis+='；来源季号、集数范围或重复集目与报告不一致';return audit;}
+    const aired=list.filter(e=>validDate(e.air_date)&&e.air_date<=today),future=list.filter(e=>validDate(e.air_date)&&e.air_date>today),unknown=list.filter(e=>!validDate(e.air_date));
+    audit.exclude=[...future,...unknown].map(e=>e.episode_number);
+    const next=m.next_episode_to_air,upcoming=next&&next.season_number===task.season&&Number.isInteger(next.episode_number)&&next.episode_number>=1&&next.episode_number<=task.total&&validDate(next.air_date)&&next.air_date>today;
+    if(upcoming&&!audit.exclude.includes(next.episode_number))audit.exclude.push(next.episode_number);
+    const ended=m.status==='Ended'||m.status==='Canceled';
+    if(ended&&(future.length||upcoming)){audit.status='来源状态冲突，待核实';audit.basis+='；结束状态与未来播出日期冲突';return audit;}
+    if(aired.length&&(future.length||upcoming)) {audit.status='连载中';audit.confirmed=true;audit.basis+='；TMDB本季已有已播集，且'+(future.length?'存在 '+future.length+' 集未来播出日期':'下一集 E'+next.episode_number+' 定于 '+next.air_date+' 播出');return audit;}
+    const finale=aired.some(e=>e.episode_number===task.total&&e.episode_type==='finale');
+    if(list.length===task.total&&aired.length===task.total&&(ended||finale)){audit.status='已播完，资源不全';audit.confirmed=true;audit.basis+='；本季完整集目均已到播出日，并有结束状态或季终标记';return audit;}
+    if(ended){audit.status='已结束，资源或登记集数待核实';audit.basis+='；来源标记已结束/取消，但本季集目不足以核实报告总数，不改判连载';return audit;}
+    if(!aired.length&&future.length){audit.status='待播';audit.basis+='；本季尚无已到播出日的集目';return audit;}
+    if(task.data?.['播出状态']==='已播完'){audit.status='已播完，资源不全';audit.basis+='；保留原报告已播完结论，本轮没有连载证据';}
+    else audit.basis+='；未取得本季明确连载证据，不改蓝';
+    return audit;
+  }
+  return {assess};
+})
+)();
   const Core=(/* 下载决策与任务状态机。
  * 1. 仅匹配本剧、本季；完整包优先，做种数不足 2 的不选。
  * 2. 同类优先中文标记；做种不少于 5 且容量均已知时优先小容量，否则优先做种数。
@@ -545,7 +579,7 @@ return {norm,parent,base,mapKey,showInfo,titleIdentity,candidateMatches,chooseCa
  * 3. 写入“准备提交”记录后才发出下载请求；超时保留结果不明，禁止盲目重试。
  * 4. 对外报告仅含白名单字段，种子链接、站点 Cookie 和登录凭据不进入记录。
  */
-(function createDownloadCore(Titles,Versions) {
+(function createDownloadCore(Titles,Versions,Broadcast) {
   'use strict';
   const norm=s=>Titles.norm(Titles.cleanTitleText(s));
   const uniq=a=>[...new Set(a)].sort((a,b)=>a-b);
@@ -720,10 +754,12 @@ return {norm,parent,base,mapKey,showInfo,titleIdentity,candidateMatches,chooseCa
   function outcome(task,records,{state,note='',color=null,remaining}={}) {
     const success=records.filter(r=>['accepted','existing'].includes(r.state));
     const covered=uniq(success.flatMap(r=>r.episodes));
-    return {state:state||'待核实',note:task.versionChoice?task.versionChoice.note+'；'+note:note,color,records:records.map(safeRecord),covered,
+    const resourceAudit=task.resourceAudit;
+    if(resourceAudit?.confirmed&&resourceAudit.status==='连载中'&&!success.length&&color!=='yellow')color='blue';
+    return {resourceAudit,state:state||'待核实',note:task.versionChoice?task.versionChoice.note+'；'+note:note,color,records:records.map(safeRecord),covered,
       remaining:remaining===undefined?task.needed?.filter(n=>!covered.includes(n))??null:remaining,at:new Date().toISOString()};
   }
-  async function processTask(task,{search,active,submit,load,save,checkpoint,progress=()=>{}}) {
+  async function processTask(task,{search,active,submit,load,save,checkpoint,broadcast,progress=()=>{}}) {
     const versionInfo=Versions?.inspect(task);
     let records=readRecords(load(task.key)||[]);
     const combined=new Map(task.records.map(r=>[r.key,r]));for(const r of records)combined.set(r.key,r);records=[...combined.values()];
@@ -759,6 +795,22 @@ return {norm,parent,base,mapKey,showInfo,titleIdentity,candidateMatches,chooseCa
     checkpoint();progress('查询本剧本季资源');
     let contexts=await search(task);checkpoint();
     if(!Array.isArray(contexts))throw Error('MoviePilot 搜索结果格式不支持');
+    // 覆盖统计不受做种数或语言筛选影响；只采信身份和季号明确的资源集号。
+    const coverageEpisodes=uniq(contexts.flatMap(c=>{
+      if(!sameIdentity(task,c.media_info))return [];const seasons=seasonList(c.meta_info);if(seasons.length!==1||seasons[0]!==task.season)return [];
+      if([...String(c.torrent_info?.title||'').matchAll(/(?:^|[^a-z0-9])S(\d{1,3})(?!\d)/ig)].some(m=>Number(m[1])!==task.season))return [];
+      const eps=c.meta_info?.episode_list;return Array.isArray(eps)&&eps.every(n=>positive(n)&&n<=task.total)?eps:[];
+    }));
+    let evidence=null;
+    if(coverageEpisodes.length&&Math.max(...coverageEpisodes)<task.total){
+      progress('资源集号与登记总数有差异，复核本季播出信息');
+      try{evidence=typeof broadcast==='function'?await broadcast(task):{error:'当前接口未提供播出复核'};}catch(e){if(e.name==='Pause')throw e;evidence={error:e.message||'来源查询失败'};}
+      checkpoint();
+      if(evidence?.media&&!sameIdentity(task,evidence.media))evidence={error:'来源媒体身份与本剧不一致'};
+    }
+    const resourceAudit=Broadcast?.assess(task,coverageEpisodes,evidence);
+    if(resourceAudit){const excluded=uniq([...task.excluded,...resourceAudit.exclude]);task={...task,resourceAudit,excluded,needed:task.needed?.filter(n=>!excluded.includes(n))??null};}
+    if(task.needed?.length===0)return outcome(task,records,{state:'本季暂无可补的已播缺集',note:'来源复核后缺集均为待播或播期未确认，本轮不提交'});
     if(versionInfo?.groups){
       const selection=Versions.select(task,versionInfo,contexts,choose);
       if(selection.blocked)return outcome(task,records,{state:'版本待核实',note:selection.blocked});
@@ -828,13 +880,21 @@ return {norm,parent,base,mapKey,showInfo,titleIdentity,candidateMatches,chooseCa
         }
         throw Error('MoviePilot 名称检索超过 10 页，请补充媒体 ID 后重试');
       },
+      broadcast:async task=>{
+        if(!task.tmdb)return {error:'缺少TMDB ID，未自动查询播出来源；请先用第一脚本补齐身份'};
+        const media=await get('media/'+encodeURIComponent('tmdb:'+task.tmdb),{type_name:'电视剧',_ts:Date.now()},30000);
+        if(!sameIdentity(task,media))return {error:'MoviePilot媒体详情身份不一致，未采用其播出状态'};
+        const episodes=await get('tmdb/'+encodeURIComponent(task.tmdb)+'/'+task.season,{_ts:Date.now()},30000);
+        if(!Array.isArray(episodes))return {error:'MoviePilot本季集目接口返回格式不支持'};
+        return {media,episodes};
+      },
       active:()=>get('download/',{},30000),
       submit:context=>api.post('download/',{media_in:context.media_info,torrent_in:context.torrent_info,downloader:null,save_path:null},{timeout:120000})
     };
   }
   return {Pause,episodes,taskFromRow,sameIdentity,candidate,choose,processTask,readRecords,safeRecord,outcome,createAdapter,activeMatch};
 })
-)(Titles,Versions);
+)(Titles,Versions,Broadcast);
   let excel,report;
   const excelEngine=()=>excel||=((() => {
 /* xlsx-js-style 1.2.0, https://github.com/gitbrent/xlsx-js-style
@@ -1259,10 +1319,10 @@ return exports;
   const tags=(n,s)=>Array.from(n?.getElementsByTagNameNS('*',s)||[]);
   const children=(n,s)=>Array.from(n?.childNodes||[]).filter(c=>c.nodeType===1&&(!s||c.localName===s));
   const NS='http://schemas.openxmlformats.org/spreadsheetml/2006/main';
-  const FIELDS=['下载处理','下载资源','下载任务ID','下载覆盖集号','下载未覆盖集号','下载时间','下载说明','下载记录'];
+  const FIELDS=['下载处理','下载资源','下载任务ID','下载覆盖集号','下载未覆盖集号','下载时间','下载说明','资源站最高集号','资源站覆盖集号','资源站查询时间','播出状态复核','播出复核依据','播出复核来源','下载记录'];
   const REVIEW_FIELDS=['复核结果','复核集数（豆瓣）','复核豆瓣链接','复核时间','复核视频文件数','复核已识别集数','复核缺失集号','保留版本','保留视频','拟删除文件','已验证删除文件','保留刮削文件','复核说明','复核清理记录'];
   const ARCHIVE_FIELDS=['归档结果','归档原路径','归档目标路径','归档云存储链接','归档时间','归档说明','归档记录'];
-  const COLORS={yellow:['FFFF00','000000'],red:['FFC7CE','9C0006'],green:['C6EFCE','006100'],archived:['E4DFEC','7030A0']};
+  const COLORS={blue:['BDD7EE','1F4E78'],yellow:['FFFF00','000000'],red:['FFC7CE','9C0006'],green:['C6EFCE','006100'],archived:['E4DFEC','7030A0']};
   const xml=s=>{
     if(/<!DOCTYPE|<!ENTITY/i.test(s))throw Error('报告包含不支持的 XML 实体声明');
     const d=new DOMParser().parseFromString(s,'application/xml');
@@ -1547,11 +1607,16 @@ return exports;
       const records=result.records||[],json=recordsText(result),values=archiving?
         [result.state,result.source||task.showPath,result.target||'',result.targetUrl||'',result.at,result.note]:reviewing?
         [result.state,result.total??'',result.sourceUrl||'',result.at,result.videoCount??'',result.current??'',result.missing==null?'未确认':compact(result.missing),result.version||'',(result.keep||[]).join('\n').slice(0,25000),(result.remove||[]).join('\n').slice(0,25000),(result.deleted||[]).join('\n').slice(0,25000),(result.preserved||[]).join('\n').slice(0,25000),result.note]:
-        [result.state,records.map(r=>r.site+' | '+r.title).join('\n').slice(0,25000),records.map(r=>r.id||'').filter(Boolean).join('、').slice(0,25000),compact(result.covered||[]),result.remaining==null?'未确认':compact(result.remaining),result.at,result.note];
+        [result.state,records.map(r=>r.site+' | '+r.title).join('\n').slice(0,25000),records.map(r=>r.id||'').filter(Boolean).join('、').slice(0,25000),compact(result.covered||[]),result.remaining==null?'未确认':compact(result.remaining),result.at,result.note,...(result.resourceAudit?[result.resourceAudit.maximum??'',compact(result.resourceAudit.coverage||[]),result.resourceAudit.at||'',result.resourceAudit.status||'',result.resourceAudit.basis||'',result.resourceAudit.sourceUrl||'']:['资源站最高集号','资源站覆盖集号','资源站查询时间','播出状态复核','播出复核依据','播出复核来源'].map(h=>task.data[h]??''))];
       values.push(...Array.from({length:chunks},(_,i)=>json.slice(i*30000,(i+1)*30000)));
       fields.forEach((h,i)=>{item.text=putCell(item.text,X.utils.encode_cell({r:task.row,c:item.headers[h]}),values[i],0);});
       if(reviewing)setSourceLink(item,task.sheetPath,X.utils.encode_cell({r:task.row,c:item.headers['复核豆瓣链接']}),result.sourceUrl||'');
       if(archiving)setSourceLink(item,task.sheetPath,X.utils.encode_cell({r:task.row,c:item.headers['归档云存储链接']}),result.targetUrl||'');
+      // 下载阶段仅在有明确连载依据时同步原播出状态；黄色任务状态优先于蓝色。
+      if(!reviewing&&!archiving&&result.resourceAudit?.confirmed&&result.resourceAudit.status==='连载中'&&item.headers['播出状态']!==undefined){
+        const ref=X.utils.encode_cell({r:task.row,c:item.headers['播出状态']}),info=session.sheets.get(task.sheetPath);
+        if(!info.formulas.has(ref))item.text=putCell(item.text,ref,'连载中',info.cellStyles.get(ref)||0);
+      }
       // 复核时更新必要事实列；手工备注和已有公式不覆盖，原单元格样式也保留。
       if(reviewing&&result.cells)for(const [h,v] of Object.entries(result.cells)) {
         if(!['视频文件数','已识别集数','来源登记集数','缺失集号','数据来源','来源链接','来源查询时间','集数核对','处理结果','豆瓣链接','播出状态','已识别集号','重复集号','无法识别集号的文件','待播集号','播期未知集号'].includes(h)||item.headers[h]===undefined)continue;
@@ -1571,7 +1636,7 @@ return exports;
   return {read,write,colorKind,FIELDS,REVIEW_FIELDS,ARCHIVE_FIELDS};
 })
 )(excelEngine());}
-  if(typeof module!=='undefined'&&module.exports){module.exports={...Core,Versions,reportEngine};return;}
+  if(typeof module!=='undefined'&&module.exports){module.exports={...Core,Versions,Broadcast,reportEngine};return;}
   if(location.origin!==ORIGIN)return;
   const NS='tv-download-v1:';
   let session=null,index=0,running=false,importing=false,stopping=false,ui;
@@ -1589,6 +1654,7 @@ return exports;
     ui.list.replaceChildren();
     for(const [t,r] of [...session?.updates||[]].slice(-60)) {
       const line=el('p',`${t.name} / Season ${t.season}：${r.state}。${r.note||''}`);
+      if(r.resourceAudit)line.append(el('small',`播出复核：${r.resourceAudit.status}；资源站最高集号：${r.resourceAudit.maximum??'未确认'}。${r.resourceAudit.basis}`));
       if(r.records?.length) {
         const reset=button('核实任务已取消，解除本季防重复',()=>{
           if(running)return;

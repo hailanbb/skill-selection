@@ -113,7 +113,7 @@ test('重复导入不重复加列，红色和不改色可同时写回',()=>{
   const s=R.read(fixture(),options);s.updates.set(s.tasks[0],result('red'));s.updates.set(s.tasks[1],{...result(),color:null,state:'待核实'});
   const first=R.write(s),next=R.read(first,options);next.updates.set(next.tasks[0],{...result(),records:[],state:'无合格资源',color:'red'});
   const out=R.write(next),sheet=X.read(out,{type:'array',cellStyles:true}).Sheets['剧集检查'];
-  assert.equal(sheet.B3.s.fgColor.rgb,'FFC7CE');assert.equal(sheet.B4.s.fgColor.rgb,'FFFF00');assert.equal(sheet['!ref'],'A1:AO5');
+  assert.equal(sheet.B3.s.fgColor.rgb,'FFC7CE');assert.equal(sheet.B4.s.fgColor.rgb,'FFFF00');assert.equal(sheet['!ref'],'A1:AU5');
   assert.equal(R.read(out,options).tasks[0].data['下载记录'],'[]');
 });
 test('无更新时导出原字节，公式源链接、ID、合并标记和越界路径均拒绝',()=>{
@@ -185,4 +185,10 @@ test('批量删除成功与待核实文件逐行导出，保留共同批次号',
  const s=R.read(fixture(),{...options,mode:'review'}),t=s.tasks[0],event=n=>({path:t.path+'/'+n+'.mkv',before:{size:'1 GB',modified:'2026-10-22 10:00'},batchId:'batch-1',planId:'plan-1',kind:'video',reason:'多余版本',at:'start'});
  s.updates.set(t,{state:'部分删除，待核实',record:{journal:{records:[{...event('A'),state:'verified'}],pending:{batchId:'batch-1',files:[event('B'),event('C')],error:'部分文件仍存在'}}}});
  const detail=X.utils.sheet_to_json(X.read(R.write(s)).Sheets['清理明细_1']);assert.equal(detail.length,3);assert.ok(detail.every(r=>r['操作批次']==='batch-1'));assert.equal(detail[0]['执行结果'],'删除已验证');assert.equal(detail[1]['执行结果'],'删除结果待核实');assert.equal(detail[2]['原路径'],t.path+'/C.mkv');
+});
+
+test('下载阶段连载蓝色、黄色优先及资源站覆盖/复核依据写入报告，旧备注保留',()=>{
+ const s=R.read(fixture(),options),t=s.tasks[0];s.updates.set(t,{state:'暂无可下载缺集',color:'blue',records:[],resourceAudit:{maximum:42,coverage:[1,3,42],at:'2026-10-22',status:'连载中',confirmed:true,basis:'本季已有已播集且有未来集目',sourceUrl:'https://www.themoviedb.org/tv/123/season/1'}});
+ const book=X.read(R.write(s),{type:'array',cellStyles:true}),rows=X.utils.sheet_to_json(book.Sheets['剧集检查']);const row=rows.find(r=>r['剧集目录']===t.name);assert.equal(row['资源站最高集号'],42);assert.equal(row['资源站覆盖集号'],'1、3、42');assert.equal(row['播出状态'],'连载中');assert.equal(row['播出状态复核'],'连载中');assert.equal(book.Sheets['剧集检查'][t.ref].s.fgColor.rgb,'BDD7EE');
+ s.updates.get(t).color='yellow';assert.equal(X.read(R.write(s),{type:'array',cellStyles:true}).Sheets['剧集检查'][t.ref].s.fgColor.rgb,'FFFF00');
 });

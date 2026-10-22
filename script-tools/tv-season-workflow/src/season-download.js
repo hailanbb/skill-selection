@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         剧集工作流 ② · MoviePilot 补缺下载
 // @namespace    local.tv-season-download
-// @version      1.3.0
+// @version      1.4.0
 // @description  手动补缺；整季优先、中文标记优先，做种≥5时优先小容量；逐资源导出选择依据。
 // @match        https://moviepilot.example/*
 // @grant        unsafeWindow
@@ -27,11 +27,12 @@
   const VersionCloud=(/* build:cloud-core */ null)(simplify);
   const VersionHelpers=(/* build:version-helpers */ null)(VersionCloud);
   const Versions=(/* build:version-download */ null)(VersionHelpers);
-  const Core=(/* build:download-core */ null)(Titles,Versions);
+  const Broadcast=(/* build:broadcast-audit */ null)();
+  const Core=(/* build:download-core */ null)(Titles,Versions,Broadcast);
   let excel,report;
   const excelEngine=()=>excel||=(/* build:xlsx */ null);
   function reportEngine(){return report||=(/* build:workflow-report */ null)(excelEngine());}
-  if(typeof module!=='undefined'&&module.exports){module.exports={...Core,Versions,reportEngine};return;}
+  if(typeof module!=='undefined'&&module.exports){module.exports={...Core,Versions,Broadcast,reportEngine};return;}
   if(location.origin!==ORIGIN)return;
   const NS='tv-download-v1:';
   let session=null,index=0,running=false,importing=false,stopping=false,ui;
@@ -49,6 +50,7 @@
     ui.list.replaceChildren();
     for(const [t,r] of [...session?.updates||[]].slice(-60)) {
       const line=el('p',`${t.name} / Season ${t.season}：${r.state}。${r.note||''}`);
+      if(r.resourceAudit)line.append(el('small',`播出复核：${r.resourceAudit.status}；资源站最高集号：${r.resourceAudit.maximum??'未确认'}。${r.resourceAudit.basis}`));
       if(r.records?.length) {
         const reset=button('核实任务已取消，解除本季防重复',()=>{
           if(running)return;

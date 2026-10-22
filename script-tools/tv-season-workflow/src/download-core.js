@@ -5,7 +5,7 @@
  * 3. 写入“准备提交”记录后才发出下载请求；超时保留结果不明，禁止盲目重试。
  * 4. 对外报告仅含白名单字段，种子链接、站点 Cookie 和登录凭据不进入记录。
  */
-(function createDownloadCore(Titles,Versions) {
+(function createDownloadCore(Titles,Versions,Broadcast) {
   'use strict';
   const norm=s=>Titles.norm(Titles.cleanTitleText(s));
   const uniq=a=>[...new Set(a)].sort((a,b)=>a-b);
@@ -180,10 +180,12 @@
   function outcome(task,records,{state,note='',color=null,remaining}={}) {
     const success=records.filter(r=>['accepted','existing'].includes(r.state));
     const covered=uniq(success.flatMap(r=>r.episodes));
-    return {state:state||'待核实',note:task.versionChoice?task.versionChoice.note+'；'+note:note,color,records:records.map(safeRecord),covered,
+    const resourceAudit=task.resourceAudit;
+    if(resourceAudit?.confirmed&&resourceAudit.status==='连载中'&&!success.length&&color!=='yellow')color='blue';
+    return {resourceAudit,state:state||'待核实',note:task.versionChoice?task.versionChoice.note+'；'+note:note,color,records:records.map(safeRecord),covered,
       remaining:remaining===undefined?task.needed?.filter(n=>!covered.includes(n))??null:remaining,at:new Date().toISOString()};
   }
-  async function processTask(task,{search,active,submit,load,save,checkpoint,progress=()=>{}}) {
+  async function processTask(task,{search,active,submit,load,save,checkpoint,broadcast,progress=()=>{}}) {
     const versionInfo=Versions?.inspect(task);
     let records=readRecords(load(task.key)||[]);
     const combined=new Map(task.records.map(r=>[r.key,r]));for(const r of records)combined.set(r.key,r);records=[...combined.values()];
@@ -219,6 +221,22 @@
     checkpoint();progress('查询本剧本季资源');
     let contexts=await search(task);checkpoint();
     if(!Array.isArray(contexts))throw Error('MoviePilot 搜索结果格式不支持');
+    // 覆盖统计不受做种数或语言筛选影响；只采信身份和季号明确的资源集号。
+    const coverageEpisodes=uniq(contexts.flatMap(c=>{
+      if(!sameIdentity(task,c.media_info))return [];const seasons=seasonList(c.meta_info);if(seasons.length!==1||seasons[0]!==task.season)return [];
+      if([...String(c.torrent_info?.title||'').matchAll(/(?:^|[^a-z0-9])S(\d{1,3})(?!\d)/ig)].some(m=>Number(m[1])!==task.season))return [];
+      const eps=c.meta_info?.episode_list;return Array.isArray(eps)&&eps.every(n=>positive(n)&&n<=task.total)?eps:[];
+    }));
+    let evidence=null;
+    if(coverageEpisodes.length&&Math.max(...coverageEpisodes)<task.total){
+      progress('资源集号与登记总数有差异，复核本季播出信息');
+      try{evidence=typeof broadcast==='function'?await broadcast(task):{error:'当前接口未提供播出复核'};}catch(e){if(e.name==='Pause')throw e;evidence={error:e.message||'来源查询失败'};}
+      checkpoint();
+      if(evidence?.media&&!sameIdentity(task,evidence.media))evidence={error:'来源媒体身份与本剧不一致'};
+    }
+    const resourceAudit=Broadcast?.assess(task,coverageEpisodes,evidence);
+    if(resourceAudit){const excluded=uniq([...task.excluded,...resourceAudit.exclude]);task={...task,resourceAudit,excluded,needed:task.needed?.filter(n=>!excluded.includes(n))??null};}
+    if(task.needed?.length===0)return outcome(task,records,{state:'本季暂无可补的已播缺集',note:'来源复核后缺集均为待播或播期未确认，本轮不提交'});
     if(versionInfo?.groups){
       const selection=Versions.select(task,versionInfo,contexts,choose);
       if(selection.blocked)return outcome(task,records,{state:'版本待核实',note:selection.blocked});
@@ -287,6 +305,14 @@
           result.data.forEach((c,i)=>{if(!seen.has(keys[i])){seen.add(keys[i]);results.push(c);}});
         }
         throw Error('MoviePilot 名称检索超过 10 页，请补充媒体 ID 后重试');
+      },
+      broadcast:async task=>{
+        if(!task.tmdb)return {error:'缺少TMDB ID，未自动查询播出来源；请先用第一脚本补齐身份'};
+        const media=await get('media/'+encodeURIComponent('tmdb:'+task.tmdb),{type_name:'电视剧',_ts:Date.now()},30000);
+        if(!sameIdentity(task,media))return {error:'MoviePilot媒体详情身份不一致，未采用其播出状态'};
+        const episodes=await get('tmdb/'+encodeURIComponent(task.tmdb)+'/'+task.season,{_ts:Date.now()},30000);
+        if(!Array.isArray(episodes))return {error:'MoviePilot本季集目接口返回格式不支持'};
+        return {media,episodes};
       },
       active:()=>get('download/',{},30000),
       submit:context=>api.post('download/',{media_in:context.media_info,torrent_in:context.torrent_info,downloader:null,save_path:null},{timeout:120000})

@@ -1169,10 +1169,10 @@ return exports;
   const tags=(n,s)=>Array.from(n?.getElementsByTagNameNS('*',s)||[]);
   const children=(n,s)=>Array.from(n?.childNodes||[]).filter(c=>c.nodeType===1&&(!s||c.localName===s));
   const NS='http://schemas.openxmlformats.org/spreadsheetml/2006/main';
-  const FIELDS=['下载处理','下载资源','下载任务ID','下载覆盖集号','下载未覆盖集号','下载时间','下载说明','下载记录'];
+  const FIELDS=['下载处理','下载资源','下载任务ID','下载覆盖集号','下载未覆盖集号','下载时间','下载说明','资源站最高集号','资源站覆盖集号','资源站查询时间','播出状态复核','播出复核依据','播出复核来源','下载记录'];
   const REVIEW_FIELDS=['复核结果','复核集数（豆瓣）','复核豆瓣链接','复核时间','复核视频文件数','复核已识别集数','复核缺失集号','保留版本','保留视频','拟删除文件','已验证删除文件','保留刮削文件','复核说明','复核清理记录'];
   const ARCHIVE_FIELDS=['归档结果','归档原路径','归档目标路径','归档云存储链接','归档时间','归档说明','归档记录'];
-  const COLORS={yellow:['FFFF00','000000'],red:['FFC7CE','9C0006'],green:['C6EFCE','006100'],archived:['E4DFEC','7030A0']};
+  const COLORS={blue:['BDD7EE','1F4E78'],yellow:['FFFF00','000000'],red:['FFC7CE','9C0006'],green:['C6EFCE','006100'],archived:['E4DFEC','7030A0']};
   const xml=s=>{
     if(/<!DOCTYPE|<!ENTITY/i.test(s))throw Error('报告包含不支持的 XML 实体声明');
     const d=new DOMParser().parseFromString(s,'application/xml');
@@ -1457,11 +1457,16 @@ return exports;
       const records=result.records||[],json=recordsText(result),values=archiving?
         [result.state,result.source||task.showPath,result.target||'',result.targetUrl||'',result.at,result.note]:reviewing?
         [result.state,result.total??'',result.sourceUrl||'',result.at,result.videoCount??'',result.current??'',result.missing==null?'未确认':compact(result.missing),result.version||'',(result.keep||[]).join('\n').slice(0,25000),(result.remove||[]).join('\n').slice(0,25000),(result.deleted||[]).join('\n').slice(0,25000),(result.preserved||[]).join('\n').slice(0,25000),result.note]:
-        [result.state,records.map(r=>r.site+' | '+r.title).join('\n').slice(0,25000),records.map(r=>r.id||'').filter(Boolean).join('、').slice(0,25000),compact(result.covered||[]),result.remaining==null?'未确认':compact(result.remaining),result.at,result.note];
+        [result.state,records.map(r=>r.site+' | '+r.title).join('\n').slice(0,25000),records.map(r=>r.id||'').filter(Boolean).join('、').slice(0,25000),compact(result.covered||[]),result.remaining==null?'未确认':compact(result.remaining),result.at,result.note,...(result.resourceAudit?[result.resourceAudit.maximum??'',compact(result.resourceAudit.coverage||[]),result.resourceAudit.at||'',result.resourceAudit.status||'',result.resourceAudit.basis||'',result.resourceAudit.sourceUrl||'']:['资源站最高集号','资源站覆盖集号','资源站查询时间','播出状态复核','播出复核依据','播出复核来源'].map(h=>task.data[h]??''))];
       values.push(...Array.from({length:chunks},(_,i)=>json.slice(i*30000,(i+1)*30000)));
       fields.forEach((h,i)=>{item.text=putCell(item.text,X.utils.encode_cell({r:task.row,c:item.headers[h]}),values[i],0);});
       if(reviewing)setSourceLink(item,task.sheetPath,X.utils.encode_cell({r:task.row,c:item.headers['复核豆瓣链接']}),result.sourceUrl||'');
       if(archiving)setSourceLink(item,task.sheetPath,X.utils.encode_cell({r:task.row,c:item.headers['归档云存储链接']}),result.targetUrl||'');
+      // 下载阶段仅在有明确连载依据时同步原播出状态；黄色任务状态优先于蓝色。
+      if(!reviewing&&!archiving&&result.resourceAudit?.confirmed&&result.resourceAudit.status==='连载中'&&item.headers['播出状态']!==undefined){
+        const ref=X.utils.encode_cell({r:task.row,c:item.headers['播出状态']}),info=session.sheets.get(task.sheetPath);
+        if(!info.formulas.has(ref))item.text=putCell(item.text,ref,'连载中',info.cellStyles.get(ref)||0);
+      }
       // 复核时更新必要事实列；手工备注和已有公式不覆盖，原单元格样式也保留。
       if(reviewing&&result.cells)for(const [h,v] of Object.entries(result.cells)) {
         if(!['视频文件数','已识别集数','来源登记集数','缺失集号','数据来源','来源链接','来源查询时间','集数核对','处理结果','豆瓣链接','播出状态','已识别集号','重复集号','无法识别集号的文件','待播集号','播期未知集号'].includes(h)||item.headers[h]===undefined)continue;
