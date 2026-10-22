@@ -19,6 +19,7 @@
     return [...map.values()].filter(g=>g.some(r=>r.color==='green'));
   }
   function identity(rows) {
+    if(rows.some(r=>r.directoryOnly))throw Error('本剧含季号未确认的目录级记录，暂缓归档；请先重新初检或人工核实');
     const first=rows[0];if(!first)throw Error('没有可归档的报告行');
     const source=SOURCE+'/'+first.category+'/'+first.name,target=DEST+'/'+first.category+'/'+first.name;
     if(!pathOK(source)||!pathOK(target)||/[\\/]/.test(first.category+first.name)||rows.some(r=>r.showPath!==source||r.category!==first.category||r.name!==first.name||C.parent(r.path)!==source||Number(/^Season\s+(\d+)$/i.exec(C.base(r.path))?.[1])!==r.season))throw Error('报告整剧路径或季目录不一致');

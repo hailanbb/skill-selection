@@ -71,16 +71,18 @@
       return colorKind(rgb);
     };
   }
-  function target(data,link,origin,source) {
+  function target(data,link,origin,source,mode) {
     const name=String(data['剧集目录']||'').trim(),category=String(data['分类']||'').trim(),season=Number(data['季数']);
-    if(!name||!category||/[\\/]/.test(name+category)||[name,category].some(s=>s==='.'||s==='..')||!Number.isInteger(season)||season<1||season>999)throw Error('剧名、分类或季号无效');
+    // 初检的目录级记录没有季号；仅归档读取，保留为整剧阻挡项，绝不猜测为第一季。
+    const directoryOnly=mode==='archive'&&String(data['季数']??'').trim()==='';
+    if(!name||!category||/[\\/]/.test(name+category)||[name,category].some(s=>s==='.'||s==='..')||(!directoryOnly&&(!Number.isInteger(season)||season<1||season>999)))throw Error('剧名、分类或季号无效');
     const u=new URL(link),path=u.searchParams.get('path')?.replace(/\/$/,''),showPath=source+'/'+category+'/'+name;
     const leaf=path?.startsWith(showPath+'/')?path.slice(showPath.length+1):'',seasonMatch=/^Season\s+(\d+)$/i.exec(leaf);
-    if(u.origin!==origin||u.username||u.password||u.hash||u.searchParams.get('page')!=='files'||!seasonMatch||Number(seasonMatch[1])!==season)throw Error('源链接与本剧、本季或允许的云盘目录不一致');
+    if(u.origin!==origin||u.username||u.password||u.hash||u.searchParams.get('page')!=='files'||(directoryOnly?path!==showPath:!seasonMatch||Number(seasonMatch[1])!==season))throw Error('源链接与本剧、本季或允许的云盘目录不一致');
     if(data['季目录路径']&&String(data['季目录路径']).replace(/^Root(?=\/)/,'')!==path)throw Error('季目录路径与源链接不一致');
     if(data['剧集目录路径']&&String(data['剧集目录路径']).replace(/^Root(?=\/)/,'')!==showPath)throw Error('剧集目录路径不一致');
     if(data['报告版本']&&data['报告版本']!=='tv-workflow/1')throw Error('不支持此报告版本');
-    return {name,category,season,path,showPath,key:JSON.stringify([showPath,season,path]),data};
+    return {name,category,season:directoryOnly?null:season,directoryOnly,path,showPath,key:JSON.stringify([showPath,season,path]),data};
   }
   function read(bytes,{origin,source,destination='/115/Library_incs/nas.finish/电视剧',mode='download'}) {
     if(!['download','review','archive'].includes(mode))throw Error('报告处理模式不支持');
@@ -127,7 +129,7 @@
           }
           if(mode!=='archive'&&/已归档/.test(String(data['处理结果'])+String(data['工作阶段'])+String(data['归档结果']))){skipped++;continue;}
           const linkRef=X.utils.encode_cell({r:row,c:headers['源云存储链接']});
-          tasks.push({...target(data,String(links.get(linkRef)||data['源云存储链接']),origin,source),sheetName,sheetPath,ref,row,style,color});
+          tasks.push({...target(data,String(links.get(linkRef)||data['源云存储链接']),origin,source,mode),sheetName,sheetPath,ref,row,style,color});
         } catch(e){errors.push({sheetName,ref,error:e.message});}
       }
     }

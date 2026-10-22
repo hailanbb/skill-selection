@@ -1,6 +1,14 @@
 // 内存目录模拟移动：覆盖整剧范围、防覆盖、状态恢复、文件变化，不操作真实云盘。
 const {test}=require('node:test'),assert=require('node:assert/strict');
 const A=require('../season-archive.user.js');
+test('同剧目录记录阻挡绿色季，误涂绿色目录记录也不能触发云盘查询',async()=>{
+  const f=fixture(),directory={...f.row,path:f.source,season:null,directoryOnly:true,color:'other'};
+  let calls=0;const list=async()=>{calls++;throw Error('不应查询');};
+  assert.equal(A.groups([f.row,directory]).length,1);
+  await assert.rejects(A.plan([f.row,directory],list,'test'),/目录级记录/);
+  await assert.rejects(A.plan([{...directory,color:'green'}],list,'test'),/目录级记录/);
+  assert.equal(calls,0);assert.equal(A.groups([directory]).length,0);
+});
 function fixture(name='测试剧 (2025)') {
   const category='日本剧集',source=A.SOURCE+'/'+category+'/'+name,target=A.DEST+'/'+category+'/'+name;
   const row={name,category,showPath:source,path:source+'/Season 1',season:1,color:'green',data:{'来源登记集数':2}};

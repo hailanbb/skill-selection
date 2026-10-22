@@ -8,6 +8,34 @@ const bundle=fs.readFileSync(path.join(__dirname,'../vendor/xlsx-js-style/packag
 const X=new Function('const exports={};const module=undefined,require=undefined,window=undefined,define=undefined;'+bundle+';return exports;')();
 const options={origin:'https://clouddrive.example',source:I.SOURCE};
 
+function directoryFixture(change=()=>{}) {
+  return fixture((_book,sheet)=>{
+    for(const n of [3,4]) {
+      sheet['C'+n]={t:'s',v:''};
+      const link=sheet['D'+n];
+      const u=new URL(link.l?.Target||link.v);
+      const show=u.searchParams.get('path').replace(/\/Season 1$/,'');
+      u.searchParams.set('path',show);link.v=u.href;link.l={Target:u.href};
+      sheet['AA'+n].v=show;sheet['AB'+n].v=show;
+    }
+    change(sheet);
+  });
+}
+test('归档接受空季号且链接为剧根的目录记录，保留原色及阻挡身份',()=>{
+  const s=R.read(directoryFixture(),{...options,mode:'archive'});
+  assert.deepEqual(s.errors,[]);assert.equal(s.tasks.length,4);
+  assert.deepEqual(s.tasks.filter(t=>t.directoryOnly).map(t=>[t.ref,t.season,t.color]),[['B3',null,'other'],['B4',null,'yellow']]);
+  const t=s.tasks[1];s.updates.set(t,{state:'暂缓归档',color:null,note:'季号未确认'});
+  const book=X.read(R.write(s),{cellStyles:true});assert.equal(book.Sheets['剧集检查'].B3.s.fgColor.rgb,'BDD7EE');
+  assert.ok(X.utils.sheet_to_json(book.Sheets['剧集检查']).some(r=>r['归档结果']==='暂缓归档'));
+});
+test('目录记录不放宽其他阶段、越界链接或空季号季链接校验',()=>{
+  assert.equal(R.read(directoryFixture(),options).errors.length,2);
+  for(const mutate of [s=>{s.D3.l.Target=s.D3.l.Target.replace('clouddrive.example','foreign.example');},s=>{const u=new URL(s.D3.l.Target);u.searchParams.set('path',u.searchParams.get('path')+'/Season 1');s.D3.l.Target=u.href;}]) {
+    const s=R.read(directoryFixture(mutate),{...options,mode:'archive'});assert.equal(s.errors.length,1);assert.equal(s.errors[0].ref,'B3');
+  }
+});
+
 test('下载明细区分整季/单集/零散多集，保留站点、做种及每个资源的对应集号',()=>{
   const s=R.read(fixture(),options),r=result();r.records=['season','episode','episodes'].map((scope,i)=>({...r.records[0],key:'r'+i,scope,episodes:i===0?[1,2,3,4]:i===1?[2]:[2,4],finishedAt:'2026-10-21T00:01:00Z',seeds:i===2?null:4}));
   s.updates.set(s.tasks[0],r);const book=X.read(R.write(s),{type:'array'}),detail=X.utils.sheet_to_json(book.Sheets['下载明细_1']);

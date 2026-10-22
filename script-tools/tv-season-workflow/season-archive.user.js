@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         剧集工作流 ④ · 绿色剧集归档
 // @namespace    local.tv-season-archive
-// @version      1.1.5
+// @version      1.1.6
 // @description  确认清单后归档绿色季；支持同剧缺季合入、跳过同季冲突，逐文件输出操作明细，验证成功标紫色。
 // @match        https://clouddrive.example/*
 // @grant        GM_getValue
@@ -483,6 +483,7 @@ return {norm,parent,base,mapKey,showInfo,titleIdentity,candidateMatches,chooseCa
     return [...map.values()].filter(g=>g.some(r=>r.color==='green'));
   }
   function identity(rows) {
+    if(rows.some(r=>r.directoryOnly))throw Error('本剧含季号未确认的目录级记录，暂缓归档；请先重新初检或人工核实');
     const first=rows[0];if(!first)throw Error('没有可归档的报告行');
     const source=SOURCE+'/'+first.category+'/'+first.name,target=DEST+'/'+first.category+'/'+first.name;
     if(!pathOK(source)||!pathOK(target)||/[\\/]/.test(first.category+first.name)||rows.some(r=>r.showPath!==source||r.category!==first.category||r.name!==first.name||C.parent(r.path)!==source||Number(/^Season\s+(\d+)$/i.exec(C.base(r.path))?.[1])!==r.season))throw Error('报告整剧路径或季目录不一致');
@@ -1233,16 +1234,18 @@ return exports;
       return colorKind(rgb);
     };
   }
-  function target(data,link,origin,source) {
+  function target(data,link,origin,source,mode) {
     const name=String(data['剧集目录']||'').trim(),category=String(data['分类']||'').trim(),season=Number(data['季数']);
-    if(!name||!category||/[\\/]/.test(name+category)||[name,category].some(s=>s==='.'||s==='..')||!Number.isInteger(season)||season<1||season>999)throw Error('剧名、分类或季号无效');
+    // 初检的目录级记录没有季号；仅归档读取，保留为整剧阻挡项，绝不猜测为第一季。
+    const directoryOnly=mode==='archive'&&String(data['季数']??'').trim()==='';
+    if(!name||!category||/[\\/]/.test(name+category)||[name,category].some(s=>s==='.'||s==='..')||(!directoryOnly&&(!Number.isInteger(season)||season<1||season>999)))throw Error('剧名、分类或季号无效');
     const u=new URL(link),path=u.searchParams.get('path')?.replace(/\/$/,''),showPath=source+'/'+category+'/'+name;
     const leaf=path?.startsWith(showPath+'/')?path.slice(showPath.length+1):'',seasonMatch=/^Season\s+(\d+)$/i.exec(leaf);
-    if(u.origin!==origin||u.username||u.password||u.hash||u.searchParams.get('page')!=='files'||!seasonMatch||Number(seasonMatch[1])!==season)throw Error('源链接与本剧、本季或允许的云盘目录不一致');
+    if(u.origin!==origin||u.username||u.password||u.hash||u.searchParams.get('page')!=='files'||(directoryOnly?path!==showPath:!seasonMatch||Number(seasonMatch[1])!==season))throw Error('源链接与本剧、本季或允许的云盘目录不一致');
     if(data['季目录路径']&&String(data['季目录路径']).replace(/^Root(?=\/)/,'')!==path)throw Error('季目录路径与源链接不一致');
     if(data['剧集目录路径']&&String(data['剧集目录路径']).replace(/^Root(?=\/)/,'')!==showPath)throw Error('剧集目录路径不一致');
     if(data['报告版本']&&data['报告版本']!=='tv-workflow/1')throw Error('不支持此报告版本');
-    return {name,category,season,path,showPath,key:JSON.stringify([showPath,season,path]),data};
+    return {name,category,season:directoryOnly?null:season,directoryOnly,path,showPath,key:JSON.stringify([showPath,season,path]),data};
   }
   function read(bytes,{origin,source,destination='/115/Library_incs/nas.finish/电视剧',mode='download'}) {
     if(!['download','review','archive'].includes(mode))throw Error('报告处理模式不支持');
@@ -1289,7 +1292,7 @@ return exports;
           }
           if(mode!=='archive'&&/已归档/.test(String(data['处理结果'])+String(data['工作阶段'])+String(data['归档结果']))){skipped++;continue;}
           const linkRef=X.utils.encode_cell({r:row,c:headers['源云存储链接']});
-          tasks.push({...target(data,String(links.get(linkRef)||data['源云存储链接']),origin,source),sheetName,sheetPath,ref,row,style,color});
+          tasks.push({...target(data,String(links.get(linkRef)||data['源云存储链接']),origin,source,mode),sheetName,sheetPath,ref,row,style,color});
         } catch(e){errors.push({sheetName,ref,error:e.message});}
       }
     }
@@ -1650,7 +1653,11 @@ return exports;
         const imported=reportEngine().read(await file.arrayBuffer(),{origin:ORIGIN,source:K.SOURCE,destination:K.DEST,mode:'archive'});
         // 无效行可能正是绿色整剧缺失的一季，不能静默丢弃后执行整剧移动。
         if(imported.errors.length)throw Error('报告含无法确认的行，请先修正再导入：'+imported.errors.map(e=>`${e.sheetName}!${e.ref} ${e.error}`).join('；'));
-        session={...imported,fileName:file.name};queue=K.groups(session.tasks);index=0;plans.clear();approved.clear();message(`已导入 ${queue.length} 部含绿色行的电视剧，尚未运行。`);
+        session={...imported,fileName:file.name};queue=K.groups(session.tasks);index=0;plans.clear();approved.clear();
+        const directoryRows=session.tasks.filter(r=>r.directoryOnly);
+        // 目录级异常原色保留，导出可追溯；同剧绿色季仍会被整剧校验阻挡。
+        for(const row of directoryRows)update([row],'暂缓归档',{note:'目录级记录，季号未确认；原检查结果：'+String(row.data['处理结果']||'未确认')+'；'+String(row.data['核对说明']||'')});
+        message(`已导入 ${queue.length} 部含绿色行的电视剧，尚未运行。`+(directoryRows.length?`另有 ${directoryRows.length} 条目录级记录暂缓归档，已记录到导出报告。`:''));
       }catch(e){message(e.message);}finally{importing=false;render();}
     });
     body.append(ui.status,el('p','归档目标：'+K.DEST),ui.import,ui.file,ui.start,ui.pause,ui.resume,ui.move,ui.export,

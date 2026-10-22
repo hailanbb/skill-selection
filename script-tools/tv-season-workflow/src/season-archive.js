@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         剧集工作流 ④ · 绿色剧集归档
 // @namespace    local.tv-season-archive
-// @version      1.1.5
+// @version      1.1.6
 // @description  确认清单后归档绿色季；支持同剧缺季合入、跳过同季冲突，逐文件输出操作明细，验证成功标紫色。
 // @match        https://clouddrive.example/*
 // @grant        GM_getValue
@@ -137,7 +137,11 @@
         const imported=reportEngine().read(await file.arrayBuffer(),{origin:ORIGIN,source:K.SOURCE,destination:K.DEST,mode:'archive'});
         // 无效行可能正是绿色整剧缺失的一季，不能静默丢弃后执行整剧移动。
         if(imported.errors.length)throw Error('报告含无法确认的行，请先修正再导入：'+imported.errors.map(e=>`${e.sheetName}!${e.ref} ${e.error}`).join('；'));
-        session={...imported,fileName:file.name};queue=K.groups(session.tasks);index=0;plans.clear();approved.clear();message(`已导入 ${queue.length} 部含绿色行的电视剧，尚未运行。`);
+        session={...imported,fileName:file.name};queue=K.groups(session.tasks);index=0;plans.clear();approved.clear();
+        const directoryRows=session.tasks.filter(r=>r.directoryOnly);
+        // 目录级异常原色保留，导出可追溯；同剧绿色季仍会被整剧校验阻挡。
+        for(const row of directoryRows)update([row],'暂缓归档',{note:'目录级记录，季号未确认；原检查结果：'+String(row.data['处理结果']||'未确认')+'；'+String(row.data['核对说明']||'')});
+        message(`已导入 ${queue.length} 部含绿色行的电视剧，尚未运行。`+(directoryRows.length?`另有 ${directoryRows.length} 条目录级记录暂缓归档，已记录到导出报告。`:''));
       }catch(e){message(e.message);}finally{importing=false;render();}
     });
     body.append(ui.status,el('p','归档目标：'+K.DEST),ui.import,ui.file,ui.start,ui.pause,ui.resume,ui.move,ui.export,
