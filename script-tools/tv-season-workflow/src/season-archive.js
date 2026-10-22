@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         剧集工作流 ④ · 绿色剧集归档
 // @namespace    local.tv-season-archive
-// @version      1.1.6
+// @version      1.1.7
 // @description  确认清单后归档绿色季；支持同剧缺季合入、跳过同季冲突，逐文件输出操作明细，验证成功标紫色。
 // @match        https://clouddrive.example/*
 // @grant        GM_getValue
@@ -58,13 +58,15 @@
   async function check() {
     if(!session)return;
     await exclusive(async()=>{
+      // 每次开始或继续都新建快照；暂停退出后不沿用，移动阶段仍使用 client.listing。
+      const previewList=K.createPreviewListing(client.listing);
       for(;index<queue.length;) {
         checkpoint();const rows=queue[index],source=rows[0].showPath;
         try {
           message(`检查 ${index+1}/${queue.length}：${rows[0].name}`);
           const previous=load(source),restore=previous?.verified&&!(await client.listing(C.parent(source))).some(f=>f.path===source&&f.directory);
           if(previous?.pending||restore){update(rows,'上次移动待核实',{note:'发现本地移动记录，请点击“核实上次移动结果”，不会重复移动'});plans.delete(source);}
-          else {const p=await K.plan(rows,client.listing,crypto.randomUUID());plans.set(source,p);update(rows,'待确认移动',{p,note:p.mode==='seasons'?'目标已有同名剧集，将移入缺少的季；源根部共用文件保留。尚未移动':'整剧各季均绿色，文件清单已读取；尚未移动'});}
+          else {const p=await K.plan(rows,previewList,crypto.randomUUID());plans.set(source,p);update(rows,'待确认移动',{p,note:p.mode==='seasons'?'目标已有同名剧集，将移入缺少的季；源根部共用文件保留。尚未移动':'整剧各季均绿色，文件清单已读取；尚未移动'});}
           index++;render();
         }catch(e){plans.delete(source);update(rows,e.name==='Pause'?'已暂停':'暂缓归档',{note:e.message});render();if(e.name==='Pause')throw e;index++;}
       }

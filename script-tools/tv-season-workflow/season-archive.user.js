@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         剧集工作流 ④ · 绿色剧集归档
 // @namespace    local.tv-season-archive
-// @version      1.1.6
+// @version      1.1.7
 // @description  确认清单后归档绿色季；支持同剧缺季合入、跳过同季冲突，逐文件输出操作明细，验证成功标紫色。
 // @match        https://clouddrive.example/*
 // @grant        GM_getValue
@@ -489,6 +489,22 @@ return {norm,parent,base,mapKey,showInfo,titleIdentity,candidateMatches,chooseCa
     if(!pathOK(source)||!pathOK(target)||/[\\/]/.test(first.category+first.name)||rows.some(r=>r.showPath!==source||r.category!==first.category||r.name!==first.name||C.parent(r.path)!==source||Number(/^Season\s+(\d+)$/i.exec(C.base(r.path))?.[1])!==r.season))throw Error('报告整剧路径或季目录不一致');
     return {source,target,category:first.category,name:first.name};
   }
+  // 仅供一次“开始/继续检查”的预览使用，最多复用 60 秒。
+  // 只缓存目标根目录和它的直接分类；源、目标剧目录与季内文件始终实时读取。
+  // 执行、恢复核实和事后验证不得使用此包装器；读取失败清空已存快照。
+  function createPreviewListing(list,{now=()=>Date.now()}={}) {
+    const cache=new Map();
+    return async path=>{
+      const reusable=path===DEST||C.parent(path)===DEST;
+      const cached=reusable?cache.get(path):null,at=now();
+      if(cached&&at>=cached.at&&at-cached.at<60000)return structuredClone(cached.rows);
+      try {
+        const rows=await listChecked(list,path);
+        if(reusable)cache.set(path,{at:now(),rows:structuredClone(rows)});
+        return rows;
+      }catch(e){cache.clear();throw e;}
+    };
+  }
   async function listChecked(list,path) {
     const rows=await list(path);C.validateListing(rows,path,rows.length,{emptyConfirmed:true});return rows;
   }
@@ -606,7 +622,7 @@ return {norm,parent,base,mapKey,showInfo,titleIdentity,candidateMatches,chooseCa
     const p=identity(rows);if(!journal||journal.source!==p.source||journal.target!==p.target||!Array.isArray(journal.manifest)||!journal.manifest.length)throw Error('上次移动记录与本剧不一致');
     return verify({...journal,...p},list);
   }
-  return {SOURCE,DEST,MEDIA,groups,identity,plan,scan,verify,execute,reconcile,equal,snapshot};
+  return {SOURCE,DEST,MEDIA,groups,identity,createPreviewListing,plan,scan,verify,execute,reconcile,equal,snapshot};
 })
 )(C,{source:SOURCE,destination:DEST});
   const createClient=/* CloudDrive2 归档页面适配器：只开放已配置源/目标树内的读取和整剧/单季移动。
@@ -1519,13 +1535,15 @@ return exports;
   async function check() {
     if(!session)return;
     await exclusive(async()=>{
+      // 每次开始或继续都新建快照；暂停退出后不沿用，移动阶段仍使用 client.listing。
+      const previewList=K.createPreviewListing(client.listing);
       for(;index<queue.length;) {
         checkpoint();const rows=queue[index],source=rows[0].showPath;
         try {
           message(`检查 ${index+1}/${queue.length}：${rows[0].name}`);
           const previous=load(source),restore=previous?.verified&&!(await client.listing(C.parent(source))).some(f=>f.path===source&&f.directory);
           if(previous?.pending||restore){update(rows,'上次移动待核实',{note:'发现本地移动记录，请点击“核实上次移动结果”，不会重复移动'});plans.delete(source);}
-          else {const p=await K.plan(rows,client.listing,crypto.randomUUID());plans.set(source,p);update(rows,'待确认移动',{p,note:p.mode==='seasons'?'目标已有同名剧集，将移入缺少的季；源根部共用文件保留。尚未移动':'整剧各季均绿色，文件清单已读取；尚未移动'});}
+          else {const p=await K.plan(rows,previewList,crypto.randomUUID());plans.set(source,p);update(rows,'待确认移动',{p,note:p.mode==='seasons'?'目标已有同名剧集，将移入缺少的季；源根部共用文件保留。尚未移动':'整剧各季均绿色，文件清单已读取；尚未移动'});}
           index++;render();
         }catch(e){plans.delete(source);update(rows,e.name==='Pause'?'已暂停':'暂缓归档',{note:e.message});render();if(e.name==='Pause')throw e;index++;}
       }

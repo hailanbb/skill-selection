@@ -1,6 +1,35 @@
 // 内存目录模拟移动：覆盖整剧范围、防覆盖、状态恢复、文件变化，不操作真实云盘。
 const {test}=require('node:test'),assert=require('node:assert/strict');
 const A=require('../season-archive.user.js');
+test('预览只复用目标根和分类，源及目标剧目录始终实时读取，快照不被调用方改写',async()=>{
+  const calls=[];const list=async p=>{calls.push(p);return [{path:p+'/子目录',name:'子目录',directory:true}];};
+  const preview=A.createPreviewListing(list);
+  for(const p of [A.DEST,A.DEST+'/日本剧集']) {
+    const first=await preview(p);first[0].name='外部修改';
+    const second=await preview(p);assert.equal(second[0].name,'子目录');second.length=0;
+    assert.equal((await preview(p)).length,1);assert.equal(calls.filter(x=>x===p).length,1);
+  }
+  for(const p of [A.SOURCE+'/日本剧集',A.DEST+'/日本剧集/测试剧']){await preview(p);await preview(p);assert.equal(calls.filter(x=>x===p).length,2);}
+});
+test('预览快照60秒过期，继续检查新实例不复用旧快照，失败清空快照',async()=>{
+  let time=0,calls=0,fail=false;
+  const list=async()=>{calls++;if(fail)throw Error('列表失败');return [];};
+  const preview=A.createPreviewListing(list,{now:()=>time});
+  await preview(A.DEST);time=59999;await preview(A.DEST);assert.equal(calls,1);
+  time=60000;await preview(A.DEST);assert.equal(calls,2);
+  await A.createPreviewListing(list)(A.DEST);assert.equal(calls,3);
+  fail=true;await assert.rejects(preview(A.SOURCE+'/日本剧集'),/列表失败/);fail=false;
+  await preview(A.DEST);assert.equal(calls,5);
+});
+test('同分类连续预览共用目标列表，但移动前实时发现新目标并拒绝旧清单',async()=>{
+  const f=fixture(),calls=new Map();const list=async p=>{calls.set(p,(calls.get(p)||0)+1);return f.list(p);};
+  const preview=A.createPreviewListing(list);
+  const p=await A.plan([f.row],preview,'preview');await A.plan([f.row],preview,'again');
+  assert.equal(calls.get(A.DEST),1);assert.equal(calls.get(A.DEST+'/'+f.category),1);
+  assert.equal(calls.get(f.source),4);assert.equal(calls.get(f.row.path),2);
+  f.tree.set(A.DEST+'/'+f.category,[f.file(A.DEST+'/'+f.category,f.name,true)]);f.tree.set(f.target,[]);
+  await assert.rejects(A.execute(p,f.api),/发生变化/);assert.equal(f.moves,0);
+});
 test('同剧目录记录阻挡绿色季，误涂绿色目录记录也不能触发云盘查询',async()=>{
   const f=fixture(),directory={...f.row,path:f.source,season:null,directoryOnly:true,color:'other'};
   let calls=0;const list=async()=>{calls++;throw Error('不应查询');};

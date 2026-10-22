@@ -25,6 +25,22 @@
     if(!pathOK(source)||!pathOK(target)||/[\\/]/.test(first.category+first.name)||rows.some(r=>r.showPath!==source||r.category!==first.category||r.name!==first.name||C.parent(r.path)!==source||Number(/^Season\s+(\d+)$/i.exec(C.base(r.path))?.[1])!==r.season))throw Error('报告整剧路径或季目录不一致');
     return {source,target,category:first.category,name:first.name};
   }
+  // 仅供一次“开始/继续检查”的预览使用，最多复用 60 秒。
+  // 只缓存目标根目录和它的直接分类；源、目标剧目录与季内文件始终实时读取。
+  // 执行、恢复核实和事后验证不得使用此包装器；读取失败清空已存快照。
+  function createPreviewListing(list,{now=()=>Date.now()}={}) {
+    const cache=new Map();
+    return async path=>{
+      const reusable=path===DEST||C.parent(path)===DEST;
+      const cached=reusable?cache.get(path):null,at=now();
+      if(cached&&at>=cached.at&&at-cached.at<60000)return structuredClone(cached.rows);
+      try {
+        const rows=await listChecked(list,path);
+        if(reusable)cache.set(path,{at:now(),rows:structuredClone(rows)});
+        return rows;
+      }catch(e){cache.clear();throw e;}
+    };
+  }
   async function listChecked(list,path) {
     const rows=await list(path);C.validateListing(rows,path,rows.length,{emptyConfirmed:true});return rows;
   }
@@ -142,5 +158,5 @@
     const p=identity(rows);if(!journal||journal.source!==p.source||journal.target!==p.target||!Array.isArray(journal.manifest)||!journal.manifest.length)throw Error('上次移动记录与本剧不一致');
     return verify({...journal,...p},list);
   }
-  return {SOURCE,DEST,MEDIA,groups,identity,plan,scan,verify,execute,reconcile,equal,snapshot};
+  return {SOURCE,DEST,MEDIA,groups,identity,createPreviewListing,plan,scan,verify,execute,reconcile,equal,snapshot};
 })
