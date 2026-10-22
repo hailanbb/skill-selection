@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         剧集工作流 ③ · 豆瓣复核与版本清理
 // @namespace    local.tv-season-review
-// @version      1.3.1
+// @version      1.4.0
 // @description  导入黄色项，手动开始豆瓣分季复核；列出保留/删除清单，经确认后普通删除多余版本及专属刮削文件。
 // @match        https://clouddrive.example/*
 // @match        https://movie.douban.com/*
@@ -634,6 +634,30 @@ return {norm,parent,base,mapKey,showInfo,titleIdentity,candidateMatches,chooseCa
   return {executeBatch,MEDIA,SCRAPE,stamp,snapshot,equal,verifySource,completionEvidence,versionOf,sidecarOwners,plan,assertFresh,execute};
 })
 )(C);
+  const RepairState=(/* 四阶段共用的整理修复状态：报告是证据，不是可直接执行的请求。
+ * 任何删除历史/整理动作都必须由第二脚本重新查询并构建清单。
+ */
+(function createRepairState() {
+  'use strict';
+  const states=['ready','blocked','checked','history-delete-pending','history-deleted','transfer-pending','submitted','uncertain','files-verified'];
+  function read(data) {
+    const text=String(data?.['整理修复记录']||'')+Object.keys(data||{}).filter(h=>/^整理修复记录续\d+$/.test(h)).sort((a,b)=>Number(a.match(/\d+$/)[0])-Number(b.match(/\d+$/)[0])).map(h=>String(data[h]||'')).join('');
+    if(!text)return null;
+    if(text.length>2000000)throw Error('整理修复记录过大');
+    const r=JSON.parse(text);
+    if(r?.schema!==1||!states.includes(r.state)||!Array.isArray(r.items)||!Array.isArray(r.episodes)||r.episodes.some(n=>!Number.isInteger(n)||n<1||n>10000)||!Number.isFinite(Date.parse(r.at)))throw Error('整理修复记录格式无效');
+    return r;
+  }
+  function pending(r){return !!r&&r.state!=='files-verified';}
+  function uncertain(r){return !!r&&(['history-delete-pending','history-deleted','transfer-pending','uncertain'].includes(r.state)||r.items?.some(i=>['history-delete-pending','history-deleted','transfer-pending','uncertain'].includes(i.state)));}
+  function label(r){return ({ready:'待确认修复',blocked:'整理修复待人工核实',checked:'整理问题已检查',submitted:'已提交整理，待云盘复核',uncertain:'整理修复结果待核实','history-delete-pending':'删除历史结果待核实','history-deleted':'历史已解除，整理待完成','transfer-pending':'整理请求结果待核实','files-verified':'云盘文件已复核'})[r?.state]||'未检查';}
+  function verify(r,episodes,at) {
+    if(!r||uncertain(r)||!r.episodes.length||!r.episodes.every(n=>episodes.includes(n)))return r;
+    return {...r,state:'files-verified',at,verifiedAt:at,note:'第三脚本确认本轮修复集号已实际出现；整季完整性和版本清理由复核结果单独判定'};
+  }
+  return {read,pending,uncertain,label,verify};
+})
+)();
   const createClient=/* CloudDrive2 / 豆瓣页面适配层。
  * 读取通过当前界面完成，不读取登录秘密值；删除仅使用普通文件菜单及可核对的确认窗口。
  * 永久删除、目录删除、列表加载失败、分页不全、选择范围改变时均停止。
@@ -1453,6 +1477,7 @@ return exports;
           for(const [h,col] of Object.entries(headers)) {
             const c=sheet[X.utils.encode_cell({r:row,c:col})];
             if(mode==='archive'&&c?.f&&(ARCHIVE_FIELDS.includes(h)||['处理结果','工作阶段'].includes(h)||/^归档记录续\d+$/.test(h)))throw Error(h+'不能使用公式；请先保留人工公式至其他列');
+            if(c?.f&&(/^整理修复/.test(h)||h==='文件核查时间'))throw Error(h+'不能使用公式');
             if(c?.f&&(['分类','剧集目录','季数','源云存储链接','来源登记集数','缺失集号','TMDB ID','下载记录','待播集号','播期未知集号','豆瓣链接','来源链接'].includes(h)||/^下载记录续\d+$/.test(h)))throw Error(h+'不能使用公式');
             data[h]=c?.v??'';
           }
@@ -1527,17 +1552,26 @@ return exports;
     }
     return [header,...rows];
   }
-  function appendAudit(zip,session,put) {
-    const table=auditRows(session);if(table.length===1)return;
+  function repairAuditRows(session) {
+    const rows=[['报告位置','电视剧','季号','集号','整理历史ID','下载源文件','整理目标文件','操作','执行结果','请求时间','完成时间','说明','旧历史快照']];
+    for(const [task,result] of session.updates)if(result.repair) {
+      const r=result.repair;
+      for(const i of [...r.previousItems||[],...r.items||[]])for(const step of i.steps?.length?i.steps:[{action:'检查/预览',state:i.state,at:r.checkedAt}])rows.push([task.sheetName+'!'+task.ref,task.name,task.season,i.episode,i.id,i.source,i.target,step.action,step.state,step.at||'',step.finishedAt||'',String(step.error||i.note||r.note||'').slice(0,25000),JSON.stringify(i.history||{})]);
+      if(!r.items?.length)rows.push([task.sheetName+'!'+task.ref,task.name,task.season,'','','','','检查',r.state,r.at,'',String(r.note||'').slice(0,25000),'']);
+    }
+    return rows;
+  }
+  function appendAudit(zip,session,put,repair=false) {
+    const table=repair?repairAuditRows(session):auditRows(session);if(table.length===1)return;
     if(table.length>50001)throw Error('操作明细超过 50000 行，请拆分报告');
     const wb=xml(part(zip,'xl/workbook.xml')),rels=xml(part(zip,'xl/_rels/workbook.xml.rels')),types=xml(part(zip,'[Content_Types].xml'));
     const names=new Set(tags(wb,'sheet').map(s=>s.getAttribute('name'))),ids=new Set(tags(rels,'Relationship').map(r=>r.getAttribute('Id')));
-    const prefix={download:'下载明细',review:'清理明细',archive:'归档明细'}[session.mode];let n=1;
-    while(names.has(prefix+'_'+n)||ids.has('rIdTVAudit'+n)||zip.FullPaths.includes(zip.FullPaths[0]+'xl/worksheets/tvAudit'+n+'.xml'))n++;
-    const name=prefix+'_'+n,path='xl/worksheets/tvAudit'+n+'.xml',id='rIdTVAudit'+n;
+    const prefix=repair?'整理修复明细':{download:'下载明细',review:'清理明细',archive:'归档明细'}[session.mode];let n=1;const partName=repair?'tvRepairAudit':'tvAudit',relName=repair?'rIdTVRepairAudit':'rIdTVAudit';
+    while(names.has(prefix+'_'+n)||ids.has(relName+n)||zip.FullPaths.includes(zip.FullPaths[0]+'xl/worksheets/'+partName+n+'.xml'))n++;
+    const name=prefix+'_'+n,path='xl/worksheets/'+partName+n+'.xml',id=relName+n;
     const sheet=wb.createElementNS(NS,'sheet');sheet.setAttribute('name',name);sheet.setAttribute('sheetId',Math.max(0,...tags(wb,'sheet').map(s=>Number(s.getAttribute('sheetId'))))+1);
     sheet.setAttributeNS('http://schemas.openxmlformats.org/officeDocument/2006/relationships','r:id',id);tags(wb,'sheets')[0].appendChild(sheet);
-    const rel=rels.createElementNS(rels.documentElement.namespaceURI,'Relationship');rel.setAttribute('Id',id);rel.setAttribute('Type','http://schemas.openxmlformats.org/officeDocument/2006/relationships/worksheet');rel.setAttribute('Target','worksheets/tvAudit'+n+'.xml');rels.documentElement.appendChild(rel);
+    const rel=rels.createElementNS(rels.documentElement.namespaceURI,'Relationship');rel.setAttribute('Id',id);rel.setAttribute('Type','http://schemas.openxmlformats.org/officeDocument/2006/relationships/worksheet');rel.setAttribute('Target',path.slice(3));rels.documentElement.appendChild(rel);
     const type=types.createElementNS(types.documentElement.namespaceURI,'Override');type.setAttribute('PartName','/'+path);type.setAttribute('ContentType','application/vnd.openxmlformats-officedocument.spreadsheetml.worksheet+xml');types.documentElement.appendChild(type);
     const end=X.utils.encode_cell({r:table.length-1,c:table[0].length-1});
     const headerStyle=session.sheets.values().next().value?.headerStyle||0;
@@ -1604,6 +1638,12 @@ return exports;
         let text=part(zip,task.sheetPath);
         if(/<(?:[\w.-]+):(?:row|c)\b/.test(text))throw Error('不支持带前缀的工作表单元格 XML');
         const newCols=[];
+        // 修复记录独立追加，不改动原下载日志或人工备注；超长快照分片保存。
+        const repairUpdates=[...session.updates.values()].filter(r=>r.repair);
+        const repairChunks=Math.max(1,...repairUpdates.map(r=>Math.ceil(JSON.stringify(r.repair).length/30000)),...Object.keys(headers).filter(h=>/^整理修复记录续\d+$/.test(h)).map(h=>Number(h.match(/\d+$/)[0])+1));
+        const extra=repairUpdates.length?['整理修复状态','整理修复集号','整理修复时间','整理修复说明',...Array.from({length:repairChunks},(_,i)=>i?'整理修复记录续'+i:'整理修复记录')]:[];
+        if([...session.updates.values()].some(r=>r.fileCheckedAt))extra.push('文件核查时间');
+        for(const h of extra)if(headers[h]===undefined){headers[h]=++last;text=putCell(text,X.utils.encode_cell({r:0,c:last}),h,info.headerStyle);newCols.push('<col min="'+(last+1)+'" max="'+(last+1)+'" width="45" customWidth="1"/>');}
         for(const h of fields)if(headers[h]===undefined){headers[h]=++last;text=putCell(text,X.utils.encode_cell({r:0,c:last}),h,info.headerStyle);newCols.push(`<col min="${last+1}" max="${last+1}" width="${/说明|资源|记录/.test(h)?55:24}" customWidth="1"/>`);}
         if(newCols.length) {
           text=text.includes('</cols>')?text.replace('</cols>',()=>newCols.join('')+'</cols>'):text.replace('<sheetData',()=>'<cols>'+newCols.join('')+'</cols><sheetData');
@@ -1614,6 +1654,12 @@ return exports;
         sheets.set(task.sheetPath,{text,headers});
       }
       const item=sheets.get(task.sheetPath);
+      if(result.repair){
+        const r=result.repair,json=JSON.stringify(r),values={'整理修复状态':({ready:'待确认修复',blocked:'待人工核实',checked:'已检查/可重新检查',submitted:'已提交整理，待云盘复核',uncertain:'结果待核实','history-delete-pending':'历史删除结果待核实','history-deleted':'历史已解除，整理待完成','transfer-pending':'整理请求待核实','files-verified':'云盘文件已复核'})[r.state]||r.state,'整理修复集号':r.episodes.join('、'),'整理修复时间':r.at,'整理修复说明':String(r.note||'').slice(0,25000)};
+        for(const h of Object.keys(item.headers))if(h==='整理修复记录'||/^整理修复记录续\d+$/.test(h)){const n=h==='整理修复记录'?0:Number(h.match(/\d+$/)[0]);values[h]=json.slice(n*30000,(n+1)*30000);}
+        for(const [h,v] of Object.entries(values))item.text=putCell(item.text,X.utils.encode_cell({r:task.row,c:item.headers[h]}),v,0);
+      }
+      if(result.fileCheckedAt)item.text=putCell(item.text,X.utils.encode_cell({r:task.row,c:item.headers['文件核查时间']}),result.fileCheckedAt,0);
       if(result.color) {
         if(!COLORS[result.color])throw Error('不支持的结果颜色');
         const st=statusStyle(task.style,result.color);
@@ -1649,7 +1695,7 @@ return exports;
     const put=(p,s)=>X.CFB.utils.cfb_add(zip,zip.FullPaths[0]+p,new TextEncoder().encode(s));
     put('xl/styles.xml',new XMLSerializer().serializeToString(styles));for(const [p,item] of sheets)put(p,item.text);
     for(const [p,doc] of linkParts)put(p,new XMLSerializer().serializeToString(doc));
-    appendAudit(zip,session,put);
+    appendAudit(zip,session,put);appendAudit(zip,session,put,true);
     return new Uint8Array(X.CFB.write(zip,{type:'array',fileType:'zip',compression:true}));
   }
   return {read,write,colorKind,FIELDS,REVIEW_FIELDS,ARCHIVE_FIELDS};
@@ -1674,11 +1720,12 @@ return exports;
   const button=(label,action)=>{const b=el('button',label);b.addEventListener('click',()=>Promise.resolve().then(action).catch(e=>message(e.message)));return b;};
   function sourceLink(row){return bindings.get(row.key)||row.data['豆瓣链接']||(row.data['数据来源']==='douban'?row.data['来源链接']:'')||'';}
   function describe(row,p,{state,deleted=[],journal=null,note=''}={}) {
-    const clean=p.complete&&!p.remove.length&&!journal?.pending;
+    const repair=RepairState.verify(RepairState.read(row.data),p.episodes,new Date().toISOString());
+    const clean=p.complete&&!p.remove.length&&!journal?.pending&&!RepairState.pending(repair);
     const finalState=state||p.state,green=clean&&p.confirmedEnded;
     const source={url:p.source.url,title:p.source.title,total:p.total,checkedAt:p.source.checkedAt||new Date().toISOString()};
     const comments=[...p.issues,note,!p.confirmedEnded&&p.complete?'本地集号齐全不等于已播完，缺少播完依据时保留黄色':'',p.preserved.some(f=>/未明确|多个/.test(f.reason))?'归属不明的刮削文件已保留':''].filter(Boolean).join('；');
-    return {state:finalState,color:green?'green':null,total:p.total,sourceUrl:source.url,at:new Date().toISOString(),videoCount:p.videoCount,current:p.current,missing:p.missing,
+    return {repair:repair||undefined,fileCheckedAt:new Date().toISOString(),state:finalState,color:green?'green':null,total:p.total,sourceUrl:source.url,at:new Date().toISOString(),videoCount:p.videoCount,current:p.current,missing:p.missing,
       version:p.groups.filter(g=>g.complete).map(g=>g.label).join('；'),keep:p.keep.map(f=>f.path),remove:p.remove.map(f=>f.path),deleted,preserved:p.preserved.map(f=>f.path),note:comments,
       record:{planId:p.id,source,groups:p.groups,keep:p.keep,remove:p.remove,preserved:p.preserved,issues:p.issues,journal},
       cells:{'视频文件数':p.videoCount,'已识别集数':p.current,'来源登记集数':p.total,'缺失集号':p.missing===null?'未确认':p.missing.length?p.missing.join('、'):'无',
@@ -1723,6 +1770,8 @@ return exports;
           if(!K.equal(rows,refreshed))throw Error('复核期间文件列表发生变化，请等待下载/整理结束后重查');
           attempt.phase='分析版本与清理计划';
           const p=K.plan(row,rows,source,crypto.randomUUID()),journal=load(row.key);
+          const repair=RepairState.verify(RepairState.read(row.data),p.episodes,new Date().toISOString());
+          if(RepairState.pending(repair)){p.eligible=false;p.state='整理修复尚未闭环，暂缓清理';p.issues.push('修复集号仍缺失或操作结果不明，请交第二脚本核实');}
           plans.set(row,p);
           if(journal?.pending)session.updates.set(row,describe(row,p,{state:'上次删除结果未确认',journal,note:'先核实上次操作，不再发起删除'}));
           else session.updates.set(row,describe(row,p,{journal}));

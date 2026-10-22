@@ -201,7 +201,7 @@
     if(!records.length&&/已提交|已有下载|结果待核实/.test(task.previousState))return outcome(task,records,{state:'待复核',note:'报告记载已提交，但缺少任务记录；请核实，避免重复下载'});
     if(task.needed?.length===0)return outcome(task,records,{state:'无需下载',note:'报告没有已确认的缺失集号；重复版本或播出状态问题交第三脚本复核'});
     const recorded=uniq(records.filter(r=>['accepted','existing'].includes(r.state)).flatMap(r=>r.episodes));
-    if(task.needed?.length&&task.needed.every(n=>recorded.includes(n)))return outcome(task,records,{state:'已提交下载，待复核',color:'yellow',note:'防重复记录已覆盖报告缺集，本次不再搜索或提交'});
+    if(task.needed?.length&&task.needed.every(n=>recorded.includes(n)))return outcome(task,records,{state:'已提交下载，待复核',color:'yellow',note:'防重复记录已覆盖报告缺集，本次不再搜索或提交；若仍缺文件，请点击“检查整理问题”'});
     // 先读下载管理，再搜资源站；任务列表读取失败时不允许提交。
     const coverage=()=>uniq([...(task.versionChoice?.g.episodes||[]),...records.filter(r=>['accepted','existing'].includes(r.state)).flatMap(r=>r.episodes)]);
     async function inspectActive(verified=[]) {

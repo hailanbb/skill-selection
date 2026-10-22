@@ -11,11 +11,13 @@
 | 阶段 | 版本 | 工作网站 | 做什么 | 文档 |
 | --- | --- | --- | --- | --- |
 | [① 剧集初检](season-inspect.user.js) | 1.2.0 | CloudDrive2、豆瓣 | 只读核对本地集号，TMDB 主查、豆瓣按需补查，导出报告 | [需求](docs/01-inspect/requirements.md) · [安装](docs/01-inspect/install.md) · [使用](docs/01-inspect/usage.md) |
-| [② 补缺下载](season-download.user.js) | 1.4.0 | MoviePilot | 读取报告，选择整季或零散资源，提交下载并记录明细 | [需求](docs/02-download/requirements.md) · [安装](docs/02-download/install.md) · [使用](docs/02-download/usage.md) |
-| [③ 复核清理](season-review.user.js) | 1.3.1 | CloudDrive2、豆瓣 | 以豆瓣本季集数复核黄色项，确认清单后删除多余版本及专属刮削文件 | [需求](docs/03-review/requirements.md) · [安装](docs/03-review/install.md) · [使用](docs/03-review/usage.md) |
-| [④ 剧集归档](season-archive.user.js) | 1.2.0 | CloudDrive2 | 确认清单后移动绿色剧集，全部内容无冲突合入，验证并清除源目录 | [需求](docs/04-archive/requirements.md) · [安装](docs/04-archive/install.md) · [使用](docs/04-archive/usage.md) |
+| [② 补缺下载](season-download.user.js) | 1.5.0 | MoviePilot | 读取报告，选择整季或零散资源，提交下载；检查并修复旧历史导致的整理阻挡 | [需求](docs/02-download/requirements.md) · [安装](docs/02-download/install.md) · [使用](docs/02-download/usage.md) |
+| [③ 复核清理](season-review.user.js) | 1.4.0 | CloudDrive2、豆瓣 | 以豆瓣本季集数复核黄色项，确认清单后删除多余版本及专属刮削文件 | [需求](docs/03-review/requirements.md) · [安装](docs/03-review/install.md) · [使用](docs/03-review/usage.md) |
+| [④ 剧集归档](season-archive.user.js) | 1.3.0 | CloudDrive2 | 确认清单后移动绿色剧集，全部内容无冲突合入，验证并清除源目录 | [需求](docs/04-archive/requirements.md) · [安装](docs/04-archive/install.md) · [使用](docs/04-archive/usage.md) |
 
 **所有脚本默认不运行，导入报告只排队。** ② 点击开始后会提交下载；③、④先只读检查，确认具体清单后才删除或移动。建议同一云盘标签页只启用当前阶段。
+
+下载完成但网盘仍缺集：在②点击 **检查整理问题 → 查看清单 → 修复整理 → 导出报告**，再交③复核实际文件。只适配 MoviePilot v2.15.6；详情见[整理修复使用步骤](docs/02-download/usage.md#下载好了但网盘仍缺集整理修复)。
 
 ## 第一次使用
 

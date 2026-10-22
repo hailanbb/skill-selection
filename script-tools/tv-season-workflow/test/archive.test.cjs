@@ -1,6 +1,11 @@
 // 内存目录模拟移动：覆盖整剧范围、防覆盖、状态恢复、文件变化，不操作真实云盘。
 const {test}=require('node:test'),assert=require('node:assert/strict');
 const A=require('../season-archive.user.js');
+test('绿色也不能绕过未闭环整理修复记录，文件复核后才恢复正常计划',async()=>{
+  const f=fixture();const record={schema:1,state:'submitted',at:new Date().toISOString(),episodes:[1],items:[]};f.row.data['整理修复记录']=JSON.stringify(record);
+  let reads=0;await assert.rejects(A.plan([f.row],async()=>{reads++;return [];},'blocked'),/整理修复/);assert.equal(reads,0);
+  f.row.data['整理修复记录']=JSON.stringify({...record,state:'files-verified'});assert.equal((await A.plan([f.row],f.list,'ok')).eligible,true);
+});
 test('预览只复用目标根和分类，源及目标剧目录始终实时读取，快照不被调用方改写',async()=>{
   const calls=[];const list=async p=>{calls.push(p);return [{path:p+'/子目录',name:'子目录',directory:true}];};
   const preview=A.createPreviewListing(list);

@@ -124,6 +124,7 @@
           for(const [h,col] of Object.entries(headers)) {
             const c=sheet[X.utils.encode_cell({r:row,c:col})];
             if(mode==='archive'&&c?.f&&(ARCHIVE_FIELDS.includes(h)||['处理结果','工作阶段'].includes(h)||/^归档记录续\d+$/.test(h)))throw Error(h+'不能使用公式；请先保留人工公式至其他列');
+            if(c?.f&&(/^整理修复/.test(h)||h==='文件核查时间'))throw Error(h+'不能使用公式');
             if(c?.f&&(['分类','剧集目录','季数','源云存储链接','来源登记集数','缺失集号','TMDB ID','下载记录','待播集号','播期未知集号','豆瓣链接','来源链接'].includes(h)||/^下载记录续\d+$/.test(h)))throw Error(h+'不能使用公式');
             data[h]=c?.v??'';
           }
@@ -198,17 +199,26 @@
     }
     return [header,...rows];
   }
-  function appendAudit(zip,session,put) {
-    const table=auditRows(session);if(table.length===1)return;
+  function repairAuditRows(session) {
+    const rows=[['报告位置','电视剧','季号','集号','整理历史ID','下载源文件','整理目标文件','操作','执行结果','请求时间','完成时间','说明','旧历史快照']];
+    for(const [task,result] of session.updates)if(result.repair) {
+      const r=result.repair;
+      for(const i of [...r.previousItems||[],...r.items||[]])for(const step of i.steps?.length?i.steps:[{action:'检查/预览',state:i.state,at:r.checkedAt}])rows.push([task.sheetName+'!'+task.ref,task.name,task.season,i.episode,i.id,i.source,i.target,step.action,step.state,step.at||'',step.finishedAt||'',String(step.error||i.note||r.note||'').slice(0,25000),JSON.stringify(i.history||{})]);
+      if(!r.items?.length)rows.push([task.sheetName+'!'+task.ref,task.name,task.season,'','','','','检查',r.state,r.at,'',String(r.note||'').slice(0,25000),'']);
+    }
+    return rows;
+  }
+  function appendAudit(zip,session,put,repair=false) {
+    const table=repair?repairAuditRows(session):auditRows(session);if(table.length===1)return;
     if(table.length>50001)throw Error('操作明细超过 50000 行，请拆分报告');
     const wb=xml(part(zip,'xl/workbook.xml')),rels=xml(part(zip,'xl/_rels/workbook.xml.rels')),types=xml(part(zip,'[Content_Types].xml'));
     const names=new Set(tags(wb,'sheet').map(s=>s.getAttribute('name'))),ids=new Set(tags(rels,'Relationship').map(r=>r.getAttribute('Id')));
-    const prefix={download:'下载明细',review:'清理明细',archive:'归档明细'}[session.mode];let n=1;
-    while(names.has(prefix+'_'+n)||ids.has('rIdTVAudit'+n)||zip.FullPaths.includes(zip.FullPaths[0]+'xl/worksheets/tvAudit'+n+'.xml'))n++;
-    const name=prefix+'_'+n,path='xl/worksheets/tvAudit'+n+'.xml',id='rIdTVAudit'+n;
+    const prefix=repair?'整理修复明细':{download:'下载明细',review:'清理明细',archive:'归档明细'}[session.mode];let n=1;const partName=repair?'tvRepairAudit':'tvAudit',relName=repair?'rIdTVRepairAudit':'rIdTVAudit';
+    while(names.has(prefix+'_'+n)||ids.has(relName+n)||zip.FullPaths.includes(zip.FullPaths[0]+'xl/worksheets/'+partName+n+'.xml'))n++;
+    const name=prefix+'_'+n,path='xl/worksheets/'+partName+n+'.xml',id=relName+n;
     const sheet=wb.createElementNS(NS,'sheet');sheet.setAttribute('name',name);sheet.setAttribute('sheetId',Math.max(0,...tags(wb,'sheet').map(s=>Number(s.getAttribute('sheetId'))))+1);
     sheet.setAttributeNS('http://schemas.openxmlformats.org/officeDocument/2006/relationships','r:id',id);tags(wb,'sheets')[0].appendChild(sheet);
-    const rel=rels.createElementNS(rels.documentElement.namespaceURI,'Relationship');rel.setAttribute('Id',id);rel.setAttribute('Type','http://schemas.openxmlformats.org/officeDocument/2006/relationships/worksheet');rel.setAttribute('Target','worksheets/tvAudit'+n+'.xml');rels.documentElement.appendChild(rel);
+    const rel=rels.createElementNS(rels.documentElement.namespaceURI,'Relationship');rel.setAttribute('Id',id);rel.setAttribute('Type','http://schemas.openxmlformats.org/officeDocument/2006/relationships/worksheet');rel.setAttribute('Target',path.slice(3));rels.documentElement.appendChild(rel);
     const type=types.createElementNS(types.documentElement.namespaceURI,'Override');type.setAttribute('PartName','/'+path);type.setAttribute('ContentType','application/vnd.openxmlformats-officedocument.spreadsheetml.worksheet+xml');types.documentElement.appendChild(type);
     const end=X.utils.encode_cell({r:table.length-1,c:table[0].length-1});
     const headerStyle=session.sheets.values().next().value?.headerStyle||0;
@@ -275,6 +285,12 @@
         let text=part(zip,task.sheetPath);
         if(/<(?:[\w.-]+):(?:row|c)\b/.test(text))throw Error('不支持带前缀的工作表单元格 XML');
         const newCols=[];
+        // 修复记录独立追加，不改动原下载日志或人工备注；超长快照分片保存。
+        const repairUpdates=[...session.updates.values()].filter(r=>r.repair);
+        const repairChunks=Math.max(1,...repairUpdates.map(r=>Math.ceil(JSON.stringify(r.repair).length/30000)),...Object.keys(headers).filter(h=>/^整理修复记录续\d+$/.test(h)).map(h=>Number(h.match(/\d+$/)[0])+1));
+        const extra=repairUpdates.length?['整理修复状态','整理修复集号','整理修复时间','整理修复说明',...Array.from({length:repairChunks},(_,i)=>i?'整理修复记录续'+i:'整理修复记录')]:[];
+        if([...session.updates.values()].some(r=>r.fileCheckedAt))extra.push('文件核查时间');
+        for(const h of extra)if(headers[h]===undefined){headers[h]=++last;text=putCell(text,X.utils.encode_cell({r:0,c:last}),h,info.headerStyle);newCols.push('<col min="'+(last+1)+'" max="'+(last+1)+'" width="45" customWidth="1"/>');}
         for(const h of fields)if(headers[h]===undefined){headers[h]=++last;text=putCell(text,X.utils.encode_cell({r:0,c:last}),h,info.headerStyle);newCols.push(`<col min="${last+1}" max="${last+1}" width="${/说明|资源|记录/.test(h)?55:24}" customWidth="1"/>`);}
         if(newCols.length) {
           text=text.includes('</cols>')?text.replace('</cols>',()=>newCols.join('')+'</cols>'):text.replace('<sheetData',()=>'<cols>'+newCols.join('')+'</cols><sheetData');
@@ -285,6 +301,12 @@
         sheets.set(task.sheetPath,{text,headers});
       }
       const item=sheets.get(task.sheetPath);
+      if(result.repair){
+        const r=result.repair,json=JSON.stringify(r),values={'整理修复状态':({ready:'待确认修复',blocked:'待人工核实',checked:'已检查/可重新检查',submitted:'已提交整理，待云盘复核',uncertain:'结果待核实','history-delete-pending':'历史删除结果待核实','history-deleted':'历史已解除，整理待完成','transfer-pending':'整理请求待核实','files-verified':'云盘文件已复核'})[r.state]||r.state,'整理修复集号':r.episodes.join('、'),'整理修复时间':r.at,'整理修复说明':String(r.note||'').slice(0,25000)};
+        for(const h of Object.keys(item.headers))if(h==='整理修复记录'||/^整理修复记录续\d+$/.test(h)){const n=h==='整理修复记录'?0:Number(h.match(/\d+$/)[0]);values[h]=json.slice(n*30000,(n+1)*30000);}
+        for(const [h,v] of Object.entries(values))item.text=putCell(item.text,X.utils.encode_cell({r:task.row,c:item.headers[h]}),v,0);
+      }
+      if(result.fileCheckedAt)item.text=putCell(item.text,X.utils.encode_cell({r:task.row,c:item.headers['文件核查时间']}),result.fileCheckedAt,0);
       if(result.color) {
         if(!COLORS[result.color])throw Error('不支持的结果颜色');
         const st=statusStyle(task.style,result.color);
@@ -320,7 +342,7 @@
     const put=(p,s)=>X.CFB.utils.cfb_add(zip,zip.FullPaths[0]+p,new TextEncoder().encode(s));
     put('xl/styles.xml',new XMLSerializer().serializeToString(styles));for(const [p,item] of sheets)put(p,item.text);
     for(const [p,doc] of linkParts)put(p,new XMLSerializer().serializeToString(doc));
-    appendAudit(zip,session,put);
+    appendAudit(zip,session,put);appendAudit(zip,session,put,true);
     return new Uint8Array(X.CFB.write(zip,{type:'array',fileType:'zip',compression:true}));
   }
   return {read,write,colorKind,FIELDS,REVIEW_FIELDS,ARCHIVE_FIELDS};

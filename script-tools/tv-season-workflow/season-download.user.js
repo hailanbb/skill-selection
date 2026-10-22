@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         剧集工作流 ② · MoviePilot 补缺下载
 // @namespace    local.tv-season-download
-// @version      1.4.0
+// @version      1.5.0
 // @description  手动补缺；整季优先、中文标记优先，做种≥5时优先小容量；逐资源导出选择依据。
 // @match        https://moviepilot.example/*
 // @grant        unsafeWindow
@@ -13,7 +13,8 @@
 
 /* 使用流程：导入原报告 → 查看待处理数量 → 点击开始 → 导出更新后的报告。
  * 导入、安装和刷新均不发起下载。开始后按既定规则提交到 MoviePilot 默认下载器及自动目录。
- * 本脚本只负责补缺，不改云盘文件、不订阅剧集、不执行第三/第四阶段。
+ * 补缺下载之外，可手动检查整理阻挡；确认后仅删除指定历史记录并复制整理单集视频。
+ * 不删除视频、下载任务或全局历史；第三脚本负责实际云盘复核。
  * 下载记录保留任务、站点、容量、中文标记、选择依据及时间；不保存登录凭据或种子私密链接。
  */
 (function () {
@@ -775,7 +776,7 @@ return {norm,parent,base,mapKey,showInfo,titleIdentity,candidateMatches,chooseCa
     if(!records.length&&/已提交|已有下载|结果待核实/.test(task.previousState))return outcome(task,records,{state:'待复核',note:'报告记载已提交，但缺少任务记录；请核实，避免重复下载'});
     if(task.needed?.length===0)return outcome(task,records,{state:'无需下载',note:'报告没有已确认的缺失集号；重复版本或播出状态问题交第三脚本复核'});
     const recorded=uniq(records.filter(r=>['accepted','existing'].includes(r.state)).flatMap(r=>r.episodes));
-    if(task.needed?.length&&task.needed.every(n=>recorded.includes(n)))return outcome(task,records,{state:'已提交下载，待复核',color:'yellow',note:'防重复记录已覆盖报告缺集，本次不再搜索或提交'});
+    if(task.needed?.length&&task.needed.every(n=>recorded.includes(n)))return outcome(task,records,{state:'已提交下载，待复核',color:'yellow',note:'防重复记录已覆盖报告缺集，本次不再搜索或提交；若仍缺文件，请点击“检查整理问题”'});
     // 先读下载管理，再搜资源站；任务列表读取失败时不允许提交。
     const coverage=()=>uniq([...(task.versionChoice?.g.episodes||[]),...records.filter(r=>['accepted','existing'].includes(r.state)).flatMap(r=>r.episodes)]);
     async function inspectActive(verified=[]) {
@@ -895,6 +896,187 @@ return {norm,parent,base,mapKey,showInfo,titleIdentity,candidateMatches,chooseCa
   return {Pause,episodes,taskFromRow,sameIdentity,candidate,choose,processTask,readRecords,safeRecord,outcome,createAdapter,activeMatch};
 })
 )(Titles,Versions,Broadcast);
+  const RepairState=(/* 四阶段共用的整理修复状态：报告是证据，不是可直接执行的请求。
+ * 任何删除历史/整理动作都必须由第二脚本重新查询并构建清单。
+ */
+(function createRepairState() {
+  'use strict';
+  const states=['ready','blocked','checked','history-delete-pending','history-deleted','transfer-pending','submitted','uncertain','files-verified'];
+  function read(data) {
+    const text=String(data?.['整理修复记录']||'')+Object.keys(data||{}).filter(h=>/^整理修复记录续\d+$/.test(h)).sort((a,b)=>Number(a.match(/\d+$/)[0])-Number(b.match(/\d+$/)[0])).map(h=>String(data[h]||'')).join('');
+    if(!text)return null;
+    if(text.length>2000000)throw Error('整理修复记录过大');
+    const r=JSON.parse(text);
+    if(r?.schema!==1||!states.includes(r.state)||!Array.isArray(r.items)||!Array.isArray(r.episodes)||r.episodes.some(n=>!Number.isInteger(n)||n<1||n>10000)||!Number.isFinite(Date.parse(r.at)))throw Error('整理修复记录格式无效');
+    return r;
+  }
+  function pending(r){return !!r&&r.state!=='files-verified';}
+  function uncertain(r){return !!r&&(['history-delete-pending','history-deleted','transfer-pending','uncertain'].includes(r.state)||r.items?.some(i=>['history-delete-pending','history-deleted','transfer-pending','uncertain'].includes(i.state)));}
+  function label(r){return ({ready:'待确认修复',blocked:'整理修复待人工核实',checked:'整理问题已检查',submitted:'已提交整理，待云盘复核',uncertain:'整理修复结果待核实','history-delete-pending':'删除历史结果待核实','history-deleted':'历史已解除，整理待完成','transfer-pending':'整理请求结果待核实','files-verified':'云盘文件已复核'})[r?.state]||'未检查';}
+  function verify(r,episodes,at) {
+    if(!r||uncertain(r)||!r.episodes.length||!r.episodes.every(n=>episodes.includes(n)))return r;
+    return {...r,state:'files-verified',at,verifiedAt:at,note:'第三脚本确认本轮修复集号已实际出现；整季完整性和版本清理由复核结果单独判定'};
+  }
+  return {read,pending,uncertain,label,verify};
+})
+)();
+  const Repair=(/* MoviePilot v2.15.6 的定向整理修复。
+ * 检查只调用查询/预览。执行前重新查询并逐项比对，不使用 Excel 内的请求参数。
+ * 只删除精确历史 ID，deletesrc/deletedest 固定 false；禁止 logid、reorganize、覆盖整理。
+ * 当前实现仅支持配置范围内的 local 普通视频；不读取认证秘密，不处理上传链路。
+ */
+(function createTransferRepair(Core,Cloud,State,Versions) {
+  'use strict';
+  const media=/\.(mkv|mp4|avi|mov|m4v|ts|m2ts|wmv)$/i;
+  const parent=p=>p.slice(0,p.lastIndexOf('/'))||'/';
+  const valid=p=>typeof p==='string'&&p.startsWith('/')&&!/[\\\x00-\x1f]/.test(p)&&!p.includes('//')&&!p.split('/').some(s=>s==='.'||s==='..');
+  const within=(p,root)=>valid(p)&&valid(root)&&p.startsWith(root.replace(/\/$/,'')+'/');
+  const fileKey=f=>JSON.stringify([f.storage||'local',f.path,f.type,f.size,f.modify_time]);
+  const local=f=>f&&(!f.storage||f.storage==='local')&&valid(f.path);
+  const file=f=>({storage:f.storage||'local',path:f.path,type:f.type,name:f.name||f.path.split('/').pop(),size:f.size,modify_time:f.modify_time});
+  const history=h=>Object.fromEntries(['id','src','dest','src_storage','dest_storage','mode','type','title','year','tmdbid','seasons','episodes','download_hash','downloader','status','date','episode_group','errmsg'].map(k=>[k,h[k]??null]).concat([['src_fileitem',h.src_fileitem?file(h.src_fileitem):null],['dest_fileitem',h.dest_fileitem?file(h.dest_fileitem):null]]));
+  const sameHistory=(a,b)=>JSON.stringify(history(a))===JSON.stringify(history(b));
+  function fresh(task,now=Date.now()) {
+    const d=task.data,time=d['文件核查时间']||(d['复核视频文件数']!==''&&d['复核视频文件数']!=null?d['复核时间']:null)||d['扫描时间'],at=Date.parse(time);
+    if(!Number.isFinite(at)||now-at>24*3600000||at-now>300000)throw Error('文件核查结果超过24小时或时间未知，请先用第一/第三脚本刷新缺集报告');
+    if(!task.tmdb||!task.needed?.length)throw Error('需要准确的TMDB ID和明确缺失集号，才能检查整理阻挡');
+  }
+  function identity(task,h){return String(h.tmdbid)===task.tmdb&&h.type==='电视剧'&&/^S\d+$/i.test(h.seasons||'')&&Number(h.seasons.slice(1))===task.season&&/^E\d+$/i.test(h.episodes||'')&&task.needed.includes(Number(h.episodes.slice(1)));}
+  function queueContains(jobs,task,path){
+    if(!Array.isArray(jobs))throw Error('无法完整查询整理队列');
+    return jobs.some(j=>{
+      if(!Array.isArray(j.tasks))throw Error('整理队列格式不支持');
+      return j.tasks.some(t=>{const p=t.fileitem?.path;if(!p)throw Error('整理队列缺少文件路径');return p===path||path.startsWith(p.replace(/\/$/,'')+'/');})||String(j.media?.tmdb_id||j.media?.tmdbid||'')===task.tmdb&&Number(j.season)===task.season;
+    });
+  }
+  function activeContains(items,task,h){
+    if(!Array.isArray(items))throw Error('下载任务查询不完整');
+    return items.some(t=>t.hash===h.download_hash||t.content_path&&within(h.src,t.content_path)||t.content_path===h.src||Core.activeMatch(task,t));
+  }
+  // 逐层确认目录存在，空返回值不能作为“路径不存在”的证据。
+  async function inspectPath(api,path,root) {
+    if(!within(path,root))throw Error('文件路径超出配置范围');
+    let dir=root;
+    const rootRows=await api.list(parent(root));
+    if(!rootRows.some(f=>local(f)&&f.path===root&&f.type==='dir'))throw Error('配置根目录不存在或无法读取');
+    const parts=path.slice(root.length+1).split('/');
+    for(let n=0;n<parts.length;n++) {
+      const rows=await api.list(dir),expected=dir+'/'+parts[n];
+      const found=rows.find(f=>f.path===expected);
+      if(!found)return {exists:false,rows,parent:dir};
+      if(!local(found))throw Error('仅支持本地存储路径');
+      if(n===parts.length-1)return {exists:true,item:file(found),rows,parent:dir};
+      if(found.type!=='dir')throw Error('路径中间存在同名文件');dir=expected;
+    }
+  }
+  function request(task,h,source,targetRoot){
+    return {fileitems:[source],target_storage:'local',target_path:targetRoot+'/'+task.category,tmdbid:Number(task.tmdb),type_name:'电视剧',season:task.season,
+      transfer_type:'copy',scrape:false,library_type_folder:false,library_category_folder:false,from_history:false,reorganize:false,preview:true};
+  }
+  async function candidate(task,h,api,config) {
+    const ep=Number(h.episodes.slice(1));
+    if(!Number.isSafeInteger(h.id)||h.id<1||!local(h.src_fileitem)||h.src!==h.src_fileitem.path||!within(h.src,config.source)||!media.test(h.src))throw Error('历史源路径或文件类型不支持');
+    if(h.episode_group)throw Error('自定义剧集组需人工确认，不自动修复');
+    if(/E\d+[-~]E?\d+/i.test(h.src)||Cloud.episodeFromName(h.src.split('/').pop(),task.season)!==ep)throw Error('历史集号与当前文件名不一致');
+    const src=await inspectPath(api,h.src,config.source);
+    if(!src.exists||src.item.type!=='file'||!Number.isSafeInteger(src.item.size)||src.item.size<1||!Number.isFinite(src.item.modify_time))throw Error('下载源文件不存在、大小或修改时间未确认');
+    if(activeContains(await api.active(),task,h))throw Error('本季或对应资源仍在下载，暂缓整理修复');
+    if(queueContains(await api.queue(),task,h.src))throw Error('本季或对应文件正在整理，不重复提交');
+    const all=await api.histories(h.src);
+    const exact=all.filter(x=>x.src===h.src&&(x.src_storage||x.src_fileitem?.storage||'local')==='local');
+    if(exact.length!==1||!sameHistory(h,exact[0]))throw Error('同源历史重复或已变化，需人工核实');
+    const req=request(task,h,src.item,config.target),preview=await api.preview(req),p=preview.data;
+    if(preview.success!==true||p?.summary?.failed!==0||p.summary.total!==1||p.summary.success!==1||p.items?.length!==1)throw Error('整理预览未确认单个视频成功');
+    const item=p.items[0];
+    const seasonDir=parent(item.target||''),showDir=parent(seasonDir),expectedShow=config.target+'/'+task.category+'/'+task.name;
+    if(item.success!==true||item.source!==h.src||Number(item.season)!==task.season||Number(item.episode)!==ep||Number(item.episode_end||ep)!==ep||item.type!=='电视剧'||showDir!==expectedShow||!/^Season\s+\d+$/i.test(seasonDir.split('/').pop())||Number(seasonDir.split('/').pop().match(/\d+$/)[0])!==task.season||!within(item.target,config.target))throw Error('整理预览的剧集、季集或目标路径不一致');
+    const dest=await inspectPath(api,item.target,config.target);
+    if(dest.exists||dest.rows.some(f=>f.type==='file'&&media.test(f.name||'')&&(!Cloud.episodeFromName(f.name,task.season)||/E\d+[-~]E?\d+/i.test(f.name)||Cloud.episodeFromName(f.name,task.season)===ep)))throw Error('整理目标已有同集或同名文件，先由第三脚本复核');
+    const after=await inspectPath(api,h.src,config.source);
+    if(!after.exists||fileKey(after.item)!==fileKey(src.item))throw Error('预览期间下载源文件发生变化');
+    return {id:h.id,episode:ep,source:h.src,target:item.target,history:history(h),sourceFile:src.item,request:req,state:'ready',steps:[],note:'请确认该资源下载已完成；仅解除一条历史并复制单集视频'};
+  }
+  async function check(task,api,config,checkpoint=()=>{}) {
+    fresh(task);const version=Versions?.inspect(task);if(version?.blocked||version?.groups||version?.complete)throw Error(version.blocked||'报告有混版或已有完整版本，请先由第三脚本明确版本，不自动重整历史文件');
+    await api.version();checkpoint();
+    const records=await api.histories(task.title),matches=records.filter(h=>identity(task,h)),items=[],notes=[];
+    const ids=new Set((task.records||[]).filter(r=>['accepted','existing'].includes(r.state)).map(r=>r.id).filter(Boolean));
+    for(const ep of task.needed){checkpoint();
+      const hs=matches.filter(h=>Number(h.episodes.slice(1))===ep&&(!ids.size||ids.has(h.download_hash)));
+      if(hs.length!==1){notes.push('E'+ep+'：'+(hs.length?'有多条匹配记录，需人工选择':'未找到唯一匹配的整理历史'));continue;}
+      try{items.push(await candidate(task,hs[0],api,config));}catch(e){notes.push('E'+ep+'：'+e.message);}
+    }
+    return {schema:1,taskKey:task.key,state:items.length?'ready':'blocked',at:new Date().toISOString(),episodes:items.length?items.map(i=>i.episode):task.needed,items,note:notes.join('；')||'已列清单，尚未执行；不在下载列表中不代表下载完成',checkedAt:new Date().toISOString()};
+  }
+  const fingerprint=p=>JSON.stringify(p.items.map(i=>[i.id,i.episode,i.source,i.target,i.history,i.sourceFile,i.request]));
+  async function reconcile(task,record,api,config,checkpoint=()=>{}) {
+    if(record?.taskKey!==task.key||!record.items?.length)throw Error('没有可核实的修复记录');
+    await api.version();const r=structuredClone(record);
+    for(const i of r.items){checkpoint();
+      if(queueContains(await api.queue(),task,i.source))throw Error('仍有整理任务，请等待结束');
+      const hs=await api.histories(i.source),dest=await inspectPath(api,i.target,config.target);
+      if(!dest.exists||dest.item.type!=='file'||dest.item.size!==i.sourceFile.size||!hs.some(h=>h.id!==i.id&&h.src===i.source&&h.dest===i.target&&h.status===true&&identity(task,h)))throw Error('尚无新的成功整理记录和匹配目标文件，保留待核实；不会重发请求');
+      i.state='submitted';i.note='只读核实到新的整理成功记录及目标文件，待云盘复核';
+    }
+    r.state='submitted';r.at=new Date().toISOString();r.note='只读核实完成，未重发删除或整理请求；交第三脚本复核';return r;
+  }
+  async function execute(task,plan,api,config,{save,checkpoint=()=>{}}) {
+    if(plan.taskKey!==task.key||plan.state!=='ready'||!plan.items.length||State.uncertain(plan))throw Error('请重新检查整理问题后再执行');
+    const freshPlan=await check(task,api,config,checkpoint);
+    if(fingerprint(freshPlan)!==fingerprint(plan))throw Error('修复清单已变化，请重新检查确认');
+    const record=structuredClone(plan);record.at=new Date().toISOString();
+    const persist=()=>{record.at=new Date().toISOString();save(record);};
+    for(const i of record.items) {
+      try{checkpoint();await candidate(task,i.history,api,config);checkpoint();}
+      catch(e){record.state='checked';record.note='本轮已停止；已提交项保留记录，重新检查只列尚未修复且目标缺失的文件';persist();throw e;}
+      // 删除历史前先落盘完整白名单快照。所有写请求只发送一次，超时保留未知状态。
+      i.state=record.state='history-delete-pending';i.steps.push({action:'仅删除整理历史',state:'pending',at:new Date().toISOString(),historyId:i.id});persist();
+      try {
+        const reply=await api.removeHistory(i.id);
+        if(reply?.success!==true)throw Error('历史删除未确认成功');
+        i.steps.at(-1).state='verified';i.steps.at(-1).finishedAt=new Date().toISOString();i.state=record.state='history-deleted';persist();
+        // 期间自动整理可能抢先运行：再次查历史、在途任务、源文件和目标，不盲目接着提交。
+        const histories=await api.histories(i.source);
+        if(histories.some(h=>h.src===i.source&&(h.src_storage||'local')==='local'))throw Error('删除后出现新的同源整理记录，停止提交并核实');
+        if(activeContains(await api.active(),task,i.history)||queueContains(await api.queue(),task,i.source))throw Error('下载或整理任务状态已变化');
+        const src=await inspectPath(api,i.source,config.source),dst=await inspectPath(api,i.target,config.target);
+        if(!src.exists||fileKey(src.item)!==fileKey(i.sourceFile)||dst.exists||dst.rows.some(f=>f.type==='file'&&media.test(f.name||'')&&Cloud.episodeFromName(f.name,task.season)===i.episode))throw Error('源或目标已变化，停止整理提交');
+        checkpoint();
+        i.state=record.state='transfer-pending';i.steps.push({action:'复制单集整理',state:'pending',at:new Date().toISOString()});persist();
+        const result=await api.submit({...i.request,preview:false});
+        if(result?.success!==true)throw Error('整理请求未确认成功');
+        i.steps.at(-1).state='submitted';i.steps.at(-1).finishedAt=new Date().toISOString();i.state='submitted';persist();
+      }catch(e){i.note=e.message;i.state=record.state='uncertain';i.steps.at(-1).error=e.message;persist();throw e;}
+    }
+    record.state='submitted';record.note='整理请求已返回，需第三脚本检查实际文件；未确认的其他缺集仍保留';persist();return record;
+  }
+  function adapter(api,origin) {
+    if(!api||!['get','post','delete'].every(k=>typeof api[k]==='function'))throw Error('MoviePilot插件接口不支持整理修复');
+    if(new URL(api.defaults?.baseURL||'/api/v1/',origin).origin!==origin)throw Error('拒绝跨域接口');
+    const call=async(method,url,...args)=>{try{return await api[method](url,...args);}catch{throw Error('MoviePilot请求失败或结果不明，请核实；不自动重试');}};
+    const get=(url,params={})=>call('get',url,{params:{...params,_ts:Date.now()},timeout:30000});
+    const post=(url,data)=>call('post',url,data,{timeout:120000});
+    return {
+      version:async()=>{const r=await get('system/global',{token:'moviepilot'});if(r?.success!==true||r.data?.BACKEND_VERSION!=='v2.15.6')throw Error('整理修复仅适配MoviePilot v2.15.6，其他版本先核实');},
+      active:()=>get('download/'),queue:()=>get('transfer/queue'),
+      histories:async title=>{const rows=[],seen=new Set();let total=null;
+        for(let page=1;page<=20;page++){const r=await get('history/transfer',{title,page,count:100});
+          if(r?.success!==true||!Array.isArray(r.data?.list)||!Number.isInteger(r.data.total)||r.data.total<0||r.data.total>2000||total!==null&&total!==r.data.total)throw Error('整理历史分页不完整或查询期间发生变化');total=r.data.total;
+          for(const h of r.data.list){if(seen.has(h.id))throw Error('整理历史分页重复');seen.add(h.id);rows.push(h);}
+          if(rows.length===total)return rows;if(!r.data.list.length||rows.length>total)throw Error('整理历史数量不一致');
+        }throw Error('匹配历史过多，请缩小范围');},
+      list:async path=>{const rows=await post('storage/list',{storage:'local',path,type:'dir'});if(!Array.isArray(rows)||rows.some(f=>!local(f)||parent(f.path)!==path)||new Set(rows.map(f=>f.path)).size!==rows.length)throw Error('文件列表不完整或路径不一致');return rows;},
+      preview:req=>post('transfer/manual',{...req,preview:true}),
+      removeHistory:id=>call('delete','history/transfer',{params:{deletesrc:false,deletedest:false},data:{id},timeout:30000}),
+      submit:req=>post('transfer/manual',req)
+    };
+  }
+  return {check,execute,reconcile,adapter,fingerprint,fresh,inspectPath,history};
+})
+)(Core,VersionCloud,RepairState,Versions);
+  // MoviePilot 本地文件管理的目录范围，不是 CloudDrive2 路径；按自己的部署修改。
+  const REPAIR_CONFIG={source:'/video/downloads/电视剧',target:'/video/link/电视剧'};
+  const repairPlans=new Map();
   let excel,report;
   const excelEngine=()=>excel||=((() => {
 /* xlsx-js-style 1.2.0, https://github.com/gitbrent/xlsx-js-style
@@ -1436,6 +1618,7 @@ return exports;
           for(const [h,col] of Object.entries(headers)) {
             const c=sheet[X.utils.encode_cell({r:row,c:col})];
             if(mode==='archive'&&c?.f&&(ARCHIVE_FIELDS.includes(h)||['处理结果','工作阶段'].includes(h)||/^归档记录续\d+$/.test(h)))throw Error(h+'不能使用公式；请先保留人工公式至其他列');
+            if(c?.f&&(/^整理修复/.test(h)||h==='文件核查时间'))throw Error(h+'不能使用公式');
             if(c?.f&&(['分类','剧集目录','季数','源云存储链接','来源登记集数','缺失集号','TMDB ID','下载记录','待播集号','播期未知集号','豆瓣链接','来源链接'].includes(h)||/^下载记录续\d+$/.test(h)))throw Error(h+'不能使用公式');
             data[h]=c?.v??'';
           }
@@ -1510,17 +1693,26 @@ return exports;
     }
     return [header,...rows];
   }
-  function appendAudit(zip,session,put) {
-    const table=auditRows(session);if(table.length===1)return;
+  function repairAuditRows(session) {
+    const rows=[['报告位置','电视剧','季号','集号','整理历史ID','下载源文件','整理目标文件','操作','执行结果','请求时间','完成时间','说明','旧历史快照']];
+    for(const [task,result] of session.updates)if(result.repair) {
+      const r=result.repair;
+      for(const i of [...r.previousItems||[],...r.items||[]])for(const step of i.steps?.length?i.steps:[{action:'检查/预览',state:i.state,at:r.checkedAt}])rows.push([task.sheetName+'!'+task.ref,task.name,task.season,i.episode,i.id,i.source,i.target,step.action,step.state,step.at||'',step.finishedAt||'',String(step.error||i.note||r.note||'').slice(0,25000),JSON.stringify(i.history||{})]);
+      if(!r.items?.length)rows.push([task.sheetName+'!'+task.ref,task.name,task.season,'','','','','检查',r.state,r.at,'',String(r.note||'').slice(0,25000),'']);
+    }
+    return rows;
+  }
+  function appendAudit(zip,session,put,repair=false) {
+    const table=repair?repairAuditRows(session):auditRows(session);if(table.length===1)return;
     if(table.length>50001)throw Error('操作明细超过 50000 行，请拆分报告');
     const wb=xml(part(zip,'xl/workbook.xml')),rels=xml(part(zip,'xl/_rels/workbook.xml.rels')),types=xml(part(zip,'[Content_Types].xml'));
     const names=new Set(tags(wb,'sheet').map(s=>s.getAttribute('name'))),ids=new Set(tags(rels,'Relationship').map(r=>r.getAttribute('Id')));
-    const prefix={download:'下载明细',review:'清理明细',archive:'归档明细'}[session.mode];let n=1;
-    while(names.has(prefix+'_'+n)||ids.has('rIdTVAudit'+n)||zip.FullPaths.includes(zip.FullPaths[0]+'xl/worksheets/tvAudit'+n+'.xml'))n++;
-    const name=prefix+'_'+n,path='xl/worksheets/tvAudit'+n+'.xml',id='rIdTVAudit'+n;
+    const prefix=repair?'整理修复明细':{download:'下载明细',review:'清理明细',archive:'归档明细'}[session.mode];let n=1;const partName=repair?'tvRepairAudit':'tvAudit',relName=repair?'rIdTVRepairAudit':'rIdTVAudit';
+    while(names.has(prefix+'_'+n)||ids.has(relName+n)||zip.FullPaths.includes(zip.FullPaths[0]+'xl/worksheets/'+partName+n+'.xml'))n++;
+    const name=prefix+'_'+n,path='xl/worksheets/'+partName+n+'.xml',id=relName+n;
     const sheet=wb.createElementNS(NS,'sheet');sheet.setAttribute('name',name);sheet.setAttribute('sheetId',Math.max(0,...tags(wb,'sheet').map(s=>Number(s.getAttribute('sheetId'))))+1);
     sheet.setAttributeNS('http://schemas.openxmlformats.org/officeDocument/2006/relationships','r:id',id);tags(wb,'sheets')[0].appendChild(sheet);
-    const rel=rels.createElementNS(rels.documentElement.namespaceURI,'Relationship');rel.setAttribute('Id',id);rel.setAttribute('Type','http://schemas.openxmlformats.org/officeDocument/2006/relationships/worksheet');rel.setAttribute('Target','worksheets/tvAudit'+n+'.xml');rels.documentElement.appendChild(rel);
+    const rel=rels.createElementNS(rels.documentElement.namespaceURI,'Relationship');rel.setAttribute('Id',id);rel.setAttribute('Type','http://schemas.openxmlformats.org/officeDocument/2006/relationships/worksheet');rel.setAttribute('Target',path.slice(3));rels.documentElement.appendChild(rel);
     const type=types.createElementNS(types.documentElement.namespaceURI,'Override');type.setAttribute('PartName','/'+path);type.setAttribute('ContentType','application/vnd.openxmlformats-officedocument.spreadsheetml.worksheet+xml');types.documentElement.appendChild(type);
     const end=X.utils.encode_cell({r:table.length-1,c:table[0].length-1});
     const headerStyle=session.sheets.values().next().value?.headerStyle||0;
@@ -1587,6 +1779,12 @@ return exports;
         let text=part(zip,task.sheetPath);
         if(/<(?:[\w.-]+):(?:row|c)\b/.test(text))throw Error('不支持带前缀的工作表单元格 XML');
         const newCols=[];
+        // 修复记录独立追加，不改动原下载日志或人工备注；超长快照分片保存。
+        const repairUpdates=[...session.updates.values()].filter(r=>r.repair);
+        const repairChunks=Math.max(1,...repairUpdates.map(r=>Math.ceil(JSON.stringify(r.repair).length/30000)),...Object.keys(headers).filter(h=>/^整理修复记录续\d+$/.test(h)).map(h=>Number(h.match(/\d+$/)[0])+1));
+        const extra=repairUpdates.length?['整理修复状态','整理修复集号','整理修复时间','整理修复说明',...Array.from({length:repairChunks},(_,i)=>i?'整理修复记录续'+i:'整理修复记录')]:[];
+        if([...session.updates.values()].some(r=>r.fileCheckedAt))extra.push('文件核查时间');
+        for(const h of extra)if(headers[h]===undefined){headers[h]=++last;text=putCell(text,X.utils.encode_cell({r:0,c:last}),h,info.headerStyle);newCols.push('<col min="'+(last+1)+'" max="'+(last+1)+'" width="45" customWidth="1"/>');}
         for(const h of fields)if(headers[h]===undefined){headers[h]=++last;text=putCell(text,X.utils.encode_cell({r:0,c:last}),h,info.headerStyle);newCols.push(`<col min="${last+1}" max="${last+1}" width="${/说明|资源|记录/.test(h)?55:24}" customWidth="1"/>`);}
         if(newCols.length) {
           text=text.includes('</cols>')?text.replace('</cols>',()=>newCols.join('')+'</cols>'):text.replace('<sheetData',()=>'<cols>'+newCols.join('')+'</cols><sheetData');
@@ -1597,6 +1795,12 @@ return exports;
         sheets.set(task.sheetPath,{text,headers});
       }
       const item=sheets.get(task.sheetPath);
+      if(result.repair){
+        const r=result.repair,json=JSON.stringify(r),values={'整理修复状态':({ready:'待确认修复',blocked:'待人工核实',checked:'已检查/可重新检查',submitted:'已提交整理，待云盘复核',uncertain:'结果待核实','history-delete-pending':'历史删除结果待核实','history-deleted':'历史已解除，整理待完成','transfer-pending':'整理请求待核实','files-verified':'云盘文件已复核'})[r.state]||r.state,'整理修复集号':r.episodes.join('、'),'整理修复时间':r.at,'整理修复说明':String(r.note||'').slice(0,25000)};
+        for(const h of Object.keys(item.headers))if(h==='整理修复记录'||/^整理修复记录续\d+$/.test(h)){const n=h==='整理修复记录'?0:Number(h.match(/\d+$/)[0]);values[h]=json.slice(n*30000,(n+1)*30000);}
+        for(const [h,v] of Object.entries(values))item.text=putCell(item.text,X.utils.encode_cell({r:task.row,c:item.headers[h]}),v,0);
+      }
+      if(result.fileCheckedAt)item.text=putCell(item.text,X.utils.encode_cell({r:task.row,c:item.headers['文件核查时间']}),result.fileCheckedAt,0);
       if(result.color) {
         if(!COLORS[result.color])throw Error('不支持的结果颜色');
         const st=statusStyle(task.style,result.color);
@@ -1632,13 +1836,13 @@ return exports;
     const put=(p,s)=>X.CFB.utils.cfb_add(zip,zip.FullPaths[0]+p,new TextEncoder().encode(s));
     put('xl/styles.xml',new XMLSerializer().serializeToString(styles));for(const [p,item] of sheets)put(p,item.text);
     for(const [p,doc] of linkParts)put(p,new XMLSerializer().serializeToString(doc));
-    appendAudit(zip,session,put);
+    appendAudit(zip,session,put);appendAudit(zip,session,put,true);
     return new Uint8Array(X.CFB.write(zip,{type:'array',fileType:'zip',compression:true}));
   }
   return {read,write,colorKind,FIELDS,REVIEW_FIELDS,ARCHIVE_FIELDS};
 })
 )(excelEngine());}
-  if(typeof module!=='undefined'&&module.exports){module.exports={...Core,Versions,Broadcast,reportEngine};return;}
+  if(typeof module!=='undefined'&&module.exports){module.exports={...Core,Versions,Broadcast,Repair,RepairState,reportEngine};return;}
   if(location.origin!==ORIGIN)return;
   const NS='tv-download-v1:';
   let session=null,index=0,running=false,importing=false,stopping=false,ui;
@@ -1648,23 +1852,72 @@ return exports;
   const el=(tag,text,props={})=>{const n=document.createElement(tag);if(text!=null)n.textContent=text;Object.assign(n,props);return n;};
   const button=(label,fn)=>{const b=el('button',label);b.addEventListener('click',()=>Promise.resolve().then(fn).catch(e=>message(e.message)));return b;};
   const message=text=>{ui.message.textContent=text;};
+  function repairRecord(row){
+    const imported=RepairState.read(row.data),local=get('repair:'+row.key,null),current=session?.updates.get(row)?.repair;
+    if(RepairState.uncertain(local)&&!current)return local;
+    return [local,current,imported].filter(Boolean).sort((a,b)=>Date.parse(b.at)-Date.parse(a.at))[0]||null;
+  }
+  function setUpdate(row,result){session.updates.set(row,{...result,repair:result.repair||repairRecord(row)||undefined});}
+  function repairUpdate(row,r){
+    put('repair:'+row.key,r);
+    const previous=session.updates.get(row),task=Core.taskFromRow(row),records=Core.readRecords(load(task.key).length?load(task.key):task.records);
+    setUpdate(row,{...previous,state:RepairState.label(r),color:'yellow',records,covered:previous?.covered||[],remaining:task.needed,at:r.at,note:r.note,repair:r});
+  }
+  async function repairWork(action){
+    if(running||importing||!session)return;
+    if(!navigator.locks)throw Error('浏览器不支持互斥锁');
+    await navigator.locks.request('tv-workflow-moviepilot-download',{ifAvailable:true},async lock=>{
+      if(!lock){message('其他补缺或修复任务正在运行');return;}
+      const targets=action==='execute'?[...repairPlans.keys()]:session.tasks;
+      if(action==='execute'&&(!targets.length||!confirm('请确认以下下载文件已经下载完成，并允许只删除列出的旧整理历史，再复制整理单集视频。不会删除源文件、目标文件或下载任务。\n'+targets.map(row=>repairPlans.get(row).items.map(i=>'['+row.name+' S'+row.season+'E'+i.episode+'] 历史ID '+i.id+'\n'+i.source+' → '+i.target).join('\n')).join('\n'))))return;
+      running=true;stopping=false;render();
+      try{
+        const api=Repair.adapter(unsafeWindow.MoviePilotAPI,ORIGIN);
+        for(const row of targets){checkpoint();message(row.name+' / Season '+row.season+'：'+(action==='check'?'检查整理问题':action==='execute'?'执行整理修复':'只读核实修复结果'));
+          let task;
+          try{
+            task=Core.taskFromRow(row);const ledger=load(task.key);if(ledger.length)task.records=Core.readRecords(ledger);
+            const previous=repairRecord(row);
+            if(action==='check'){
+              repairPlans.delete(row);
+              if(RepairState.uncertain(previous)||previous?.state==='submitted'){repairUpdate(row,previous);continue;}
+              const r=await Repair.check(task,api,REPAIR_CONFIG,checkpoint);if(previous)r.previousItems=[...(previous.previousItems||[]),...previous.items.filter(i=>i.steps?.length)];repairUpdate(row,r);if(r.state==='ready')repairPlans.set(row,r);
+            }else if(action==='execute'){
+              const plan=repairPlans.get(row);repairPlans.delete(row);
+              await Repair.execute(task,plan,api,REPAIR_CONFIG,{checkpoint,save:r=>repairUpdate(row,r)});
+            }else if(previous?.items?.length){repairUpdate(row,await Repair.reconcile(task,previous,api,REPAIR_CONFIG,checkpoint));repairPlans.delete(row);}
+          }catch(e){
+            const previous=repairRecord(row);
+            if(previous){setUpdate(row,{...session.updates.get(row),state:RepairState.label(previous),note:e.message,repair:previous});}
+            else setUpdate(row,{state:'整理修复待核实',color:'yellow',records:task?.records||[],note:e.message,at:new Date().toISOString()});
+            if(action!=='check'||e.name==='Pause')throw e;
+          }
+          render();
+        }
+        message(action==='check'?'检查完成。展开逐文件清单，确认下载完成后点击“修复整理”。':action==='execute'?'本轮修复已提交，请导出报告交第三脚本复核。':'只读核实完成，请导出报告。');
+      }catch(e){message(e.message);}finally{running=false;render();}
+    });
+  }
   function render(){
     const busy=running||importing;
     ui.import.disabled=busy;ui.file.disabled=busy;ui.start.disabled=busy||!session||index>=session.tasks.length;
     ui.resume.disabled=busy||!session||index>=session.tasks.length;ui.pause.disabled=!running;ui.export.disabled=busy||!session;
     ui.status.textContent=session?`${running?'执行中':index>=session.tasks.length?'本轮已处理':'待开始 / 可继续'} · ${index}/${session.tasks.length} 项 · 跳过绿色/已归档 ${session.skipped} 项 · 无效 ${session.errors.length} 项`:'尚未导入报告，默认停止';
+    ui.checkRepair.disabled=busy||!session;ui.executeRepair.disabled=busy||!repairPlans.size;ui.reconcileRepair.disabled=busy||!session;
     ui.list.replaceChildren();
     for(const [t,r] of [...session?.updates||[]].slice(-60)) {
       const line=el('p',`${t.name} / Season ${t.season}：${r.state}。${r.note||''}`);
+      if(r.repair){const details=el('details');details.append(el('summary','整理修复清单与记录'));for(const i of r.repair.items)details.append(el('p',`第 ${i.episode} 集 · 历史ID ${i.id} · ${i.state}\n源：${i.source}\n目标：${i.target}\n${i.note||''}`));line.append(details);}
       if(r.resourceAudit)line.append(el('small',`播出复核：${r.resourceAudit.status}；资源站最高集号：${r.resourceAudit.maximum??'未确认'}。${r.resourceAudit.basis}`));
       if(r.records?.length) {
         const reset=button('核实任务已取消，解除本季防重复',()=>{
           if(running)return;
+          if(RepairState.pending(repairRecord(t)))throw Error('整理修复尚未闭环，不能通过取消下载记录解除');
           if(!confirm(`仅在 MoviePilot 中确认“${t.name} / Season ${t.season}”相关任务均已取消或失败后使用。解除后再次开始可能重新下载，是否确认？`))return;
           // 用户核实后只清除本季本地防重复记录，不取消或删除任何真实下载。
           save(t.key,[]);t.data['下载记录']='';t.data['下载处理']='';
           for(const h of Object.keys(t.data))if(/^下载记录续\d+$/.test(h))t.data[h]='';
-          session.updates.set(t,{state:'人工确认原任务已取消',color:null,records:[],covered:[],remaining:null,at:new Date().toISOString(),note:'仅解除本地防重复记录；再次点击开始/继续才会处理'});
+          setUpdate(t,{state:'人工确认原任务已取消',color:null,records:[],covered:[],remaining:null,at:new Date().toISOString(),note:'仅解除本地防重复记录；再次点击开始/继续才会处理'});
           index=Math.min(index,session.tasks.indexOf(t));render();message('已解除这一季的本地记录，尚未重新下载。请继续本轮或导出记录。');
         });
         reset.disabled=running;line.append(reset);
@@ -1687,17 +1940,18 @@ return exports;
           checkpoint();const row=session.tasks[index];let task;
           try {
             task=Core.taskFromRow(row);
+            const repair=repairRecord(row);if(RepairState.pending(repair)&&repair.items.length){setUpdate(row,{state:RepairState.label(repair),color:'yellow',records:Core.readRecords(load(task.key).length?load(task.key):task.records),note:'已有整理修复记录，请使用检查/核实整理功能，避免重复下载',repair});index++;render();continue;}
             const result=await Core.processTask(task,{...api,load,save,checkpoint,progress:text=>message(`${row.name} / Season ${row.season}：${text}`)});
-            session.updates.set(row,result);index++;render();
+            setUpdate(row,result);index++;render();
           } catch(e) {
             if(e.name==='Pause') {
               // 暂停可能发生在一部分零散集已提交后；原表导出也应保留这些成功记录。
-              if(task){const records=Core.readRecords(load(task.key));session.updates.set(row,Core.outcome(task,records,{state:'已暂停，待继续',color:records.some(r=>['accepted','existing'].includes(r.state))?'yellow':null,note:'已保存本季提交记录；继续时不会重下已覆盖集号'}));}
+              if(task){const records=Core.readRecords(load(task.key));setUpdate(row,Core.outcome(task,records,{state:'已暂停，待继续',color:records.some(r=>['accepted','existing'].includes(r.state))?'yellow':null,note:'已保存本季提交记录；继续时不会重下已覆盖集号'}));}
               throw e;
             }
             const note=e.message||'处理失败';
             const records=task?Core.readRecords(load(task.key)):[];
-            session.updates.set(row,{state:'待核实',color:records.some(r=>['accepted','existing'].includes(r.state))?'yellow':null,note,records,covered:[],remaining:task?.needed??null,at:new Date().toISOString()});
+            setUpdate(row,{state:'待核实',color:records.some(r=>['accepted','existing'].includes(r.state))?'yellow':null,note,records,covered:[],remaining:task?.needed??null,at:new Date().toISOString()});
             // 来源格式/数据错误只影响本行；网络/权限错误暂停队列，不把整表标红。
             if(task)throw Error(note);
             index++;
@@ -1777,6 +2031,7 @@ return exports;
     ui={status:el('p'),message:el('p','导入后点击开始才会下载。沿用 MoviePilot 默认下载器与自动保存目录。',{className:'message'}),list:el('div',null,{className:'list'})};
     ui.file=el('input',null,{type:'file',accept:'.xlsx'});ui.file.style.display='none';
     ui.import=button('导入 Excel',()=>ui.file.click());ui.start=button('开始补缺下载',run);ui.resume=button('继续本轮',run);
+    ui.checkRepair=button('检查整理问题',()=>repairWork('check'));ui.executeRepair=button('修复整理',()=>repairWork('execute'));ui.reconcileRepair=button('核实修复结果',()=>repairWork('reconcile'));
     ui.pause=button('暂停',()=>{stopping=true;message('正在暂停。已发出的下载请求会先记录结果，避免重复提交。');});ui.export=button('导出更新报告',exportReport);
     ui.file.addEventListener('change',async()=>{
       const file=ui.file.files?.[0];ui.file.value='';if(!file||running||importing)return;
@@ -1785,11 +2040,11 @@ return exports;
         if(!/\.xlsx$/i.test(file.name)||file.size>30*1024*1024)throw Error('请选择不超过 30 MB 的 .xlsx 报告');
         if(session?.updates.size&&!confirm('替换当前报告前请先导出结果。是否继续导入？'))return;
         const imported=reportEngine().read(await file.arrayBuffer(),{origin:CLOUD,source:SOURCE});
-        session={...imported,fileName:file.name};index=0;
+        session={...imported,fileName:file.name};index=0;repairPlans.clear();
         message(`已导入 ${session.tasks.length} 个非绿色项，尚未执行。`+(session.errors.length?' 无法处理：'+session.errors.map(e=>`${e.sheetName}!${e.ref} ${e.error}`).join('；'):''));render();
       }catch(e){message(e.message);}finally{importing=false;render();}
     });
-    body.append(ui.status,ui.import,ui.file,ui.start,ui.pause,ui.resume,ui.export,
+    body.append(ui.status,ui.import,ui.file,ui.start,ui.pause,ui.resume,ui.checkRepair,ui.executeRepair,ui.reconcileRepair,ui.export,
       el('small','规则：整季包优先，无合格包补零散集；同类优先中文标记，做种≥5且容量已知时优先小容量，否则优先做种数；最低2个做种。零散多集按每个待补集估算容量。绿/紫跳过；黄＝已提交待复核，红＝无合格资源。'),
       el('small','结果不明的任务不自动重试。刷新前先导出；重新导入旧报告也会读取本地防重复记录。'),ui.message,ui.list);
     render();

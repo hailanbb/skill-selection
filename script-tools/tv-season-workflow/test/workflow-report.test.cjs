@@ -7,6 +7,15 @@ const C=require('../season-download.user.js'),I=require('../season-inspect.user.
 const bundle=fs.readFileSync(path.join(__dirname,'../vendor/xlsx-js-style/package/dist/xlsx.bundle.js'),'utf8');
 const X=new Function('const exports={};const module=undefined,require=undefined,window=undefined,define=undefined;'+bundle+';return exports;')();
 const options={origin:'https://clouddrive.example',source:I.SOURCE};
+test('整理修复记录跨阶段分片往返，原下载日志和人工备注保留，独立输出历史删除明细',()=>{
+  const s=R.read(fixture(),options),t=s.tasks[1],repair={schema:1,taskKey:t.key,state:'submitted',at:new Date().toISOString(),episodes:[2],note:'等待云盘复核',items:[{id:9,episode:2,source:'/downloads/剧.S01E02.mkv',target:'/media/剧/Season 1/剧.S01E02.mkv',history:{id:9,title:'测试剧'},steps:[{action:'仅删除整理历史',state:'verified',at:'start',finishedAt:'end'}]}],previousItems:[]};
+  repair.note+='长记录'.repeat(12000);s.updates.set(t,{...result(),repair});
+  const bytes=R.write(s),round=R.read(bytes,{...options,mode:'review'}),row=round.tasks.find(r=>r.ref===t.ref),parsed=C.RepairState.read(row.data);
+  assert.equal(parsed.note,repair.note);assert.equal(row.data['下载任务ID'],'abc');assert.equal(row.data['核对说明'],'手工备注 3');
+  const book=X.read(bytes);assert.ok(book.Sheets['整理修复明细_1']);assert.equal(X.utils.sheet_to_json(book.Sheets['整理修复明细_1'])[0]['操作'],'仅删除整理历史',JSON.stringify(X.utils.sheet_to_json(book.Sheets['整理修复明细_1'])[0]));
+  round.updates.set(row,{state:'齐全',color:'green',repair:{...repair,note:'完成',state:'files-verified'},fileCheckedAt:'2026-10-22T10:00:00Z'});
+  const next=R.read(R.write(round),{...options,mode:'archive'}),green=next.tasks.find(r=>r.ref===t.ref);assert.equal(C.RepairState.read(green.data).note,'完成');assert.equal(green.data['文件核查时间'],'2026-10-22T10:00:00Z');assert.equal(green.color,'green');
+});
 test('归档报告独立记录源空目录删除的计划、结果及时间',()=>{
   const s=R.read(fixture(),{...options,mode:'archive'}),t=s.tasks[0];
   s.updates.set(t,{state:'归档待核实',record:{operations:[],cleanup:{kind:'empty-directory',source:t.showPath,target:'',planId:'p',state:'pending',at:'start',finishedAt:'end',error:'响应丢失',manifest:[{path:t.showPath,directory:true}],reason:'全部内容迁移后清理'}}});

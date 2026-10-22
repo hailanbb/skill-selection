@@ -7,6 +7,7 @@
   'use strict';
   settings=settings||{};
   const SOURCE=settings.source||'/115/Library_incs/nas/电视剧',DEST=settings.destination||'/115/Library_incs/nas.finish/电视剧';
+  const RepairState=(/* build:repair-state */ null)();
   const MEDIA=/\.(?:mp4|mkv|avi|mov|m4v|ts|m2ts|wmv|flv|webm|mpg|mpeg|strm)$/i;
   const pathOK=p=>typeof p==='string'&&!p.includes('//')&&!p.split('/').some(s=>s==='.'||s==='..')&&!/[\\\x00-\x1f]/.test(p);
   // 配置错误时先停止，避免把源目录移入自己或扩大到云盘根目录。
@@ -20,6 +21,7 @@
   }
   function identity(rows) {
     if(rows.some(r=>r.directoryOnly))throw Error('本剧含季号未确认的目录级记录，暂缓归档；请先重新初检或人工核实');
+    if(rows.some(r=>RepairState.pending(RepairState.read(r.data))))throw Error('本剧有未完成的整理修复记录，请先复核文件');
     const first=rows[0];if(!first)throw Error('没有可归档的报告行');
     const source=SOURCE+'/'+first.category+'/'+first.name,target=DEST+'/'+first.category+'/'+first.name;
     if(!pathOK(source)||!pathOK(target)||/[\\/]/.test(first.category+first.name)||rows.some(r=>r.showPath!==source||r.category!==first.category||r.name!==first.name||C.parent(r.path)!==source||Number(/^Season\s+(\d+)$/i.exec(C.base(r.path))?.[1])!==r.season))throw Error('报告整剧路径或季目录不一致');

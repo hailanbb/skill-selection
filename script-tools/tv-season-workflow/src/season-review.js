@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         剧集工作流 ③ · 豆瓣复核与版本清理
 // @namespace    local.tv-season-review
-// @version      1.3.1
+// @version      1.4.0
 // @description  导入黄色项，手动开始豆瓣分季复核；列出保留/删除清单，经确认后普通删除多余版本及专属刮削文件。
 // @match        https://clouddrive.example/*
 // @match        https://movie.douban.com/*
@@ -28,6 +28,7 @@
   const simplify=/* build:opencc */ null;
   const C=(/* build:cloud-core */ null)(simplify);
   const K=(/* build:cleanup-core */ null)(C);
+  const RepairState=(/* build:repair-state */ null)();
   const createClient=/* build:cloud-client */ null;
   let excel,report,reviewStage=null;
   const createStageReport=/* build:review-stage-report */ null;
@@ -53,11 +54,12 @@
   const button=(label,action)=>{const b=el('button',label);b.addEventListener('click',()=>Promise.resolve().then(action).catch(e=>message(e.message)));return b;};
   function sourceLink(row){return bindings.get(row.key)||row.data['豆瓣链接']||(row.data['数据来源']==='douban'?row.data['来源链接']:'')||'';}
   function describe(row,p,{state,deleted=[],journal=null,note=''}={}) {
-    const clean=p.complete&&!p.remove.length&&!journal?.pending;
+    const repair=RepairState.verify(RepairState.read(row.data),p.episodes,new Date().toISOString());
+    const clean=p.complete&&!p.remove.length&&!journal?.pending&&!RepairState.pending(repair);
     const finalState=state||p.state,green=clean&&p.confirmedEnded;
     const source={url:p.source.url,title:p.source.title,total:p.total,checkedAt:p.source.checkedAt||new Date().toISOString()};
     const comments=[...p.issues,note,!p.confirmedEnded&&p.complete?'本地集号齐全不等于已播完，缺少播完依据时保留黄色':'',p.preserved.some(f=>/未明确|多个/.test(f.reason))?'归属不明的刮削文件已保留':''].filter(Boolean).join('；');
-    return {state:finalState,color:green?'green':null,total:p.total,sourceUrl:source.url,at:new Date().toISOString(),videoCount:p.videoCount,current:p.current,missing:p.missing,
+    return {repair:repair||undefined,fileCheckedAt:new Date().toISOString(),state:finalState,color:green?'green':null,total:p.total,sourceUrl:source.url,at:new Date().toISOString(),videoCount:p.videoCount,current:p.current,missing:p.missing,
       version:p.groups.filter(g=>g.complete).map(g=>g.label).join('；'),keep:p.keep.map(f=>f.path),remove:p.remove.map(f=>f.path),deleted,preserved:p.preserved.map(f=>f.path),note:comments,
       record:{planId:p.id,source,groups:p.groups,keep:p.keep,remove:p.remove,preserved:p.preserved,issues:p.issues,journal},
       cells:{'视频文件数':p.videoCount,'已识别集数':p.current,'来源登记集数':p.total,'缺失集号':p.missing===null?'未确认':p.missing.length?p.missing.join('、'):'无',
@@ -102,6 +104,8 @@
           if(!K.equal(rows,refreshed))throw Error('复核期间文件列表发生变化，请等待下载/整理结束后重查');
           attempt.phase='分析版本与清理计划';
           const p=K.plan(row,rows,source,crypto.randomUUID()),journal=load(row.key);
+          const repair=RepairState.verify(RepairState.read(row.data),p.episodes,new Date().toISOString());
+          if(RepairState.pending(repair)){p.eligible=false;p.state='整理修复尚未闭环，暂缓清理';p.issues.push('修复集号仍缺失或操作结果不明，请交第二脚本核实');}
           plans.set(row,p);
           if(journal?.pending)session.updates.set(row,describe(row,p,{state:'上次删除结果未确认',journal,note:'先核实上次操作，不再发起删除'}));
           else session.updates.set(row,describe(row,p,{journal}));

@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         剧集工作流 ④ · 绿色剧集归档
 // @namespace    local.tv-season-archive
-// @version      1.2.0
+// @version      1.3.0
 // @description  确认清单后归档绿色季；支持整剧无冲突合入并清理源空目录，逐文件输出操作明细，验证成功标紫色。
 // @match        https://clouddrive.example/*
 // @grant        GM_getValue

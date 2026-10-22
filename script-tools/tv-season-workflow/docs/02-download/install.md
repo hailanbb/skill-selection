@@ -24,3 +24,6 @@ const SOURCE = '/115/Library_incs/nas/电视剧';
 6. 按 **Ctrl+S** 保存，刷新 MoviePilot。出现“② 补缺下载”对应面板后，按[使用说明](usage.md)操作；安装成功不会自动执行。
 
 先在 MoviePilot 中配置站点、下载器和整理规则，确保手动搜索与下载可用。脚本使用当前登录页面，不会替你配置站点。
+
+
+使用“整理修复”前，还需检查第二脚本顶部 `REPAIR_CONFIG.source` 和 `REPAIR_CONFIG.target`。这是 MoviePilot 文件管理中的 local 路径，详见[使用说明](usage.md#下载好了但网盘仍缺集整理修复)。其他版本暂不执行整理修复。

@@ -33,7 +33,9 @@ async function launch(initial={},responses=[],adapters={}) {
   context.testReview=adapters.review;context.testScan=adapters.scan;
   context.testWorkflowReport=adapters.workflow;context.testStageReport=adapters.stageReport;
   context.testCloudClient=adapters.cloudClient;
+  context.testRepair=adapters.repair;context.unsafeWindow={MoviePilotAPI:{}};
   const testSource=(adapters.source||source).replace('function excelReviewEngine() {','function excelReviewEngine() { if(testReview)return testReview;')
+    .replace('const Repair=','const Repair=testRepair||')
     .replace('function stageReportEngine(){','function stageReportEngine(){ if(testStageReport)return testStageReport;')
     .replace('function reportEngine(){', 'function reportEngine(){ if(testWorkflowReport)return testWorkflowReport;')
     .replace('const client=createClient(C,', 'const client=testCloudClient||createClient(C,')
@@ -125,6 +127,26 @@ test('下载面板默认停止；导入 Excel 不查询接口、不提交下载�
   const file=page.elements.find(e=>e.type==='file');file.files=[{name:'检查.xlsx',size:10,arrayBuffer:async()=>new ArrayBuffer(10)}];await file.fire('change');
   assert.equal(page.button('开始补缺下载').disabled,false);assert.equal(page.button('继续本轮').disabled,false);
   assert.equal(page.requests.length,0);assert.equal(page.opened.length,0);assert.ok(page.elements.some(e=>e.textContent.includes('尚未执行')));
+});
+
+test('整理修复面板导入不执行，检查不删除，取消确认不提交；确认后保存结果并禁用重复执行',async()=>{
+  const row={key:'repair-ui',name:'测试剧 (2025) [tmdbid=123]',season:1,category:'韩国剧集',data:{来源登记集数:2,缺失集号:'2'}},session={tasks:[row],errors:[],skipped:0,updates:new Map()};let checks=0,writes=0,confirm=false;
+  const repair={adapter:()=>({}),check:async()=>{checks++;return {schema:1,taskKey:row.key,state:'ready',at:new Date().toISOString(),episodes:[2],items:[{id:9,episode:2,source:'/download/剧.mkv',target:'/media/剧.mkv',state:'ready',steps:[]}]};},execute:async(_t,p,_a,_c,{save})=>{writes++;save({...p,state:'submitted'});}};
+  const page=await launch({},[],{source:fs.readFileSync(require('node:path').join(__dirname,'../season-download.user.js'),'utf8'),location:{hostname:'moviepilot.example',origin:'https://moviepilot.example'},workflow:{read:()=>session},repair,confirm:()=>confirm});
+  const input=page.elements.find(e=>e.type==='file');input.files=[{name:'检查.xlsx',size:10,arrayBuffer:async()=>new ArrayBuffer(10)}];await input.fire('change');assert.equal(checks,0);assert.equal(writes,0);assert.equal(page.button('修复整理').disabled,true);
+  await page.button('检查整理问题').click();assert.equal(checks,1);assert.equal(writes,0);assert.equal(page.button('修复整理').disabled,false);
+  await page.button('修复整理').click();assert.equal(writes,0);confirm=true;await page.button('修复整理').click();assert.equal(writes,1);assert.equal(session.updates.get(row).repair.state,'submitted');assert.equal(page.button('修复整理').disabled,true);
+});
+
+test('第三脚本实际见到修复集号后解除阻挡；结果不明即使齐全仍不标绿或清理',async()=>{
+  for(const uncertain of [false,true]){
+    const name='测试剧 (2025)',path='/115/Library_incs/nas/电视剧/韩国剧集/'+name+'/Season 1',repair={schema:1,state:uncertain?'uncertain':'submitted',at:new Date().toISOString(),episodes:[1],items:[]};
+    const task={name,season:1,path,key:'repair',data:{整理修复记录:JSON.stringify(repair)}},session={tasks:[task],errors:[],updates:new Map()};
+    const files=[{name:'测试剧.S01E01.1080p.WEB-DL-Group.mkv',path:path+'/测试剧.S01E01.1080p.WEB-DL-Group.mkv',directory:false,size:'1 GB',modified:'2026-10-22 08:00'}];
+    const page=await launch({},[],{source:fs.readFileSync(require('node:path').join(__dirname,'../season-review.user.js'),'utf8'),workflow:{read:()=>session},cloudClient:{worker(){},listing:async()=>structuredClone(files),queryDouban:async()=>({title:name,total:1,releaseYears:['2025'],url:'https://movie.douban.com/subject/1/',broadcast:'已播完'}),deleteFiles(){assert.fail('不应删除');}}});
+    const input=page.elements.find(e=>e.type==='file');input.files=[{name:'复核.xlsx',size:10,arrayBuffer:async()=>new ArrayBuffer(10)}];await input.fire('change');await page.button('开始复核').click();
+    assert.equal(session.updates.get(task).repair.state,uncertain?'uncertain':'files-verified');assert.equal(session.updates.get(task).color,uncertain?null:'green');
+  }
 });
 
 test('清理面板默认停止；导入只生成黄色队列，不查询豆瓣或删除；无清单不能执行清理',async()=>{

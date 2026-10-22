@@ -47,12 +47,13 @@ for(const name of ['season-inspect','season-download','season-review','season-ar
   let output=src.replace(marker,()=>embedded).replace(excelMarker,()=>excelEmbedded);
   // 可选模块只进入需要它的脚本，初检版不会因此带入下载或报告修改功能。
   for(const [marker,file] of [['/* build:panel-layout */ null','src/panel-layout.js'],['/* build:douban-policy */ null','src/douban-policy.js'],['/* build:douban-query */ null','src/douban-query.js']])if(output.includes(marker))output=output.replace(marker,()=>read(file));
-  for(const [marker,file] of [['/* build:broadcast-audit */ null','src/broadcast-audit.js'],['/* build:download-core */ null','src/download-core.js'],['/* build:workflow-report */ null','src/workflow-report.js'],['/* build:review-stage-report */ null','src/review-stage-report.js'],['/* build:cleanup-core */ null','src/cleanup-core.js'],['/* build:cloud-client */ null','src/cloud-review-client.js'],['/* build:archive-core */ null','src/archive-core.js'],['/* build:archive-client */ null','src/cloud-archive-client.js']]) {
+  for(const [marker,file] of [['/* build:repair-state */ null','src/repair-state.js'],['/* build:transfer-repair */ null','src/transfer-repair.js'],['/* build:broadcast-audit */ null','src/broadcast-audit.js'],['/* build:download-core */ null','src/download-core.js'],['/* build:workflow-report */ null','src/workflow-report.js'],['/* build:review-stage-report */ null','src/review-stage-report.js'],['/* build:cleanup-core */ null','src/cleanup-core.js'],['/* build:cloud-client */ null','src/cloud-review-client.js'],['/* build:archive-core */ null','src/archive-core.js'],['/* build:archive-client */ null','src/cloud-archive-client.js']]) {
     if(output.includes(marker)) {
       if(output.split(marker).length!==2)throw Error(`Expected one ${marker}`);
       output=output.replace(marker,()=>read(file));
     }
   }
+  output=output.replaceAll('/* build:repair-state */ null',()=>read('src/repair-state.js'));
   output=output.replace('/* build:version-helpers */ null',()=>versionHelpers).replace('/* build:version-download */ null',()=>read('src/version-download.js'));
   output=output.replace('/* build:cloud-core */ null',()=>cloudCore).replace('/* build:douban-worker */',()=>doubanWorker).replace('/* build:cloud-listing */',()=>cloudListing).replace('/* build:title-text */ null',()=>titleTextCore);
   fs.writeFileSync(path.join(root,`${name}.user.js`),output,'utf8');
