@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         剧集工作流 ③ · 豆瓣复核与版本清理
 // @namespace    local.tv-season-review
-// @version      1.1.3
+// @version      1.1.4
 // @description  导入黄色项，手动开始豆瓣分季复核；列出保留/删除清单，经确认后普通删除多余版本及专属刮削文件。
 // @match        https://clouddrive.example/*
 // @match        https://movie.douban.com/*
@@ -63,7 +63,7 @@
   }
   function issue(row,error,rows=null) {
     const journal=load(row.key);
-    return {state:error.name==='Pause'?'已暂停':'复核/清理待核实',color:null,at:new Date().toISOString(),note:error.message,
+    return {state:error.name==='DirectoryMissing'?'目录不存在，已跳过':error.name==='Pause'?'已暂停':'复核/清理待核实',color:null,at:new Date().toISOString(),note:error.message,
       videoCount:rows?rows.filter(r=>!r.directory&&K.MEDIA.test(r.name)).length:null,record:{journal},deleted:(journal?.records||[]).filter(r=>r.state==='verified'||r.state==='manual-verified').map(r=>r.path)};
   }
   async function exclusive(work) {
@@ -82,9 +82,9 @@
         checkpoint();const row=session.tasks[index];let rows=null;
         try {
           message(`豆瓣复核 ${index+1}/${session.tasks.length}：${row.name} / Season ${row.season}`);
-          rows=await client.listing(row.path);checkpoint();
+          rows=await client.listing(row.path,{skipMissing:true});checkpoint();
           const source=await client.queryDouban(row,sourceLink(row));checkpoint();
-          const refreshed=await client.listing(row.path);checkpoint();
+          const refreshed=await client.listing(row.path,{skipMissing:true});checkpoint();
           if(!K.equal(rows,refreshed))throw Error('复核期间文件列表发生变化，请等待下载/整理结束后重查');
           const p=K.plan(row,rows,source,crypto.randomUUID()),journal=load(row.key);
           plans.set(row,p);

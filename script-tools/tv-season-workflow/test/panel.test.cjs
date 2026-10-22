@@ -153,3 +153,12 @@ test('真实清理面板流程：开始只生成清单；拒绝确认不删；�
   permit=true;await page.button('执行已列清理清单').click();assert.equal(removed.length,1);assert.equal(files.length,2);
   assert.equal(updates.get(task).color,'green');assert.equal(updates.get(task).videoCount,2);assert.equal(updates.get(task).deleted.length,1);assert.equal(page.button('执行已列清理清单').disabled,true);
 });
+
+test('目录不存在跳过本季并继续下一剧，保持黄色且不查询缺失目录的豆瓣或执行删除',async()=>{
+ const source=fs.readFileSync(require('node:path').join(__dirname,'../season-review.user.js'),'utf8');
+ const tasks=['甲','乙'].map(n=>({name:'测试剧'+n+' (2025)',season:1,path:'/115/Library_incs/nas/电视剧/日本剧集/测试剧'+n+' (2025)/Season 1',key:n,data:{}}));
+ const updates=new Map(),queries=[],reads=[];
+ const page=await launch({},[],{source,workflow:{read:()=>({tasks,errors:[],skipped:0,updates})},cloudClient:{worker(){},listing:async(p,options)=>{assert.equal(options.skipMissing,true);reads.push(p);if(p===tasks[0].path)throw Object.assign(Error('目录不存在：'+p),{name:'DirectoryMissing'});return [];},queryDouban:async t=>{queries.push(t.key);return {title:t.name,total:1,releaseYears:['2025'],url:'https://movie.douban.com/subject/1/',broadcast:'已播完'};},deleteFile(){assert.fail('复核不得删除');}}});
+ const input=page.elements.find(e=>e.type==='file');input.files=[{name:'报告.xlsx',size:10,arrayBuffer:async()=>new ArrayBuffer(10)}];await input.fire('change');await page.button('开始复核').click();
+ assert.equal(updates.size,2);assert.equal(updates.get(tasks[0]).state,'目录不存在，已跳过');assert.equal(updates.get(tasks[0]).color,null);assert.equal(updates.get(tasks[0]).videoCount,null);assert.deepEqual(queries,['乙']);assert.equal(reads.length,3);assert.equal(page.button('继续复核').disabled,true);
+});

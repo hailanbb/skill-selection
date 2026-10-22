@@ -28,8 +28,17 @@
   // 顶部 health-indicator 不是文件列表是否可用的可靠依据，不能作为读取或操作门槛。
   // 与初检一致，依据刷新后的完整、稳定列表；删除/移动还需原有快照、确认窗口及事后验证。
   function listLoading(){return [...document.querySelectorAll('.file-list-scroll-area .loading-bar')].some(visible);}
-  function requireListReady({allowLoading=false}={}) {
-    if([...document.querySelectorAll('.files-load-error')].some(visible))throw pause('云盘文件列表加载失败，已暂停当前任务；请恢复文件浏览后点击继续');
+  function requireListReady({allowLoading=false,skipMissing=false,path=currentPath()}={}) {
+    const errorText=[...document.querySelectorAll('.files-load-error')].filter(visible).map(e=>(e.textContent||'列表加载失败').trim()||'列表加载失败').join('；');
+    if(errorText) {
+      // 仅只读复核主动允许跳过明确的不存在；权限、网络、超时及一般404不能据此跳过。
+      // 删除/移动和事后核实不传此选项，仍暂停核实，不能把文件消失直接当作操作成功。
+      const missing=/(?:文件|文件夹|目录|路径)不存在|找不到(?:指定的?)?(?:文件|文件夹|目录|路径)|(?:file|folder|directory|path) (?:does not exist|not found)|no such file or directory|code\s*[:=]\s*NotFound\b/i.test(errorText);
+      if(skipMissing&&missing&&currentPath()===path&&!listLoading()) {
+        const error=Error('目录不存在，已跳过本季：'+path+'；页面提示：'+errorText.slice(0,500));error.name='DirectoryMissing';error.path=path;throw error;
+      }
+      throw pause('云盘文件列表加载失败，已暂停当前任务：'+errorText.slice(0,500));
+    }
     if(!allowLoading&&listLoading())throw pause('云盘文件列表仍在加载，已暂停当前任务；请等待加载完成后点击继续');
   }
   function readRows(){return [...document.querySelectorAll('table.file-list tr.file-row[data-path]')].map(e=>({path:e.getAttribute('data-path'),name:e.querySelector('.file-name-text')?.textContent.trim()||'',directory:e.classList.contains('directory'),modified:e.querySelector('.file-modified')?.textContent.trim()||'',size:e.querySelector('.file-size')?.textContent.trim()||''}));}
@@ -46,23 +55,23 @@
     const mode=document.querySelector('button[aria-label="列表视图"]');if(visible(mode))mode.click();
     const filter=document.querySelector('.unified-header .uh-filter-input');if(filter?.value)setInput(filter,'');
   }
-  async function listing(path,{uninterruptible=false}={}) {
+  async function listing(path,{uninterruptible=false,skipMissing=false}={}) {
     if(uninterruptible)finishing++;
     try {
       await navigate(path);
       const refresh=await waitFor(()=>document.querySelector('button.toolbar-refresh-btn'),'刷新控件不存在');refresh.click();
-      const select=await waitFor(()=>document.querySelector('select.page-size-select'),'分页控件不存在');
+      const select=await waitFor(()=>{requireListReady({allowLoading:true,skipMissing,path});return document.querySelector('select.page-size-select');},'分页控件不存在');
       if(![...select.options].some(o=>o.value==='all'))throw Error('无法读取全部条目');
       if(select.value!=='all')setInput(select,'all');
       const settle=createListingSettler(path);
       return await waitFor(()=>{
         if(currentPath()!==path||breadcrumbPath()!==path)throw pause('工作目录已切换，停止当前操作');
-        requireListReady({allowLoading:true});
+        requireListReady({allowLoading:true,skipMissing,path});
         const rows=readRows(),count=readCount(),loading=listLoading();
         const emptyConfirmed=[...document.querySelectorAll('table.file-list .empty-state .empty-content p')].some(e=>visible(e)&&/^(此文件夹为空|This folder is empty)[.!。！]?$/i.test(e.textContent.trim()));
         return settle({rows,count,loading,emptyConfirmed,allSelected:document.querySelector('select.page-size-select')?.value==='all'},Date.now());
       },'文件列表未读全，不能确认数量或删除结果');
-    }catch(e){if(e.name==='Pause')throw e;throw pause('目录读取未完成，已暂停当前任务：'+e.message);}
+    }catch(e){if(e.name==='Pause'||e.name==='DirectoryMissing')throw e;throw pause('目录读取未完成，已暂停当前任务：'+e.message);}
     finally{if(uninterruptible)finishing--;}
   }
   // 标准词条读取逻辑在构建时从初检源码复用；请求键独立为 tv_review，不会与初检串话。
