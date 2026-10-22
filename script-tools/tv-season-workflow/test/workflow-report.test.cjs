@@ -7,6 +7,11 @@ const C=require('../season-download.user.js'),I=require('../season-inspect.user.
 const bundle=fs.readFileSync(path.join(__dirname,'../vendor/xlsx-js-style/package/dist/xlsx.bundle.js'),'utf8');
 const X=new Function('const exports={};const module=undefined,require=undefined,window=undefined,define=undefined;'+bundle+';return exports;')();
 const options={origin:'https://clouddrive.example',source:I.SOURCE};
+test('归档报告独立记录源空目录删除的计划、结果及时间',()=>{
+  const s=R.read(fixture(),{...options,mode:'archive'}),t=s.tasks[0];
+  s.updates.set(t,{state:'归档待核实',record:{operations:[],cleanup:{kind:'empty-directory',source:t.showPath,target:'',planId:'p',state:'pending',at:'start',finishedAt:'end',error:'响应丢失',manifest:[{path:t.showPath,directory:true}],reason:'全部内容迁移后清理'}}});
+  const rows=X.utils.sheet_to_json(X.read(R.write(s)).Sheets['归档明细_1']);assert.equal(rows.length,1);assert.equal(rows[0]['操作'],'删除源空目录');assert.equal(rows[0]['执行结果'],'删除结果待核实');assert.equal(rows[0]['原路径'],t.showPath);assert.equal(rows[0]['请求时间（UTC）'],'start');assert.equal(rows[0]['说明'],'响应丢失');
+});
 
 function directoryFixture(change=()=>{}) {
   return fixture((_book,sheet)=>{

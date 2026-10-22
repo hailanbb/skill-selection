@@ -1,9 +1,9 @@
 // 使用真实归档适配器和模拟 DOM，验证菜单/目标窗口的边界；没有网络和实际文件移动。
 const {test}=require('node:test'),assert=require('node:assert/strict'),A=require('../season-archive.user.js');
 async function simulate(options={}) {
-  const category='日本剧集',showName='测试剧 (2025)',name=options.season?'Season 2':showName,showSource=A.SOURCE+'/'+category+'/'+showName,showTarget=A.DEST+'/'+category+'/'+showName,
-    source=options.season?showSource+'/'+name:showSource,target=options.season?showTarget+'/'+name:showTarget;
-  const entry={name,path:source,directory:true,size:'',modified:'2026-10-21 10:00'};
+  const category='日本剧集',showName='测试剧 (2025)',name=options.file?'tvshow.nfo':options.season?'Season 2':showName,showSource=A.SOURCE+'/'+category+'/'+showName,showTarget=A.DEST+'/'+category+'/'+showName,
+    source=(options.season||options.file)?showSource+'/'+name:showSource,target=(options.season||options.file)?showTarget+'/'+name:showTarget;
+  const entry={name,path:source,directory:!options.file,size:'',modified:'2026-10-21 10:00'};
   const state={selected:false,menu:false,dialog:false,input:false,confirmed:0,cancelled:0,destination:''};
   const text=textContent=>({textContent});
   class Input {constructor(){this.tagName='INPUT';}set value(v){this._value=v;}get value(){return this._value;}dispatchEvent(e){if(e.type==='keydown')state.destination=this._value;}}
@@ -16,7 +16,7 @@ async function simulate(options={}) {
     '.folder-list':text('其他剧集'),'button[aria-label="移动"]':confirm
   }[s]||null),querySelectorAll:s=>s==='button'?[cancel,confirm]:s==='.folder-select-warning'&&options.warning?[{getClientRects:()=>[{}]}]:s==='.folder-list-item:not(.up-folder)'&&(options.collision||options.alias)?[{querySelectorAll:()=>[text(options.alias?'Season 02':name)]}]:[]};
   const menu={getClientRects:()=>state.menu?[{}]:[],querySelectorAll:()=>[{textContent:'移动/复制到...',click(){state.dialog=true;state.menu=false;}}]};
-  const row={getAttribute:()=>source,classList:{contains:()=>true},querySelector:s=>({'.file-name-text':text(name),'.file-modified':text(options.changed&&state.dialog?'2026-10-22 10:00':entry.modified),'.file-size':text(''),
+  const row={getAttribute:()=>source,classList:{contains:()=>!options.file},querySelector:s=>({'.file-name-text':text(name),'.file-modified':text(options.changed&&state.dialog?'2026-10-22 10:00':entry.modified),'.file-size':text(''),
     '.file-icon':{dispatchEvent(){state.selected=!state.selected;}},'.file-name-ellipsis':{click(){state.selected=true;state.menu=true;}}}[s])};
   const document={querySelector:s=>s==='.health-indicator.connected'?(options.disconnected?null:{}):s==='select.page-size-select'?{value:options.pagination?'50':'all'}:s==='.file-list-status'?text('1 items'):null,
     querySelectorAll:s=>{
@@ -31,7 +31,7 @@ async function simulate(options={}) {
   Object.assign(global,{document,location:{href:'https://clouddrive.example/?page=files&path='+encodeURIComponent(options.path?A.parent(target):A.parent(source))},HTMLInputElement:Input,MouseEvent:class{},KeyboardEvent:class{constructor(type){this.type=type;}},Event:class{constructor(type){this.type=type;}}});
   try {
     const client=A.createClient(A,{checkpoint(){if(options.pause&&state.dialog)throw Error('paused');}});let error;
-    try{await client.moveShow({source,target:options.outside?target+'/other':target,name,category,...(options.season?{kind:'season',showSource,showTarget}:{})},[entry],entry);}catch(e){error=e;}
+    try{await client.moveShow({source,target:options.outside?target+'/other':target,name,category,...(options.file?{kind:'file',showSource,showTarget}:options.season?{kind:'season',showSource,showTarget}:{})},[entry],entry);}catch(e){error=e;}
     return {state,error};
   }finally{Object.assign(global,previous);}
 }
@@ -60,3 +60,5 @@ test('指示器缺少 connected 时，匹配目录及移动确认仍可执行；
   const ok=await simulate({disconnected:true});assert.equal(ok.error,undefined);assert.equal(ok.state.confirmed,1);
   const bad=await simulate({disconnected:true,loadError:true});assert.equal(bad.error.name,'Pause');assert.equal(bad.state.confirmed,0);assert.equal(bad.error.notSubmitted,true);
 });
+
+test('根目录普通文件可移入同名剧，文件同名冲突不提交',async()=>{const ok=await simulate({file:true});assert.equal(ok.error,undefined);assert.equal(ok.state.confirmed,1);const bad=await simulate({file:true,collision:true});assert.ok(bad.error);assert.equal(bad.state.confirmed,0);});

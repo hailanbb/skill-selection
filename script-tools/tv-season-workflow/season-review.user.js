@@ -1508,14 +1508,14 @@ return exports;
           add(task,[action,record.planId||'',f.path,'',f.kind||'',f.size||'',f.modified||'',f.reason||'',f.owner||'',action==='计划删除'?'尚未执行':'保留','','',result.note||'']);
         }
       } else {
-        const events=[...journal.history||[],...journal.operations||record.operations||[]];
+        const events=[...journal.history||[],...journal.operations||record.operations||[],...((journal.cleanup||record.cleanup)?[journal.cleanup||record.cleanup]:[])];
         // 兼容旧版整剧日志；旧日志没有时间/属性的字段明确留空，不能推造。
         const operations=events.length||Array.isArray(journal.operations)||Array.isArray(record.operations)?events:[{...journal,source:journal.source||record.source,target:journal.target||record.target,manifest:journal.manifest||record.manifest||[],state:journal.verified?'verified':journal.pending?'pending':'planned'}];
         for(const op of operations)for(const f of op.manifest||[]) {
           if(!f.path||!(f.path===task.path||f.path.startsWith(task.path+'/')||!f.path.includes('/Season ')))continue;
           // 根部共用文件属于整剧；同一季文件只出现在对应报告行，避免跨季误记。
           if(f.path!==task.path&&!f.path.startsWith(task.path+'/')&&/\/season\s+\d+(?:\/|$)/i.test(f.path))continue;
-          add(task,['移动',op.planId||journal.planId||record.planId||'',f.path,op.target&&op.source?op.target+f.path.slice(op.source.length):'',f.directory?'目录':'文件',f.size||'',f.modified||'',op.reason||'绿色剧集归档','',({verified:'移动已验证',pending:'移动结果待核实','not-submitted':'未提交移动',planned:'尚未执行'})[op.state]||op.state||'尚未执行',op.at||'',op.finishedAt||'',op.error||'']);
+          add(task,[op.kind==='empty-directory'?'删除源空目录':'移动',op.planId||journal.planId||record.planId||'',f.path,op.target&&op.source?op.target+f.path.slice(op.source.length):'',f.directory?'目录':'文件',f.size||'',f.modified||'',op.reason||'绿色剧集归档','',(op.kind==='empty-directory'?{verified:'删除已验证',pending:'删除结果待核实','not-submitted':'未提交删除',planned:'尚未执行'}:{verified:'移动已验证',pending:'移动结果待核实','not-submitted':'未提交移动',planned:'尚未执行'})[op.state]||op.state||'尚未执行',op.at||'',op.finishedAt||'',op.error||'']);
         }
         for(const f of record.preserved||journal.preserved||[]) {
           const skip=(record.skipped||journal.skipped||[]).find(s=>f.path===s.source||f.path.startsWith(s.source+'/'));

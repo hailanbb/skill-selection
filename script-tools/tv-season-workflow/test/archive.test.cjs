@@ -114,31 +114,32 @@ function mergeFixture(extra=false) {
   f.tree.set(second,f.tree.get(old).map(r=>({...r,path:r.path.replace('/Season 1/','/Season 2/').replace('S01','S02'),name:r.name.replace('S01','S02')})));
   f.tree.delete(old);f.tree.get(f.source)[0]=f.file(f.source,'Season 2',true);f.row.path=second;f.row.season=2;
   f.tree.get(A.DEST+'/'+f.category).push(f.file(A.DEST+'/'+f.category,f.name,true));
-  f.tree.set(f.target,[f.file(f.target,'Season 1',true),f.file(f.target,'tvshow.nfo')]);
+  f.tree.set(f.target,[f.file(f.target,'Season 1',true),f.file(f.target,'poster.jpg')]);
   f.tree.set(f.target+'/Season 1',[f.file(f.target+'/Season 1','旧季.S01E01.mkv')]);
   const rows=[f.row];if(extra){f.tree.get(f.source).push(f.file(f.source,'Season 1',true));f.tree.set(old,[f.file(old,'测试剧.S01E01.mkv')]);rows.push({...f.row,path:old,season:1,data:{'来源登记集数':1}});}
   const moves=[];f.api.move=async op=>{
     moves.push(op.source);const entry=f.tree.get(A.parent(op.source)).find(r=>r.path===op.source);
     f.tree.set(A.parent(op.source),f.tree.get(A.parent(op.source)).filter(r=>r.path!==op.source));
-    f.tree.get(A.parent(op.target)).push({...entry,path:op.target,modified:'2026-10-22 10:00'});
+    f.tree.get(A.parent(op.target)).push({...entry,path:op.target,modified:entry.directory?'2026-10-22 10:00':entry.modified});
     for(const [path,files] of [...f.tree])if(path===op.source||path.startsWith(op.source+'/')){f.tree.set(op.target+path.slice(op.source.length),files.map(r=>({...r,path:op.target+r.path.slice(op.source.length)})));f.tree.delete(path);}
   };
+  f.api.removeEmpty=async()=>{assert.equal(f.tree.get(f.source).length,0);f.tree.delete(f.source);f.tree.set(A.parent(f.source),f.tree.get(A.parent(f.source)).filter(r=>r.path!==f.source));};
   return {f,rows,moves};
 }
-test('目标已有第一季时移入第二季，保留目标旧季和两边根部共用文件',async()=>{
+test('目标已有第一季时移入第二季及源根文件，验证后删除源空目录',async()=>{
   const {f,rows,moves}=mergeFixture(),before=structuredClone(f.tree.get(f.target+'/Season 1'));
-  const p=await A.plan(rows,f.list,'merge');assert.equal(p.mode,'seasons');assert.equal(p.operations.length,1);
-  const result=await A.execute(p,f.api);assert.equal(result.verified,true);assert.deepEqual(moves,[rows[0].path]);
-  assert.deepEqual(f.tree.get(f.target+'/Season 1'),before);assert.deepEqual(f.tree.get(f.source).map(r=>r.name),['tvshow.nfo']);
+  const p=await A.plan(rows,f.list,'merge');assert.equal(p.mode,'seasons');assert.equal(p.operations.length,2);
+  const result=await A.execute(p,f.api);assert.equal(result.verified,true);assert.deepEqual(moves,[rows[0].path,f.source+'/tvshow.nfo']);
+  assert.deepEqual(f.tree.get(f.target+'/Season 1'),before);assert.equal(f.tree.has(f.source),false);assert.ok(f.tree.get(f.target).some(r=>r.name==='tvshow.nfo'));assert.equal(result.cleanup.state,'verified');
   assert.equal(result.operations[0].state,'verified');assert.ok(result.operations[0].at);assert.ok(result.operations[0].finishedAt);
   assert.equal((await A.reconcile(rows,f.journal,f.list)).verified,true);
 });
-test('源包含冲突第一季及不冲突第二季，仅移动第二季；同季别名也跳过',async()=>{
+test('同季冲突含别名整剧暂缓，不移动其他季或根文件',async()=>{
   for(const alias of ['Season 1','Season 01']) {
     const {f,rows,moves}=mergeFixture(true);
     if(alias!=='Season 1'){const old=f.target+'/Season 1',next=f.target+'/'+alias;f.tree.get(f.target)[0]={...f.tree.get(f.target)[0],name:alias,path:next};f.tree.set(next,f.tree.get(old).map(r=>({...r,path:next+'/'+r.name})));f.tree.delete(old);}
-    const p=await A.plan(rows,f.list,'mixed');assert.equal(p.skipped.length,1);assert.equal(p.operations.length,1);
-    const result=await A.execute(p,f.api);assert.equal(result.verified,true);assert.deepEqual(moves,[rows[0].path]);assert.ok(f.tree.has(f.source+'/Season 1'));
+    const p=await A.plan(rows,f.list,'mixed');assert.equal(p.skipped.length,1);assert.equal(p.operations.length,0);assert.equal(p.eligible,false);
+    await assert.rejects(A.execute(p,f.api));assert.equal(moves.length,0);assert.ok(f.tree.has(f.source+'/Season 1'));
   }
 });
 test('所有季均冲突只生成保留明细，不允许移动',async()=>{
@@ -157,15 +158,16 @@ test('合并季前目标改动不移动；移动后旧季被修改则不能标�
 });
 test('季移动请求成功但响应丢失，可只读恢复，不重发移动',async()=>{
   const {f,rows,moves}=mergeFixture(),p=await A.plan(rows,f.list,'lost'),move=f.api.move;
-  f.api.move=async op=>{await move(op);throw Error('response lost');};await assert.rejects(A.execute(p,f.api));
-  assert.equal(f.journal.pending,true);assert.equal(f.journal.operations[0].state,'pending');
-  const result=await A.reconcile(rows,f.journal,f.list);assert.equal(result.verified,true);assert.equal(moves.length,1);
+  f.api.move=async op=>{await move(op);if(op.kind==='file')throw Error('response lost');};await assert.rejects(A.execute(p,f.api));
+  assert.equal(f.journal.pending,true);assert.equal(f.journal.operations[1].state,'pending');
+  await assert.rejects(A.reconcile(rows,f.journal,f.list),/源剧集目录仍存在/);
+  const result=await A.finishEmpty(f.journal,f.api);assert.equal(result.verified,true);assert.equal(moves.length,2);
 });
 test('上次归档成功后源目录新增下一季，允许新计划归档且保存旧批次明细',async()=>{
   const {f,rows,moves}=mergeFixture(),first=await A.plan(rows,f.list,'first');await A.execute(first,f.api);
-  const path=f.source+'/Season 3';f.tree.get(f.source).push(f.file(f.source,'Season 3',true));f.tree.set(path,[f.file(path,'新季.S03E01.mkv')]);
+  const path=f.source+'/Season 3';f.tree.set(f.source,[]);f.tree.get(A.parent(f.source)).push(f.file(A.parent(f.source),f.name,true));f.tree.get(f.source).push(f.file(f.source,'Season 3',true));f.tree.set(path,[f.file(path,'新季.S03E01.mkv')]);
   const row={...f.row,path,season:3,data:{'来源登记集数':1}},next=await A.plan([row],f.list,'next');
-  const result=await A.execute(next,f.api);assert.equal(result.verified,true);assert.equal(moves.length,2);assert.equal(result.history[0].planId,'first');assert.equal(result.operations[0].planId,'next');
+  const result=await A.execute(next,f.api);assert.equal(result.verified,true);assert.equal(moves.length,3);assert.equal(result.history[0].planId,'first');assert.equal(result.operations[0].planId,'next');
 });
 test('绿色人工确认且总数空白可以归档，但仍要求集号连续及非空视频',async()=>{
   const f=fixture();f.row.data['来源登记集数']='';assert.equal((await A.plan([f.row],f.list,'p')).eligible,true);
@@ -179,5 +181,31 @@ test('归档按真实路径处理混排片名，不把译名/简繁近似目录�
   for(const name of ['宇宙Marry Me？ (2025)','睁眼一看是\u00a0SUPER TV (2025)']) {
     const f=fixture(name),p=await A.plan([f.row],f.list,'p');assert.equal(p.source,f.source);assert.equal(p.target,f.target);
     f.row.name='另一译名 (2025)';await assert.rejects(A.plan([f.row],f.list,'wrong'),/路径/);assert.equal(f.moves,0);
+  }
+});
+
+test('根文件同名冲突整剧暂缓并列出路径，不覆盖文件',async()=>{
+  const {f,rows,moves}=mergeFixture();f.tree.get(f.target).push(f.file(f.target,'TVSHOW.NFO'));
+  const p=await A.plan(rows,f.list,'conflict');assert.equal(p.eligible,false);assert.equal(p.operations.length,0);assert.equal(p.skipped[0].source,f.source+'/tvshow.nfo');
+  await assert.rejects(A.execute(p,f.api));assert.equal(moves.length,0);
+});
+test('空目录清理前新增文件或目标变更，不删除且不标成功',async()=>{
+  for(const variant of ['source','target']) {
+    const {f,rows}=mergeFixture(),p=await A.plan(rows,f.list,'race');let deletes=0;f.api.removeEmpty=async()=>{deletes++;};
+    const move=f.api.move;f.api.move=async op=>{await move(op);if(op.kind==='file'){
+      if(variant==='source')f.tree.get(f.source).push(f.file(f.source,'新到文件.nfo'));
+      else f.tree.get(f.target+'/Season 1')[0].size='9 GB';
+    }};
+    await assert.rejects(A.execute(p,f.api));assert.equal(deletes,0);assert.notEqual(f.journal.verified,true);
+  }
+});
+test('源空目录删除响应丢失只读核实恢复，不重发删除；目录仍在则保持待核实',async()=>{
+  for(const actuallyDeleted of [true,false]) {
+    const {f,rows}=mergeFixture(),p=await A.plan(rows,f.list,'delete');let calls=0;const remove=f.api.removeEmpty;
+    f.api.removeEmpty=async(...args)=>{calls++;if(actuallyDeleted)await remove(...args);throw Error('response lost');};
+    await assert.rejects(A.execute(p,f.api));assert.equal(f.journal.cleanup.state,'pending');
+    if(actuallyDeleted)assert.equal((await A.reconcile(rows,f.journal,f.list)).verified,true);
+    else {await assert.rejects(A.reconcile(rows,f.journal,f.list));await assert.rejects(A.finishEmpty(f.journal,f.api),/不重复删除/);}
+    assert.equal(calls,1);
   }
 });

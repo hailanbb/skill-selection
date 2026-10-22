@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         剧集工作流 ④ · 绿色剧集归档
 // @namespace    local.tv-season-archive
-// @version      1.1.7
-// @description  确认清单后归档绿色季；支持同剧缺季合入、跳过同季冲突，逐文件输出操作明细，验证成功标紫色。
+// @version      1.2.0
+// @description  确认清单后归档绿色季；支持整剧无冲突合入并清理源空目录，逐文件输出操作明细，验证成功标紫色。
 // @match        https://clouddrive.example/*
 // @grant        GM_getValue
 // @grant        GM_setValue
@@ -12,7 +12,7 @@
 
 /* 工作流 ④：默认不运行，导入只排队，检查只读，确认移动清单才操作云盘。
  * 归档到用户配置的 DEST，并保留分类/剧名/季目录。
- * 同名电视剧支持移入目标缺少的季；跳过同季冲突，保留共用资料，不覆盖。
+ * 同名电视剧支持移入目标缺少的季；同季或同名根文件冲突则整剧暂缓；无冲突移动全部内容并删除源空目录。
  * 本地持久记录用于防重复移动；刷新后重新导入原报告，可只读核实上次移动并恢复结果。
  */
 (function () {
@@ -41,9 +41,9 @@
   function update(rows,state,{p=null,result=null,note=''}={}) {
     for(const row of rows) {
       const detail=result||p,skipped=detail?.skipped?.find(s=>s.source===row.path);
-      const target=result?.target||p?.target||'',success=result?.verified===true&&!skipped;
+      const target=result?.target||p?.target||'',success=result?.verified===true&&!result?.skipped?.length&&!skipped;
       const targetUrl=success?ORIGIN+'/?page=files&path='+encodeURIComponent(target+row.path.slice(row.showPath.length)):'';
-      session.updates.set(row,{state:skipped?'同季冲突，已跳过':state,color:success?'archived':null,source:row.showPath,target,targetUrl,at:new Date().toISOString(),note:skipped?skipped.reason+'：'+skipped.target:note,
+      session.updates.set(row,{state:skipped?'整剧暂缓归档':state,color:success?'archived':null,source:row.showPath,target,targetUrl,at:new Date().toISOString(),note:skipped?skipped.reason+'：'+skipped.target:note,
         record:result||{...p,rows:undefined,source:row.showPath,target,manifest:p?.manifest||[],journal:load(row.showPath)}});
     }
   }
@@ -66,7 +66,7 @@
           message(`检查 ${index+1}/${queue.length}：${rows[0].name}`);
           const previous=load(source),restore=previous?.verified&&!(await client.listing(C.parent(source))).some(f=>f.path===source&&f.directory);
           if(previous?.pending||restore){update(rows,'上次移动待核实',{note:'发现本地移动记录，请点击“核实上次移动结果”，不会重复移动'});plans.delete(source);}
-          else {const p=await K.plan(rows,previewList,crypto.randomUUID());plans.set(source,p);update(rows,'待确认移动',{p,note:p.mode==='seasons'?'目标已有同名剧集，将移入缺少的季；源根部共用文件保留。尚未移动':'整剧各季均绿色，文件清单已读取；尚未移动'});}
+          else {const p=await K.plan(rows,previewList,crypto.randomUUID());plans.set(source,p);update(rows,p.eligible?'待确认移动':'整剧暂缓归档',{p,note:!p.eligible?'同季或同名文件冲突，整剧不移动：'+p.skipped.map(x=>x.source+' → '+x.target).join('；'):p.mode==='seasons'?'全部季及根目录文件将合入目标；验证后删除源空目录。尚未移动':'整剧各季均绿色，文件清单已读取；尚未移动'});}
           index++;render();
         }catch(e){plans.delete(source);update(rows,e.name==='Pause'?'已暂停':'暂缓归档',{note:e.message});render();if(e.name==='Pause')throw e;index++;}
       }
@@ -76,14 +76,14 @@
   async function move() {
     const ready=[...plans.values()].filter(p=>p.eligible&&!load(p.source)?.pending);if(!ready.length||running||importing)return;
     const fresh=ready.filter(p=>!approved.has(p.id));
-    if(fresh.length&&!confirm(`确认按已列清单，将 ${fresh.length} 部剧集归档到 ${K.DEST} 下的同名分类？目标已有同名剧集时仅移入缺少的季，保留源根部共用资料；同季冲突跳过，不覆盖。请确认已展开检查清单。`))return;
+    if(fresh.length&&!confirm(`确认按已列清单，将 ${fresh.length} 部剧集归档到 ${K.DEST} 下的同名分类？目标已有同名剧集时移入全部季及根目录文件，验证后删除源空目录；任何同季或同名文件冲突均整剧暂缓，不覆盖。请确认已展开检查清单。`))return;
     fresh.forEach(p=>approved.add(p.id));
     await exclusive(async()=>{
       for(const p of ready) {
         checkpoint();message('正在重新检查并归档：'+p.name);
         try {
-          const result=await K.execute(p,{list:client.listing,verifyList:path=>client.listing(path,{uninterruptible:true}),move:client.moveShow,load,save,checkpoint});
-          update(p.rows,'已归档',{p,result,note:p.mode==='seasons'?'无冲突的季已移入目标同名剧集；目标原有内容未变，源根部共用文件及冲突季保留；路径、大小和修改时间已验证':'已核实源目录消失，目标相对路径、文件大小和文件修改时间一致'});plans.delete(p.source);render();
+          const result=await K.execute(p,{list:client.listing,verifyList:path=>client.listing(path,{uninterruptible:true}),move:client.moveShow,removeEmpty:client.removeEmpty,load,save,checkpoint});
+          update(p.rows,'已归档',{p,result,note:p.mode==='seasons'?'全部内容已移入目标同名剧集，目标原有内容未变，源目录已清除；路径、大小和修改时间已验证':'已核实源目录消失，目标相对路径、文件大小和文件修改时间一致'});plans.delete(p.source);render();
         }catch(e){plans.delete(p.source);update(p.rows,'归档待核实',{p,note:e.message});render();throw e;}
       }
       message('归档结果已核对。请导出报告；验证成功的剧集目录格为浅紫底、深紫字。');
@@ -97,6 +97,17 @@
       }catch(e){update(rows,'归档待核实',{note:e.message+'；保留移动记录，不自动重试'});throw e;}
     });
   }
+  async function finishCleanup(rows) {
+    await exclusive(async()=>{
+      const journal=load(rows[0].showPath);if(!journal)throw Error('没有待完成的归档记录');
+      if(!confirm('确认验证目标完整及源为空后，删除本剧源空目录？不会重新移动文件：'+rows[0].showPath))return;
+      try {
+        const result=await K.finishEmpty(journal,{list:client.listing,verifyList:path=>client.listing(path,{uninterruptible:true}),removeEmpty:client.removeEmpty,save,checkpoint});
+        save(rows[0].showPath,result);update(rows,'已归档',{result,note:'全部内容及源目录消失已验证'});
+      }catch(e){update(rows,'归档待核实',{result:load(rows[0].showPath),note:e.message});throw e;}
+      finally{render();}
+    });
+  }
   function render() {
     if(!ui)return;const busy=running||importing;
     ui.import.disabled=busy;ui.start.disabled=busy||!session||index>=queue.length;ui.resume.disabled=ui.start.disabled;ui.pause.disabled=!running;
@@ -107,11 +118,13 @@
       box.append(el('strong',rows[0].name),el('p',result?.state||'待检查'));if(result?.note)box.append(el('p',result.note));
       if(p) {
         const details=el('details');details.append(el('summary',`归档清单：${rows.length} 季，${p.manifest.filter(f=>!f.directory).length} 个文件`),el('p',`从：${p.source}\n到：${p.target}`));
+        if(p.eligible&&p.cleanup)details.append(el('p','全部内容验证后删除源空目录：'+p.source));
         for(const op of p.operations||[])details.append(el('p',`移动：${op.source}\n到：${op.target}`));
-        for(const s of p.skipped||[])details.append(el('p',`跳过冲突季：${s.source}\n目标：${s.target}`));
+        for(const s of p.skipped||[])details.append(el('p',`整剧暂缓，冲突条目：${s.source}\n目标：${s.target}`));
         for(const f of p.manifest)details.append(el('p',`${p.preserved?.some(x=>x.path===f.path)?'保留原位':f.directory?'目录':'文件'}：${f.path}\n${f.modified} · ${f.size}`));box.append(details);
       }
       const redo=button('从此剧重新检查',()=>{plans.delete(source);index=Math.min(index,queue.indexOf(rows));render();message('已排队，请点击继续检查。');});redo.disabled=busy;box.append(redo);
+      if(load(source)?.cleanup){const cleanup=button('完成源空目录清理',()=>finishCleanup(rows));cleanup.disabled=busy;box.append(cleanup);}
       if(load(source)){const b=button('核实上次移动结果',()=>reconcile(rows));b.disabled=busy;box.append(b);}ui.list.append(box);
     }
   }
@@ -147,7 +160,7 @@
       }catch(e){message(e.message);}finally{importing=false;render();}
     });
     body.append(ui.status,el('p','归档目标：'+K.DEST),ui.import,ui.file,ui.start,ui.pause,ui.resume,ui.move,ui.export,
-      el('small','所有实际季须在报告中且为绿色。同季冲突跳过；重复视频、未知目录、文件变化暂缓。只使用已存在的目标分类。'),ui.message,ui.list);render();
+      el('small','所有实际季须在报告中且为绿色。同季或同名文件冲突则整剧暂缓；重复视频、未知目录、文件变化暂缓。只使用已存在的目标分类。'),ui.message,ui.list);render();
     panelLayout=setupPanelLayout({host,box,body,handle,toggle,load:()=>GM_getValue(NS+'panel-layout-v1',null),save:value=>GM_setValue(NS+'panel-layout-v1',value)});
   }
   mount();

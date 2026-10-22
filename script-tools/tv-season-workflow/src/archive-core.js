@@ -1,7 +1,7 @@
 /* 第四阶段：按整剧生成归档清单；目标同剧已存在时逐季合入，并验证原目标未变。
  * 报告中某一季绿色不能代表整剧；源目录中的每个实际季都必须唯一对应绿色行。
  * 比较依据是界面可见的相对路径、类型、大小及文件修改时间，不声称做过内容哈希校验。
- * 同季冲突跳过并保留清单；请求前保存逐项记录，结果不明只能复查，不能重复移动。
+ * 同季或根文件冲突则整剧暂缓；无冲突移走全部内容并清理源空目录；请求前保存逐项记录，结果不明只能复查，不能重复移动。
  */
 (function createArchiveCore(C,settings) {
   'use strict';
@@ -81,14 +81,15 @@
     }
     p.manifest=manifest;p.mode=existing?'seasons':'show';p.destinationBefore=[];p.preserved=[];
     if(existing) {
-      // 目标已有本剧时仅移动目标缺少的季；同季（含 Season 01 等别名）绝不覆盖。
+      // 同名目标只接收完整的一部剧：任何根文件/同季冲突都不进行部分移动。
       p.destinationBefore=await inventory(list,p.target);
-      const root=p.destinationBefore.filter(f=>C.parent(f.path)===p.target);
-      const conflicts=actual.filter(d=>root.some(f=>f.name.normalize('NFC').toLowerCase()===d.name.normalize('NFC').toLowerCase()||f.directory&&Number(/^Season\s+(\d+)$/i.exec(f.name)?.[1])===Number(/^Season\s+(\d+)$/i.exec(d.name)?.[1])));
-      p.skipped=conflicts.map(d=>({source:d.path,target:root.find(f=>f.name.normalize('NFC').toLowerCase()===d.name.normalize('NFC').toLowerCase()||f.directory&&Number(/^Season\s+(\d+)$/i.exec(f.name)?.[1])===Number(/^Season\s+(\d+)$/i.exec(d.name)?.[1])).path,reason:'目标已有同季或同名条目，跳过不覆盖'}));
-      p.preserved=manifest.filter(f=>!f.directory&&C.parent(f.path)===p.source||conflicts.some(d=>f.path===d.path||f.path.startsWith(d.path+'/')));
-      p.operations=actual.filter(d=>!conflicts.includes(d)).map(d=>({kind:'season',source:d.path,target:p.target+'/'+d.name,name:d.name,category:p.category,showSource:p.source,showTarget:p.target,
+      const root=p.destinationBefore.filter(f=>C.parent(f.path)===p.target),entries=manifest.filter(f=>C.parent(f.path)===p.source);
+      const match=(a,b)=>a.name.normalize('NFC').toLowerCase()===b.name.normalize('NFC').toLowerCase()||a.directory&&b.directory&&Number(/^Season\s+(\d+)$/i.exec(a.name)?.[1])===Number(/^Season\s+(\d+)$/i.exec(b.name)?.[1]);
+      p.skipped=entries.filter(d=>root.some(f=>match(d,f))).map(d=>({source:d.path,target:root.find(f=>match(d,f)).path,reason:'目标同季或同名文件冲突，整剧暂缓归档'}));
+      p.operations=p.skipped.length?[]:entries.map(d=>({kind:d.directory?'season':'file',source:d.path,target:p.target+'/'+d.name,name:d.name,category:p.category,showSource:p.source,showTarget:p.target,
         manifest:manifest.filter(f=>f.path===d.path||f.path.startsWith(d.path+'/')),planId:id,state:'planned'}));
+      p.preserved=p.skipped.length?manifest:[];
+      if(!p.skipped.length)p.cleanup={kind:'empty-directory',source:p.source,target:'',planId:id,state:'planned',manifest:[{name:p.name,path:p.source,directory:true}],reason:'全部内容迁移并验证后删除源空目录'};
     }else p.operations=[{kind:'show',source:p.source,target:p.target,name:p.name,category:p.category,manifest,planId:id,state:'planned'}];
     p.eligible=p.operations.length>0;return p;
   }
@@ -106,12 +107,9 @@
   }
   async function verify(p,list) {
     if(p.mode==='seasons') {
-      for(const op of p.operations)await verifyOperation(op,list);
-      const left=await inventory(list,p.source);
-      if(!equal(left,p.preserved))throw Error('合并季后源剧集保留文件发生变化');
-      const expected=[...p.destinationBefore,...p.operations.flatMap(op=>op.manifest.map(f=>({...f,path:op.target+f.path.slice(op.source.length)})))];
-      if(JSON.stringify(relative(expected,p.target))!==JSON.stringify(relative(await inventory(list,p.target),p.target)))throw Error('目标原有文件或移入文件发生变化，待核实');
-      return {...p,rows:undefined,eligible:undefined,state:'已归档',pending:false,verified:true,at:new Date().toISOString(),operations:p.operations.map(op=>({...op,state:'verified',finishedAt:op.finishedAt||new Date().toISOString()}))};
+      await verifyMergedTarget(p,list);
+      if((await listChecked(list,C.parent(p.source))).some(f=>f.path===p.source))throw Error('源剧集目录仍存在；全部内容验证后须完成源空目录清理');
+      return {...p,rows:undefined,eligible:undefined,state:'已归档',pending:false,verified:true,at:new Date().toISOString(),cleanup:{...p.cleanup,state:'verified',finishedAt:p.cleanup?.finishedAt||new Date().toISOString()},operations:p.operations.map(op=>({...op,state:'verified',finishedAt:op.finishedAt||new Date().toISOString()}))};
     }
     const from=await listChecked(list,C.parent(p.source)),to=await listChecked(list,C.parent(p.target));
     if(from.some(r=>r.path===p.source))throw Error('源剧集目录仍存在，移动结果待核实');
@@ -121,10 +119,33 @@
     return {...p,rows:undefined,eligible:undefined,state:'已归档',pending:false,at:new Date().toISOString(),source:p.source,target:p.target,manifest:p.manifest,verified:true,
       operations:(p.operations||[]).map(op=>({...op,state:'verified',finishedAt:op.finishedAt||new Date().toISOString()}))};
   }
+  async function verifyMergedTarget(p,list) {
+    // 拒绝将旧版“部分合入且保留源文件”的日志按整剧归档处理。
+    if(!p.cleanup||p.preserved?.length||!equal(p.manifest,p.operations.flatMap(o=>o.manifest)))throw Error('旧版或不完整合入清单，不能确认整剧归档');
+    const expected=[...p.destinationBefore,...p.operations.flatMap(o=>o.manifest.map(f=>({...f,path:o.target+f.path.slice(o.source.length)})))];
+    if(JSON.stringify(relative(expected,p.target))!==JSON.stringify(relative(await inventory(list,p.target),p.target)))throw Error('目标原有文件或移入文件发生变化，待核实');
+  }
+  // 只允许清理日志中这一部剧的空目录；先验证目标完整，再确认源确为空。
+  // 删除结果不明时不自动重发，改由只读核实恢复。
+  async function finishEmpty(p,api) {
+    if(p.mode!=='seasons'||!p.cleanup)throw Error('没有源空目录清理计划');
+    await verifyMergedTarget(p,api.list);
+    let parents=await listChecked(api.list,C.parent(p.source));
+    if(!parents.some(f=>f.path===p.source))return verify(p,api.verifyList||api.list);
+    if(p.cleanup.state==='pending'||p.cleanup.state==='verified')throw Error('源空目录删除已有提交记录，须人工核实，不重复删除');
+    if((await listChecked(api.list,p.source)).length)throw Error('源目录并非空目录，停止清理');
+    parents=await listChecked(api.list,C.parent(p.source));
+    const entry=parents.find(f=>f.path===p.source&&f.directory);if(!entry)throw Error('源目录已变化');
+    api.checkpoint();p.pending=true;p.cleanup.at=new Date().toISOString();p.cleanup.state='pending';await api.save(p.source,p);
+    try {
+      await api.removeEmpty(p,parents,entry);
+      const result=await verify(p,api.verifyList||api.list);await api.save(p.source,result);return result;
+    }catch(e){p.cleanup.state=e.notSubmitted?'not-submitted':'pending';p.cleanup.error=e.message;p.cleanup.finishedAt=new Date().toISOString();await api.save(p.source,p);throw e;}
+  }
   async function verifyOperation(op,list) {
     const from=await listChecked(list,C.parent(op.source)),to=await listChecked(list,C.parent(op.target));
-    if(from.some(f=>f.path===op.source)||!to.some(f=>f.path===op.target&&f.directory))throw Error('季目录移动结果待核实');
-    const after=[to.find(f=>f.path===op.target),...await inventory(list,op.target)];
+    if(from.some(f=>f.path===op.source)||!to.some(f=>f.path===op.target&&!!f.directory===(op.kind!=='file')))throw Error('季目录移动结果待核实');
+    const after=[to.find(f=>f.path===op.target),...(op.kind==='file'?[]:await inventory(list,op.target))];
     if(JSON.stringify(relative(op.manifest,op.source))!==JSON.stringify(relative(after,op.target)))throw Error('移入季的文件清单、大小或修改时间不符');
   }
   async function execute(p,api) {
@@ -133,7 +154,7 @@
     if(old?.pending||old?.verified&&equal(old.manifest||[],p.manifest))throw Error('本剧已有移动记录，请先核实上次结果，不能重复移动');
     api.checkpoint();
     const fresh=await plan(p.rows,api.list,p.id);if(!equal(p.manifest,fresh.manifest)||p.mode!==fresh.mode||!equal(p.destinationBefore,fresh.destinationBefore))throw Error('预览后源或目标文件清单发生变化，请重新检查');
-    const pending={...p,rows:undefined,eligible:undefined,pending:true,at:new Date().toISOString(),planId:p.id,operations:structuredClone(p.operations),history:[...old?.history||[],...old?.operations||[]]};
+    const pending={...p,rows:undefined,eligible:undefined,pending:true,at:new Date().toISOString(),planId:p.id,operations:structuredClone(p.operations),history:[...old?.history||[],...old?.operations||[],...(old?.cleanup?[old.cleanup]:[])]};
     for(const op of pending.operations) {
       api.checkpoint();
       // 每一步都再次检查已移动/尚未移动内容及目标原有内容，防止两次移动之间出现新冲突。
@@ -143,7 +164,7 @@
         const targetExpected=[...p.destinationBefore,...done.flatMap(o=>o.manifest.map(f=>({...f,path:o.target+f.path.slice(o.source.length)})))];
         if(JSON.stringify(relative(targetExpected,p.target))!==JSON.stringify(relative(await inventory(api.list,p.target),p.target)))throw Error('移动期间目标文件发生变化，停止后续移动');
       }
-      const parentRows=await listChecked(api.list,C.parent(op.source)),entry=parentRows.find(r=>r.path===op.source&&r.directory);if(!entry)throw Error('源目录不存在');
+      const parentRows=await listChecked(api.list,C.parent(op.source)),entry=parentRows.find(r=>r.path===op.source&&!!r.directory===(op.kind!=='file'));if(!entry)throw Error('源目录不存在');
       api.checkpoint();op.at=new Date().toISOString();op.state='pending';await api.save(p.source,pending);
       try {
         await api.move(op,parentRows,entry);
@@ -152,11 +173,12 @@
         op.state='verified';op.finishedAt=new Date().toISOString();await api.save(p.source,pending);
       }catch(e){op.state=e.notSubmitted?'not-submitted':'pending';op.error=e.message;op.finishedAt=new Date().toISOString();pending.error=e.message;pending.pending=pending.operations.some(o=>o.state==='pending'||o.state==='verified');await api.save(p.source,pending);throw e;}
     }
+    if(p.mode==='seasons')return finishEmpty(pending,api);
     const result=await verify(pending,api.verifyList||api.list);await api.save(p.source,result);return result;
   }
   async function reconcile(rows,journal,list) {
     const p=identity(rows);if(!journal||journal.source!==p.source||journal.target!==p.target||!Array.isArray(journal.manifest)||!journal.manifest.length)throw Error('上次移动记录与本剧不一致');
     return verify({...journal,...p},list);
   }
-  return {SOURCE,DEST,MEDIA,groups,identity,createPreviewListing,plan,scan,verify,execute,reconcile,equal,snapshot};
+  return {SOURCE,DEST,MEDIA,groups,identity,createPreviewListing,plan,scan,verify,execute,finishEmpty,reconcile,equal,snapshot};
 })

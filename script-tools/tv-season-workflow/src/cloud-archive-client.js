@@ -1,5 +1,5 @@
-/* CloudDrive2 归档页面适配器：只开放已配置源/目标树内的读取和整剧/单季移动。
- * 复用只读列表代码，不引入第三阶段的删除入口或豆瓣后台页。
+/* CloudDrive2 归档页面适配器：只开放已配置源/目标树内的读取、整剧/季/根文件移动及已验证源空目录的普通删除。
+ * 复用只读列表代码；空目录清理有独立的范围、空内容、选择与确认检查。
  * 目标必须是现有分类或同剧目录；遇到冲突或额外确认窗口停止，不选择覆盖、合并或复制。
  */
 (function createCloudArchiveClient(C,options) {
@@ -20,14 +20,15 @@
       requireListReady();checkpoint();
     }
     try {
-      const seasonMove=plan.kind==='season'&&parent(plan.source)===plan.showSource&&parent(plan.showSource)===SOURCE+'/'+plan.category&&plan.showTarget===DEST+'/'+plan.category+'/'+C.base(plan.showSource)&&/^Season\s+[0-9]+$/i.test(entry?.name||'')&&plan.target===plan.showTarget+'/'+entry?.name;
-      const showMove=plan.kind!=='season'&&parent(plan.source)===SOURCE+'/'+plan.category&&plan.target===DEST+'/'+plan.category+'/'+entry?.name;
-      if(!entry?.directory||entry.path!==plan.source||(!seasonMove&&!showMove)||!allowed(plan.source)||!allowed(plan.target))throw Error('拒绝移动计划外目录');
+      const seasonMove=plan.kind==='season'&&entry?.directory&&parent(plan.source)===plan.showSource&&parent(plan.showSource)===SOURCE+'/'+plan.category&&plan.showTarget===DEST+'/'+plan.category+'/'+C.base(plan.showSource)&&/^Season\s+[0-9]+$/i.test(entry?.name||'')&&plan.target===plan.showTarget+'/'+entry?.name;
+      const fileMove=plan.kind==='file'&&!entry?.directory&&parent(plan.source)===plan.showSource&&parent(plan.showSource)===SOURCE+'/'+plan.category&&plan.showTarget===DEST+'/'+plan.category+'/'+C.base(plan.showSource)&&plan.target===plan.showTarget+'/'+entry?.name;
+      const showMove=(!plan.kind||plan.kind==='show')&&entry?.directory&&parent(plan.source)===SOURCE+'/'+plan.category&&plan.target===DEST+'/'+plan.category+'/'+entry?.name;
+      if(!entry||entry.path!==plan.source||(!seasonMove&&!showMove&&!fileMove)||!allowed(plan.source)||!allowed(plan.target))throw Error('拒绝移动计划外目录');
       if(dialogs().length)throw Error('请先关闭页面已有的对话框');unchanged();
       for(const row of selected())row.querySelector('.file-icon')?.dispatchEvent(new MouseEvent('click',{bubbles:true,ctrlKey:true}));
       await waitFor(()=>!selected().length,'旧文件选择未清除');
       const row=[...document.querySelectorAll('table.file-list tr.file-row[data-path]')].find(r=>r.getAttribute('data-path')===plan.source);
-      if(!row?.classList.contains('directory'))throw Error('源目录已变化');row.querySelector('.file-name-ellipsis')?.click();
+      if(!row||row.classList.contains('directory')!==!!entry.directory)throw Error('源目录已变化');row.querySelector('.file-name-ellipsis')?.click();
       const menu=await waitFor(()=>[...document.querySelectorAll('[role="menu"]')].find(visible),'目录菜单未出现');
       const action=[...menu.querySelectorAll('[role="menuitem"],button')].find(e=>cleanText(e)==='移动/复制到...');if(!action)throw Error('找不到移动入口');action.click();
       const dialog=await waitFor(()=>dialogs().find(d=>cleanText(d.querySelector('.modal-title'))==='移动/复制到...'),'移动窗口未出现');
@@ -58,5 +59,35 @@
       }finally{finishing--;}
     }catch(e){if(!submitted){cancel();e.notSubmitted=true;}throw e;}
   }
-  return {listing,moveShow,currentPath,readRows,requireListReady};
+  async function removeEmpty(plan,_expectedRows,entry) {
+    let submitted=false,dialog;
+    try {
+      if(plan.mode!=='seasons'||plan.cleanup?.source!==plan.source||entry?.path!==plan.source||!entry.directory||parent(plan.source)!==SOURCE+'/'+plan.category||plan.target!==DEST+'/'+plan.category+'/'+entry.name)throw Error('源空目录清理范围不符');
+      checkpoint();if(dialogs().length)throw Error('请先关闭已有对话框');
+      // 再读一次真实空目录；不使用缓存、计数猜测或递归删除兜底。
+      if((await listing(plan.source)).length)throw Error('源目录出现新内容，禁止删除');
+      const parents=await listing(parent(plan.source)),current=parents.find(f=>f.path===plan.source&&f.directory);
+      if(!current||current.name!==entry.name)throw Error('源目录已变化');
+      const unchanged=()=>{
+        checkpoint();requireListReady();
+        if(currentPath()!==parent(plan.source)||breadcrumbPath()!==parent(plan.source)||JSON.stringify(parents)!==JSON.stringify(readRows())||readCount()!==parents.length||document.querySelector('select.page-size-select')?.value!=='all')throw Error('空目录删除前列表发生变化');
+      };
+      unchanged();
+      for(const row of selected())row.querySelector('.file-icon')?.dispatchEvent(new MouseEvent('click',{bubbles:true,ctrlKey:true}));
+      await waitFor(()=>!selected().length,'旧选择未清除');
+      const row=[...document.querySelectorAll('table.file-list tr.file-row[data-path]')].find(r=>r.getAttribute('data-path')===plan.source);
+      if(!row?.classList.contains('directory'))throw Error('源目录不存在');row.querySelector('.file-name-ellipsis')?.click();
+      const menu=await waitFor(()=>[...document.querySelectorAll('[role="menu"]')].find(visible),'目录菜单未出现');
+      const remove=[...menu.querySelectorAll('button,[role="menuitem"]')].find(b=>cleanText(b)==='删除');if(!remove)throw Error('找不到普通删除入口');remove.click();
+      dialog=await waitFor(()=>[...document.querySelectorAll('[aria-labelledby="delete-confirm-title"]')].find(visible),'删除确认窗口未出现');
+      const names=[...dialog.querySelectorAll('.delete-file-name')];
+      if(names.length!==1||cleanText(names[0])!==entry.name||selected().length!==1||selected()[0].getAttribute('data-path')!==plan.source)throw Error('删除确认范围不是计划中的单个源空目录');
+      if(dialog.querySelector('input:checked')||/永久|不可恢复|permanent/i.test(cleanText(dialog)))throw Error('拒绝永久删除');
+      unchanged();
+      const confirm=[...dialog.querySelectorAll('button')].find(b=>cleanText(b)==='删除');if(!confirm||confirm.disabled)throw Error('删除按钮不可用');
+      finishing++;submitted=true;
+      try{confirm.click();await waitFor(()=>!visible(dialog),'源空目录删除结果待核实');}finally{finishing--;}
+    }catch(e){if(!submitted){if(dialog)[...dialog.querySelectorAll('button')].find(b=>cleanText(b)==='取消')?.click();e.notSubmitted=true;}throw e;}
+  }
+  return {listing,moveShow,removeEmpty,currentPath,readRows,requireListReady};
 })

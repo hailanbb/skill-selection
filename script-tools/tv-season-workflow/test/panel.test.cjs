@@ -75,7 +75,7 @@ test('第四阶段安装和导入保持空闲，开始只检查，明确确认�
   assert.equal(page.opened.length,0);assert.equal(page.requests.length,0);
 });
 
-test('归档面板仅将无冲突且成功的季标紫，同季跳过仍保留原色及逐文件清单',async()=>{
+test('归档面板遇到同季冲突整剧暂缓，所有季保持原色且无移动',async()=>{
   const A=require('../season-archive.user.js'),name='天龙八部',category='日本剧集',source=A.SOURCE+'/'+category+'/'+name,target=A.DEST+'/'+category+'/'+name;
   const file=(p,n,directory=false)=>({path:p+'/'+n,name:n,directory,size:directory?'':'1 GB',modified:'2026-10-21 10:00'});
   const tasks=[1,2].map(season=>({name,category,showPath:source,path:source+'/Season '+season,season,color:'green',data:{'来源登记集数':1}}));
@@ -87,9 +87,9 @@ test('归档面板仅将无冲突且成功的季标紫，同季跳过仍保留�
     moves++;assert.equal(op.source,tasks[1].path);tree.set(source,tree.get(source).filter(f=>f.path!==op.source));tree.get(target).push(file(target,'Season 2',true));tree.set(op.target,tree.get(op.source).map(f=>({...f,path:op.target+'/'+f.name})));tree.delete(op.source);
   }}});
   const input=page.elements.find(e=>e.type==='file');input.files=[{name:'归档.xlsx',size:10,arrayBuffer:async()=>new ArrayBuffer(10)}];await input.fire('change');await page.button('开始检查').click();
-  assert.equal(session.updates.get(tasks[0]).state,'同季冲突，已跳过');await page.button('执行已列归档清单').click();
-  assert.equal(moves,1);assert.equal(session.updates.get(tasks[0]).color,null);assert.equal(session.updates.get(tasks[1]).color,'archived');
-  const record=session.updates.get(tasks[1]).record;assert.equal(record.operations[0].state,'verified');assert.ok(record.preserved.some(f=>f.path===tasks[0].path));
+  assert.equal(session.updates.get(tasks[0]).state,'整剧暂缓归档');await page.button('执行已列归档清单').click();
+  assert.equal(moves,0);assert.equal(session.updates.get(tasks[0]).color,null);assert.equal(session.updates.get(tasks[1]).color,null);
+  const record=session.updates.get(tasks[1]).record;assert.equal(record.operations.length,0);assert.ok(record.preserved.some(f=>f.path===tasks[0].path));
 });
 test('初检持久进度必须手动恢复，恢复不查询云盘或豆瓣，也不自动续跑',async()=>{
   const C=require('../season-inspect.user.js'),name='测试剧 (2025)',showPath=C.SOURCE+'/日本剧集/'+name;
