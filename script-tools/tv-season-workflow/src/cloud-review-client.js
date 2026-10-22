@@ -30,10 +30,16 @@
   function listLoading(){return [...document.querySelectorAll('.file-list-scroll-area .loading-bar')].some(visible);}
   function requireListReady({allowLoading=false,skipMissing=false,path=currentPath()}={}) {
     const errorText=[...document.querySelectorAll('.files-load-error')].filter(visible).map(e=>(e.textContent||'列表加载失败').trim()||'列表加载失败').join('；');
+    if(allowLoading&&listLoading())return; // 导航/刷新中可能残留上一目录错误，等当前加载结束再判断。
     if(errorText) {
       // 仅只读复核主动允许跳过明确的不存在；权限、网络、超时及一般404不能据此跳过。
       // 删除/移动和事后核实不传此选项，仍暂停核实，不能把文件消失直接当作操作成功。
-      const missing=/(?:文件|文件夹|目录|路径)不存在|找不到(?:指定的?)?(?:文件|文件夹|目录|路径)|(?:file|folder|directory|path) (?:does not exist|not found)|no such file or directory|code\s*[:=]\s*NotFound\b/i.test(errorText);
+      // CloudDrive2 实际文案：get_subfiles of "路径" error: not found "目录名" under "父路径"。
+      // 祖先剧目录缺失也会导致 Season 目录不可读；仅接受与本次请求一致的缺失路径。
+      const native=/get_subfiles\s+of\s+"([^"]+)"\s+error:\s*not found\s+"([^"/]+)"\s+under\s+"([^"]+)"/i.exec(errorText);
+      const missingPath=native?native[3].replace(/\/$/,'')+'/'+native[2]:'';
+      const nativeMissing=!!native&&(path===missingPath||path.startsWith(missingPath+'/'))&&(path===native[1]||path.startsWith(native[1]+'/'));
+      const missing=nativeMissing||/(?:文件|文件夹|目录|路径)(?:不存在|未找到)|找不到(?:指定的?)?(?:文件|文件夹|目录|路径)|(?:file|folder|directory|path) (?:does not exist|not found)|no such file or directory|code\s*[:=]\s*NotFound\b/i.test(errorText);
       if(skipMissing&&missing&&currentPath()===path&&!listLoading()) {
         const error=Error('目录不存在，已跳过本季：'+path+'；页面提示：'+errorText.slice(0,500));error.name='DirectoryMissing';error.path=path;throw error;
       }
@@ -60,6 +66,7 @@
     try {
       await navigate(path);
       const refresh=await waitFor(()=>document.querySelector('button.toolbar-refresh-btn'),'刷新控件不存在');refresh.click();
+      await sleep(250);checkpoint(); // 等页面提交本次刷新状态，避免沿用上一目录错误。
       const select=await waitFor(()=>{requireListReady({allowLoading:true,skipMissing,path});return document.querySelector('select.page-size-select');},'分页控件不存在');
       if(![...select.options].some(o=>o.value==='all'))throw Error('无法读取全部条目');
       if(select.value!=='all')setInput(select,'all');

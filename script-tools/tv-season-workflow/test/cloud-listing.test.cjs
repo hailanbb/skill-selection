@@ -40,3 +40,12 @@ test('仅显式只读复核可跳过明确不存在；默认清理/归档仍暂�
 test('权限、网络、未知错误和一般404不能误判为目录不存在',async()=>{
  for(const errorText of ['Permission denied','Access denied','连接超时','HTTP 404','读取文件失败']){const r=await read('review',{failed:true,errorText,skipMissing:true});assert.equal(r.error.name,'Pause');assert.match(r.error.message,new RegExp(errorText));}
 });
+
+test('CloudDrive2实际 get_subfiles not found 文案识别祖先剧目录缺失，继续复核',async()=>{
+ const show=dir.slice(0,dir.lastIndexOf('/')),parent=show.slice(0,show.lastIndexOf('/')),name=show.slice(show.lastIndexOf('/')+1);
+ const errorText='无法加载文件夹内容未找到：get_subfiles of "'+show+'" error: not found "'+name+'" under "'+parent+'"重试';
+ const r=await read('review',{failed:true,errorText,skipMissing:true});assert.equal(r.error.name,'DirectoryMissing');assert.equal(r.error.path,dir);
+ const guarded=await read('review',{failed:true,errorText});assert.equal(guarded.error.name,'Pause');
+ const wrong=await read('review',{failed:true,errorText:errorText.replaceAll(name,'其他剧'),skipMissing:true});assert.equal(wrong.error.name,'Pause');
+ const chinese=await read('review',{failed:true,errorText:'路径未找到：'+dir,skipMissing:true});assert.equal(chinese.error.name,'DirectoryMissing');
+});
