@@ -146,7 +146,7 @@ test('真实清理面板流程：开始只生成清单；拒绝确认不删；�
   const updates=new Map(),removed=[];let permit=false,queries=0;
   const page=await launch({},[],{source:review,confirm:()=>permit,workflow:{read:()=>({tasks:[task],errors:[],skipped:0,updates})},cloudClient:{
     worker(){},listing:async path=>{assert.equal(path,dir);return structuredClone(files);},queryDouban:async()=>{queries++;return {total:2,title:'测试剧 (2025)',releaseYears:['2025'],url:'https://movie.douban.com/subject/1/',broadcast:'已播完'};},
-    deleteFile:async f=>{removed.push(f.path);files=files.filter(r=>r.path!==f.path);}
+    deleteFiles:async batch=>{for(const f of batch){removed.push(f.path);files=files.filter(r=>r.path!==f.path);}}
   }});
   const input=page.elements.find(e=>e.type==='file');input.files=[{name:'下载报告.xlsx',size:10,arrayBuffer:async()=>new ArrayBuffer(10)}];await input.fire('change');
   await page.button('开始复核').click();assert.equal(queries,1);assert.equal(removed.length,0);assert.equal(updates.get(task).state,'待确认清理');assert.equal(page.button('执行已列清理清单').disabled,false);
@@ -173,4 +173,14 @@ test('复核阶段报告按钮仅开始后启用，保留暂停与继续尝试�
  await importFile();assert.equal(button.disabled,true);await page.button('开始复核').click();assert.equal(button.disabled,false);await button.click();assert.equal(captured.attempts.length,1);assert.equal(captured.status,'已暂停，可继续');
  failed=false;await page.button('继续复核').click();await button.click();assert.equal(captured.attempts.length,2);assert.equal(captured.attempts[0].result.state,'已暂停');assert.equal(captured.status,'已完成');assert.ok(page.elements.some(e=>e.download==='原报告_复核阶段报告.xlsx'));
  await importFile();assert.equal(button.disabled,true);
+});
+
+test('批次结果核实只读检查保留清单，分别记录已消失和仍存在文件',async()=>{
+ const source=fs.readFileSync(require('node:path').join(__dirname,'../season-review.user.js'),'utf8'),dir='/115/Library_incs/nas/电视剧/日本剧集/测试剧 (2025)/Season 1';
+ const file=name=>({name,path:dir+'/'+name,directory:false,size:'1 GB',modified:'2026-10-22 10:00'}),keep=file('Test.S01E01.1080p-A.mkv'),a=file('Test.S01E01.720p-B.mkv'),b=file('Test.S01E01.480p-C.mkv');
+ const task={name:'测试剧 (2025)',season:1,path:dir,key:'batch-test',data:{}},key='tv-review-v1:cleanup:'+task.key;
+ const pending={batchId:'batch',beforeSnapshot:[keep,a,b],files:[a,b].map(f=>({path:f.path,before:f,batchId:'batch'}))};
+ const page=await launch({[key]:{records:[],pending}},[],{source,workflow:{read:()=>({tasks:[task],errors:[],updates:new Map()})},cloudClient:{worker(){},listing:async()=>structuredClone([keep,b]),queryDouban:async()=>({total:1,title:task.name,releaseYears:['2025'],url:'https://movie.douban.com/subject/1/',broadcast:'已播完'}),deleteFiles(){assert.fail('核实不能再删除');}}});
+ const input=page.elements.find(e=>e.type==='file');input.files=[{name:'报告.xlsx',size:10,arrayBuffer:async()=>new ArrayBuffer(10)}];await input.fire('change');await page.button('开始复核').click();await page.button('核实上次删除结果').click();
+ const record=page.values.get(key);assert.equal(record.pending,null);assert.equal(record.records[0].state,'manual-verified');assert.equal(record.records[1].state,'cancelled');assert.equal(page.button('继续复核').disabled,false);
 });

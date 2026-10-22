@@ -1419,9 +1419,9 @@ return exports;
       const record=result.record||{},journal=record.journal||record;
       if(session.mode==='review') {
         const states={verified:'删除已验证','manual-verified':'人工确认已删除',cancelled:'人工确认未删除','not-submitted':'未提交删除'};
-        const events=[...journal.history||[],...journal.records||[],...(journal.pending?[{...journal.pending,state:'pending'}]:[])];
+        const events=[...journal.history||[],...journal.records||[],...(journal.pending?(journal.pending.files||[journal.pending]).map(f=>({...f,error:journal.pending.error||f.error,state:'pending'})):[])];
         for(const e of events) {
-          const f=e.before||e;add(task,['删除',e.planId||journal.planId||'',e.path,'',e.kind==='scrape'?'刮削文件':'视频/文件',f.size||'',f.modified||'',e.reason||'',e.owner||'',states[e.state]||'删除结果待核实',e.at||'',e.finishedAt||'',e.error||'']);
+          const f=e.before||e;add(task,['删除',e.batchId||e.planId||journal.planId||'',e.path,'',e.kind==='scrape'?'刮削文件':'视频/文件',f.size||'',f.modified||'',e.reason||'',e.owner||'',states[e.state]||'删除结果待核实',e.at||'',e.finishedAt||'',e.error||'']);
         }
         const before=record.before||record;
         for(const [files,action] of [[before.remove,'计划删除'],[before.keep,'保留视频'],[record.preserved,'保留刮削文件']])for(const f of files||[]) {

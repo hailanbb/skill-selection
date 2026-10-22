@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         剧集工作流 ③ · 豆瓣复核与版本清理
 // @namespace    local.tv-season-review
-// @version      1.2.0
+// @version      1.3.0
 // @description  导入黄色项，手动开始豆瓣分季复核；列出保留/删除清单，经确认后普通删除多余版本及专属刮削文件。
 // @match        https://clouddrive.example/*
 // @match        https://movie.douban.com/*
@@ -18,7 +18,7 @@
  * 导入不运行；“开始/继续复核”只读；“执行已列清理清单”才进入确认后的云端删除。
  * 唯一完整版本优先；同版本零散重复副本按云盘显示修改时间取最新。
  * 多个完整版本、时间并列、分组/集号不明均交人工，不删除目录和通用刮削文件。
- * 每删一个文件前刷新核对，删后验证目标消失及其余文件未变；结果不明绝不重试。
+ * 每批删除前刷新核对，批量删后验证目标消失及其余文件未变；结果不明绝不重试。
  */
 (function () {
   'use strict';
@@ -123,7 +123,7 @@
           message(`重新核实豆瓣及文件清单：${row.name} / Season ${row.season}`);
           const db=K.verifySource(row,await client.queryDouban(row,sourceLink(row)));checkpoint();
           if(db.total!==p.total||C.validSubjectUrl(db.url)!==C.validSubjectUrl(p.source.url))throw Error('豆瓣本季集数或条目已变化，请重新复核清单');
-          const done=await K.execute(p,{list:client.listing,remove:client.deleteFile,load,save,checkpoint,progress:f=>message(`正在清理 ${row.name}：${f.name}`)});
+          const done=await K.executeBatch(p,{list:client.listing,removeBatch:client.deleteFiles,load,save,checkpoint,progress:b=>message(`正在批量清理 ${row.name}：本批 ${b.count} 个文件`)});
           const after=await client.listing(row.path,{uninterruptible:true});
           K.assertFresh(p,after,done.deleted);
           const verified=K.plan(row,after,db,crypto.randomUUID());
@@ -133,13 +133,22 @@
           session.updates.set(row,result);plans.set(row,verified);render();
         }catch(e){session.updates.set(row,issue(row,e));render();throw e;}
       }
-      message('清理已逐项验证。请导出更新报告；结果不明和需要人工判断的项保留黄色。');
+      message('批量清理已逐文件验证。请导出更新报告；结果不明和需要人工判断的项保留黄色。');
     });
   }
   async function reconcile(row) {
     await exclusive(async()=>{
       const journal=load(row.key);if(!journal?.pending)return;
       const pending=journal.pending;
+      if(pending.files){
+        const files=pending.files;if(!files.length||files.some(f=>C.parent(f.path)!==row.path))throw Error('批次记录不属于本季');
+        const rows=await client.listing(row.path),gone=files.filter(f=>!rows.some(r=>r.path===f.path)),present=files.filter(f=>rows.some(r=>r.path===f.path));
+        const deleted=[...journal.records.filter(r=>r.batchId===pending.batchId&&r.state==='verified').map(r=>r.path),...gone.map(f=>f.path)];
+        if(!Array.isArray(pending.beforeSnapshot)||!K.equal(pending.beforeSnapshot.filter(f=>!deleted.includes(f.path)),rows))throw Error('批次核实发现保留文件变化，请人工检查，不能解除');
+        if(!confirm(`本批已消失 ${gone.length} 个，仍存在 ${present.length} 个。请确认没有在途删除；继续将逐文件记录结果，并要求重新复核，不会再次删除。\n`+files.map(f=>f.path).join('\n')))return;
+        journal.records.push(...files.map(f=>({...f,state:gone.includes(f)?'manual-verified':'cancelled',finishedAt:new Date().toISOString()})));journal.pending=null;save(row.key,journal);plans.delete(row);index=Math.min(index,session.tasks.indexOf(row));
+        session.updates.set(row,{state:'已人工核实批次，需重新复核',color:null,at:new Date().toISOString(),note:'已逐文件记录结果，未再次删除；请继续复核',record:{journal}});render();return;
+      }
       if(C.parent(pending.path)!==row.path)throw Error('待核实记录不属于本季，不能解除');
       const rows=await client.listing(row.path),present=rows.some(r=>r.path===pending.path);
       const prompt=present?'该文件仍在目录中。请先确认上次删除已失败/取消且没有在途任务，再解除暂停。':'该文件已不在目录中。是否将其记为人工核实删除，并重新复核剩余文件？';

@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         剧集工作流 ③ · 豆瓣复核与版本清理
 // @namespace    local.tv-season-review
-// @version      1.2.0
+// @version      1.3.0
 // @description  导入黄色项，手动开始豆瓣分季复核；列出保留/删除清单，经确认后普通删除多余版本及专属刮削文件。
 // @match        https://clouddrive.example/*
 // @match        https://movie.douban.com/*
@@ -18,7 +18,7 @@
  * 导入不运行；“开始/继续复核”只读；“执行已列清理清单”才进入确认后的云端删除。
  * 唯一完整版本优先；同版本零散重复副本按云盘显示修改时间取最新。
  * 多个完整版本、时间并列、分组/集号不明均交人工，不删除目录和通用刮削文件。
- * 每删一个文件前刷新核对，删后验证目标消失及其余文件未变；结果不明绝不重试。
+ * 每批删除前刷新核对，批量删后验证目标消失及其余文件未变；结果不明绝不重试。
  */
 (function () {
   'use strict';
@@ -601,7 +601,37 @@ return {norm,parent,base,mapKey,showInfo,titleIdentity,candidateMatches,chooseCa
     assertFresh(plan,await list(plan.path,{uninterruptible:true}),done);
     return {state:'清理已验证',records:journal.records,deleted:done,keep:plan.keep};
   }
-  return {MEDIA,SCRAPE,stamp,snapshot,equal,verifySource,completionEvidence,versionOf,sidecarOwners,plan,assertFresh,execute};
+  // 每季按最多50个文件一批提交；每批只刷新核实一次，审计仍逐文件记录。
+  async function executeBatch(plan,{list,removeBatch,load,save,checkpoint,progress=()=>{},batchSize=50}) {
+    if(!plan.complete||!plan.eligible||!plan.keep.length||!plan.remove.length)throw Error('此项没有可执行的唯一完整版本清理计划');
+    if(typeof removeBatch!=='function'||!Number.isInteger(batchSize)||batchSize<1||batchSize>50)throw Error('批量删除接口或批次大小无效');
+    let journal=load(plan.taskKey)||{planId:plan.id,records:[],pending:null};
+    if(journal.pending)throw Error('上次删除结果未确认，请先核实，不能重复提交');
+    if(journal.planId!==plan.id)journal={planId:plan.id,records:[],pending:null,history:[...journal.history||[],...journal.records||[]]};
+    const done=journal.records.filter(r=>r.state==='verified').map(r=>r.path);
+    if(done.some(p=>!plan.remove.some(r=>r.path===p)))throw Error('删除记录与当前清单不一致');
+    const remaining=plan.remove.filter(f=>!done.includes(f.path));
+    for(let offset=0;offset<remaining.length;offset+=batchSize) {
+      checkpoint();const current=await list(plan.path);checkpoint();assertFresh(plan,current,done);
+      const batch=remaining.slice(offset,offset+batchSize),at=new Date().toISOString(),batchId=plan.id+':'+journal.records.length+':'+at;
+      const events=batch.map(f=>({path:f.path,before:stamp(f),kind:f.kind,owner:f.owner||'',reason:f.reason,planId:plan.id,batchId,at}));
+      journal.pending={batchId,planId:plan.id,at,files:events,beforeSnapshot:snapshot(current)};save(plan.taskKey,journal);
+      progress({count:batch.length,batchId});let after;
+      try {await removeBatch(batch,current);after=await list(plan.path,{uninterruptible:true});}
+      catch(e){
+        if(e.notSubmitted){journal.records.push(...events.map(f=>({...f,state:'not-submitted',error:e.message,finishedAt:new Date().toISOString()})));journal.pending=null;save(plan.taskKey,journal);throw e;}
+        journal.pending.error=e.message+'；本批删除结果未确认，不自动重试';save(plan.taskKey,journal);throw Error('批量删除结果未确认，请核实上次删除结果');
+      }
+      const gone=batch.filter(f=>!after.some(r=>r.path===f.path)).map(f=>f.path);
+      try{assertFresh(plan,after,[...done,...gone]);}catch(e){journal.pending.error=e.message;save(plan.taskKey,journal);throw Error('批量删除后保留清单发生变化，结果未确认');}
+      journal.records.push(...events.filter(f=>gone.includes(f.path)).map(f=>({...f,state:'verified',finishedAt:new Date().toISOString()})));done.push(...gone);
+      const unresolved=events.filter(f=>!gone.includes(f.path));
+      if(unresolved.length){journal.pending.files=unresolved;journal.pending.error='本批部分文件仍存在，请确认没有在途删除后人工核实；不自动重试';save(plan.taskKey,journal);throw Error('本批仅部分删除，已记录成功项并停止；请核实剩余文件');}
+      journal.pending=null;save(plan.taskKey,journal);
+    }
+    return {state:'清理已验证',records:journal.records,deleted:done,keep:plan.keep};
+  }
+  return {executeBatch,MEDIA,SCRAPE,stamp,snapshot,equal,verifySource,completionEvidence,versionOf,sidecarOwners,plan,assertFresh,execute};
 })
 )(C);
   const createClient=/* CloudDrive2 / 豆瓣页面适配层。
@@ -818,7 +848,37 @@ return {norm,parent,base,mapKey,showInfo,titleIdentity,candidateMatches,chooseCa
       try {confirm.click();await waitFor(()=>!visible(dialog),'删除请求未结束');}finally{finishing--;}
     }catch(e){if(!submitted){cancelDelete();e.notSubmitted=true;}throw e;}
   }
-  return {listing,queryDouban,deleteFile,worker:doubanWorker,currentPath,readRows,requireListReady};
+  // 不使用全选；只多选计划内普通文件，且通过工具栏入口保持整个选择集合。
+  async function deleteFiles(files,expectedRows) {
+    let submitted=false;
+    const targets=new Set(files.map(f=>f.path)),folder=files.length?parent(files[0].path):'';
+    function unchanged(){
+      checkpoint();requireListReady();
+      if(!files.length||files.length>50||targets.size!==files.length||files.some(f=>f.directory||!allowed(f.path)||parent(f.path)!==folder))throw Error('批量删除范围无效');
+      if(currentPath()!==folder||breadcrumbPath()!==folder||!Array.isArray(expectedRows)||readCount()!==expectedRows.length||document.querySelector('select.page-size-select')?.value!=='all')throw Error('批量删除前目录或分页发生变化');
+      const key=r=>JSON.stringify([r.path,r.name,!!r.directory,r.modified,r.size]),current=readRows(),expected=new Map(expectedRows.map(f=>[f.path,key(f)]));
+      if(current.length!==expectedRows.length||current.some(f=>expected.get(f.path)!==key(f))||files.some(f=>expected.get(f.path)!==key(f)))throw Error('批量删除前文件清单发生变化');
+    }
+    function exactSelection(){const rows=selected();if(rows.length!==targets.size||rows.some(e=>!targets.has(e.getAttribute('data-path'))))throw Error('网页多选范围与批量清单不一致');}
+    try {
+      unchanged();if([...document.querySelectorAll('[role="dialog"]')].some(visible))throw Error('请先关闭其他对话框');
+      for(const e of selected())e.querySelector('.file-icon')?.dispatchEvent(new MouseEvent('click',{bubbles:true,ctrlKey:true}));
+      await waitFor(()=>!selected().length,'无法清除旧文件选择');
+      for(const f of files){checkpoint();const row=rowFor(f.path);if(!row||row.classList.contains('directory'))throw Error('批量目标已变化');row.querySelector('.file-icon')?.dispatchEvent(new MouseEvent('click',{bubbles:true,ctrlKey:true}));}
+      // 等一次界面状态提交，确保工具栏获得最终多选集合。
+      await sleep(100);unchanged();exactSelection();
+      const buttons=[...document.querySelectorAll('button[title="删除"]')].filter(visible);if(buttons.length!==1||buttons[0].disabled)throw Error('未找到唯一可用的批量删除工具栏按钮');buttons[0].click();
+      const dialog=await waitFor(()=>[...document.querySelectorAll('[aria-labelledby="delete-confirm-title"]')].find(visible),'批量删除确认窗口未出现');
+      const items=[...dialog.querySelectorAll('.delete-file-item')],byName=new Map(files.map(f=>[f.name,f]));
+      if(items.length!==files.length||byName.size!==files.length)throw Error('批量确认窗口未完整列出本批文件，不提交删除');
+      const names=new Set();for(const item of items){const name=item.querySelector('.delete-file-name')?.textContent.trim(),f=byName.get(name);if(!f||names.has(name)||item.querySelector('.delete-file-size')?.textContent.trim()!==f.size)throw Error('批量确认窗口文件名称或大小不一致');names.add(name);}
+      if(dialog.querySelector('input:checked')||/永久|不可恢复|permanent/i.test(dialog.textContent))throw Error('检测到永久删除选项，本脚本不执行');
+      unchanged();exactSelection();const confirm=[...dialog.querySelectorAll('button')].find(b=>cleanText(b)==='删除');if(!confirm||confirm.disabled)throw Error('批量删除确认按钮不可用');
+      finishing++;submitted=true;
+      try{confirm.click();await waitFor(()=>!visible(dialog),'批量删除请求未结束');}finally{finishing--;}
+    }catch(e){if(!submitted){cancelDelete();e.notSubmitted=true;}throw e;}
+  }
+  return {deleteFiles,listing,queryDouban,deleteFile,worker:doubanWorker,currentPath,readRows,requireListReady};
 })
 ;
   let excel,report,reviewStage=null;
@@ -1436,9 +1496,9 @@ return exports;
       const record=result.record||{},journal=record.journal||record;
       if(session.mode==='review') {
         const states={verified:'删除已验证','manual-verified':'人工确认已删除',cancelled:'人工确认未删除','not-submitted':'未提交删除'};
-        const events=[...journal.history||[],...journal.records||[],...(journal.pending?[{...journal.pending,state:'pending'}]:[])];
+        const events=[...journal.history||[],...journal.records||[],...(journal.pending?(journal.pending.files||[journal.pending]).map(f=>({...f,error:journal.pending.error||f.error,state:'pending'})):[])];
         for(const e of events) {
-          const f=e.before||e;add(task,['删除',e.planId||journal.planId||'',e.path,'',e.kind==='scrape'?'刮削文件':'视频/文件',f.size||'',f.modified||'',e.reason||'',e.owner||'',states[e.state]||'删除结果待核实',e.at||'',e.finishedAt||'',e.error||'']);
+          const f=e.before||e;add(task,['删除',e.batchId||e.planId||journal.planId||'',e.path,'',e.kind==='scrape'?'刮削文件':'视频/文件',f.size||'',f.modified||'',e.reason||'',e.owner||'',states[e.state]||'删除结果待核实',e.at||'',e.finishedAt||'',e.error||'']);
         }
         const before=record.before||record;
         for(const [files,action] of [[before.remove,'计划删除'],[before.keep,'保留视频'],[record.preserved,'保留刮削文件']])for(const f of files||[]) {
@@ -1677,7 +1737,7 @@ return exports;
           message(`重新核实豆瓣及文件清单：${row.name} / Season ${row.season}`);
           const db=K.verifySource(row,await client.queryDouban(row,sourceLink(row)));checkpoint();
           if(db.total!==p.total||C.validSubjectUrl(db.url)!==C.validSubjectUrl(p.source.url))throw Error('豆瓣本季集数或条目已变化，请重新复核清单');
-          const done=await K.execute(p,{list:client.listing,remove:client.deleteFile,load,save,checkpoint,progress:f=>message(`正在清理 ${row.name}：${f.name}`)});
+          const done=await K.executeBatch(p,{list:client.listing,removeBatch:client.deleteFiles,load,save,checkpoint,progress:b=>message(`正在批量清理 ${row.name}：本批 ${b.count} 个文件`)});
           const after=await client.listing(row.path,{uninterruptible:true});
           K.assertFresh(p,after,done.deleted);
           const verified=K.plan(row,after,db,crypto.randomUUID());
@@ -1687,13 +1747,22 @@ return exports;
           session.updates.set(row,result);plans.set(row,verified);render();
         }catch(e){session.updates.set(row,issue(row,e));render();throw e;}
       }
-      message('清理已逐项验证。请导出更新报告；结果不明和需要人工判断的项保留黄色。');
+      message('批量清理已逐文件验证。请导出更新报告；结果不明和需要人工判断的项保留黄色。');
     });
   }
   async function reconcile(row) {
     await exclusive(async()=>{
       const journal=load(row.key);if(!journal?.pending)return;
       const pending=journal.pending;
+      if(pending.files){
+        const files=pending.files;if(!files.length||files.some(f=>C.parent(f.path)!==row.path))throw Error('批次记录不属于本季');
+        const rows=await client.listing(row.path),gone=files.filter(f=>!rows.some(r=>r.path===f.path)),present=files.filter(f=>rows.some(r=>r.path===f.path));
+        const deleted=[...journal.records.filter(r=>r.batchId===pending.batchId&&r.state==='verified').map(r=>r.path),...gone.map(f=>f.path)];
+        if(!Array.isArray(pending.beforeSnapshot)||!K.equal(pending.beforeSnapshot.filter(f=>!deleted.includes(f.path)),rows))throw Error('批次核实发现保留文件变化，请人工检查，不能解除');
+        if(!confirm(`本批已消失 ${gone.length} 个，仍存在 ${present.length} 个。请确认没有在途删除；继续将逐文件记录结果，并要求重新复核，不会再次删除。\n`+files.map(f=>f.path).join('\n')))return;
+        journal.records.push(...files.map(f=>({...f,state:gone.includes(f)?'manual-verified':'cancelled',finishedAt:new Date().toISOString()})));journal.pending=null;save(row.key,journal);plans.delete(row);index=Math.min(index,session.tasks.indexOf(row));
+        session.updates.set(row,{state:'已人工核实批次，需重新复核',color:null,at:new Date().toISOString(),note:'已逐文件记录结果，未再次删除；请继续复核',record:{journal}});render();return;
+      }
       if(C.parent(pending.path)!==row.path)throw Error('待核实记录不属于本季，不能解除');
       const rows=await client.listing(row.path),present=rows.some(r=>r.path===pending.path);
       const prompt=present?'该文件仍在目录中。请先确认上次删除已失败/取消且没有在途任务，再解除暂停。':'该文件已不在目录中。是否将其记为人工核实删除，并重新复核剩余文件？';

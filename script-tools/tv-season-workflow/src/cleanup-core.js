@@ -133,5 +133,35 @@
     assertFresh(plan,await list(plan.path,{uninterruptible:true}),done);
     return {state:'清理已验证',records:journal.records,deleted:done,keep:plan.keep};
   }
-  return {MEDIA,SCRAPE,stamp,snapshot,equal,verifySource,completionEvidence,versionOf,sidecarOwners,plan,assertFresh,execute};
+  // 每季按最多50个文件一批提交；每批只刷新核实一次，审计仍逐文件记录。
+  async function executeBatch(plan,{list,removeBatch,load,save,checkpoint,progress=()=>{},batchSize=50}) {
+    if(!plan.complete||!plan.eligible||!plan.keep.length||!plan.remove.length)throw Error('此项没有可执行的唯一完整版本清理计划');
+    if(typeof removeBatch!=='function'||!Number.isInteger(batchSize)||batchSize<1||batchSize>50)throw Error('批量删除接口或批次大小无效');
+    let journal=load(plan.taskKey)||{planId:plan.id,records:[],pending:null};
+    if(journal.pending)throw Error('上次删除结果未确认，请先核实，不能重复提交');
+    if(journal.planId!==plan.id)journal={planId:plan.id,records:[],pending:null,history:[...journal.history||[],...journal.records||[]]};
+    const done=journal.records.filter(r=>r.state==='verified').map(r=>r.path);
+    if(done.some(p=>!plan.remove.some(r=>r.path===p)))throw Error('删除记录与当前清单不一致');
+    const remaining=plan.remove.filter(f=>!done.includes(f.path));
+    for(let offset=0;offset<remaining.length;offset+=batchSize) {
+      checkpoint();const current=await list(plan.path);checkpoint();assertFresh(plan,current,done);
+      const batch=remaining.slice(offset,offset+batchSize),at=new Date().toISOString(),batchId=plan.id+':'+journal.records.length+':'+at;
+      const events=batch.map(f=>({path:f.path,before:stamp(f),kind:f.kind,owner:f.owner||'',reason:f.reason,planId:plan.id,batchId,at}));
+      journal.pending={batchId,planId:plan.id,at,files:events,beforeSnapshot:snapshot(current)};save(plan.taskKey,journal);
+      progress({count:batch.length,batchId});let after;
+      try {await removeBatch(batch,current);after=await list(plan.path,{uninterruptible:true});}
+      catch(e){
+        if(e.notSubmitted){journal.records.push(...events.map(f=>({...f,state:'not-submitted',error:e.message,finishedAt:new Date().toISOString()})));journal.pending=null;save(plan.taskKey,journal);throw e;}
+        journal.pending.error=e.message+'；本批删除结果未确认，不自动重试';save(plan.taskKey,journal);throw Error('批量删除结果未确认，请核实上次删除结果');
+      }
+      const gone=batch.filter(f=>!after.some(r=>r.path===f.path)).map(f=>f.path);
+      try{assertFresh(plan,after,[...done,...gone]);}catch(e){journal.pending.error=e.message;save(plan.taskKey,journal);throw Error('批量删除后保留清单发生变化，结果未确认');}
+      journal.records.push(...events.filter(f=>gone.includes(f.path)).map(f=>({...f,state:'verified',finishedAt:new Date().toISOString()})));done.push(...gone);
+      const unresolved=events.filter(f=>!gone.includes(f.path));
+      if(unresolved.length){journal.pending.files=unresolved;journal.pending.error='本批部分文件仍存在，请确认没有在途删除后人工核实；不自动重试';save(plan.taskKey,journal);throw Error('本批仅部分删除，已记录成功项并停止；请核实剩余文件');}
+      journal.pending=null;save(plan.taskKey,journal);
+    }
+    return {state:'清理已验证',records:journal.records,deleted:done,keep:plan.keep};
+  }
+  return {executeBatch,MEDIA,SCRAPE,stamp,snapshot,equal,verifySource,completionEvidence,versionOf,sidecarOwners,plan,assertFresh,execute};
 })

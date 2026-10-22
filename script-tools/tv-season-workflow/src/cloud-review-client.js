@@ -136,5 +136,35 @@
       try {confirm.click();await waitFor(()=>!visible(dialog),'删除请求未结束');}finally{finishing--;}
     }catch(e){if(!submitted){cancelDelete();e.notSubmitted=true;}throw e;}
   }
-  return {listing,queryDouban,deleteFile,worker:doubanWorker,currentPath,readRows,requireListReady};
+  // 不使用全选；只多选计划内普通文件，且通过工具栏入口保持整个选择集合。
+  async function deleteFiles(files,expectedRows) {
+    let submitted=false;
+    const targets=new Set(files.map(f=>f.path)),folder=files.length?parent(files[0].path):'';
+    function unchanged(){
+      checkpoint();requireListReady();
+      if(!files.length||files.length>50||targets.size!==files.length||files.some(f=>f.directory||!allowed(f.path)||parent(f.path)!==folder))throw Error('批量删除范围无效');
+      if(currentPath()!==folder||breadcrumbPath()!==folder||!Array.isArray(expectedRows)||readCount()!==expectedRows.length||document.querySelector('select.page-size-select')?.value!=='all')throw Error('批量删除前目录或分页发生变化');
+      const key=r=>JSON.stringify([r.path,r.name,!!r.directory,r.modified,r.size]),current=readRows(),expected=new Map(expectedRows.map(f=>[f.path,key(f)]));
+      if(current.length!==expectedRows.length||current.some(f=>expected.get(f.path)!==key(f))||files.some(f=>expected.get(f.path)!==key(f)))throw Error('批量删除前文件清单发生变化');
+    }
+    function exactSelection(){const rows=selected();if(rows.length!==targets.size||rows.some(e=>!targets.has(e.getAttribute('data-path'))))throw Error('网页多选范围与批量清单不一致');}
+    try {
+      unchanged();if([...document.querySelectorAll('[role="dialog"]')].some(visible))throw Error('请先关闭其他对话框');
+      for(const e of selected())e.querySelector('.file-icon')?.dispatchEvent(new MouseEvent('click',{bubbles:true,ctrlKey:true}));
+      await waitFor(()=>!selected().length,'无法清除旧文件选择');
+      for(const f of files){checkpoint();const row=rowFor(f.path);if(!row||row.classList.contains('directory'))throw Error('批量目标已变化');row.querySelector('.file-icon')?.dispatchEvent(new MouseEvent('click',{bubbles:true,ctrlKey:true}));}
+      // 等一次界面状态提交，确保工具栏获得最终多选集合。
+      await sleep(100);unchanged();exactSelection();
+      const buttons=[...document.querySelectorAll('button[title="删除"]')].filter(visible);if(buttons.length!==1||buttons[0].disabled)throw Error('未找到唯一可用的批量删除工具栏按钮');buttons[0].click();
+      const dialog=await waitFor(()=>[...document.querySelectorAll('[aria-labelledby="delete-confirm-title"]')].find(visible),'批量删除确认窗口未出现');
+      const items=[...dialog.querySelectorAll('.delete-file-item')],byName=new Map(files.map(f=>[f.name,f]));
+      if(items.length!==files.length||byName.size!==files.length)throw Error('批量确认窗口未完整列出本批文件，不提交删除');
+      const names=new Set();for(const item of items){const name=item.querySelector('.delete-file-name')?.textContent.trim(),f=byName.get(name);if(!f||names.has(name)||item.querySelector('.delete-file-size')?.textContent.trim()!==f.size)throw Error('批量确认窗口文件名称或大小不一致');names.add(name);}
+      if(dialog.querySelector('input:checked')||/永久|不可恢复|permanent/i.test(dialog.textContent))throw Error('检测到永久删除选项，本脚本不执行');
+      unchanged();exactSelection();const confirm=[...dialog.querySelectorAll('button')].find(b=>cleanText(b)==='删除');if(!confirm||confirm.disabled)throw Error('批量删除确认按钮不可用');
+      finishing++;submitted=true;
+      try{confirm.click();await waitFor(()=>!visible(dialog),'批量删除请求未结束');}finally{finishing--;}
+    }catch(e){if(!submitted){cancelDelete();e.notSubmitted=true;}throw e;}
+  }
+  return {deleteFiles,listing,queryDouban,deleteFile,worker:doubanWorker,currentPath,readRows,requireListReady};
 })

@@ -180,3 +180,9 @@ test('复核替换来源后，显示 URL 与点击目标同步更新，源云盘
   assert.equal(sheet.M4.v,url);assert.equal(sheet.M4.l.Target,url);assert.equal(sheet.Y4.l.Target,url);assert.equal(sheet.AJ4.l.Target,url);
   const reread=R.read(out,{...options,mode:'review'});assert.equal(reread.tasks[0].path,session.tasks[0].path);
 });
+
+test('批量删除成功与待核实文件逐行导出，保留共同批次号',()=>{
+ const s=R.read(fixture(),{...options,mode:'review'}),t=s.tasks[0],event=n=>({path:t.path+'/'+n+'.mkv',before:{size:'1 GB',modified:'2026-10-22 10:00'},batchId:'batch-1',planId:'plan-1',kind:'video',reason:'多余版本',at:'start'});
+ s.updates.set(t,{state:'部分删除，待核实',record:{journal:{records:[{...event('A'),state:'verified'}],pending:{batchId:'batch-1',files:[event('B'),event('C')],error:'部分文件仍存在'}}}});
+ const detail=X.utils.sheet_to_json(X.read(R.write(s)).Sheets['清理明细_1']);assert.equal(detail.length,3);assert.ok(detail.every(r=>r['操作批次']==='batch-1'));assert.equal(detail[0]['执行结果'],'删除已验证');assert.equal(detail[1]['执行结果'],'删除结果待核实');assert.equal(detail[2]['原路径'],t.path+'/C.mkv');
+});
