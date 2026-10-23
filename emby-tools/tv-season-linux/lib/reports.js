@@ -44,8 +44,8 @@ export function exportJob(job,workflow,plans=[]){
 // Imports select scan scopes, never import executable requests or overwrite live journals.
 export function importScopes(file,config){
  const bytes=fs.readFileSync(localPath(file));if(bytes.length>30*1024*1024)throw Error('导入文件超过30MB');let paths=[];
- if(/\.json$/i.test(file)){const d=JSON.parse(bytes.toString('utf8'));if(d.schema!=='tvflow/1'||!Array.isArray(d.workflow?.seasons))throw Error('不是本程序完整记录');paths=d.workflow.seasons.map(s=>s.showPath);}
- else if(/\.xlsx$/i.test(file)){const book=X.read(bytes,{type:'buffer',cellFormula:true});for(const sheet of Object.values(book.Sheets)){const rows=X.utils.sheet_to_json(sheet,{defval:''});for(const r of rows){let p=r['剧集目录路径'];if(!p&&r['季目录'])p=parent(String(r['季目录']));if(!p&&r['季目录路径'])p=parent(String(r['季目录路径']));if(p)paths.push(String(p));}}}
+ if(/\.json$/i.test(file)){const d=JSON.parse(bytes.toString('utf8'));if(d.schema!=='tvflow/1'||!Array.isArray(d.workflow?.seasons))throw Error('不是本程序完整记录');if(d.job?.operationRecords?.length||d.workflow.seasons.some(s=>s.download?.records?.length||s.repair||s.archive))throw Error('文件含外部操作历史，请使用原数据库继续；不能忽略防重记录导入新轮次');paths=d.workflow.seasons.map(s=>s.showPath);}
+ else if(/\.xlsx$/i.test(file)){const book=X.read(bytes,{type:'buffer',cellFormula:true});if(book.SheetNames.some(n=>/实际操作明细|下载明细|清理明细|归档明细|整理修复明细/.test(n)))throw Error('报告含操作历史，请使用原数据库继续；不忽略防重记录导入');for(const sheet of Object.values(book.Sheets)){const rows=X.utils.sheet_to_json(sheet,{defval:''});for(const r of rows){if(['下载记录','复核清理记录','归档记录','整理修复记录'].some(k=>r[k]&&r[k]!=='[]'&&r[k]!=='{}'))throw Error('报告含操作历史，请先在原流程核实');let p=r['剧集目录路径'];if(!p&&r['季目录'])p=parent(String(r['季目录']));if(!p&&r['季目录路径'])p=parent(String(r['季目录路径']));if(p)paths.push(String(p));}}}
  else throw Error('请选择XLSX或本程序JSON；CSV不作为流程状态导入');
  paths=[...new Set(paths.map(cloudPath))];if(!paths.length||paths.some(p=>!within(p,config.source)||p===config.source))throw Error('没有位于当前源根内的有效作品路径');return paths;
 }
