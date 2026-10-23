@@ -1,0 +1,15 @@
+import {createRequire} from 'node:module';
+const require=createRequire(import.meta.url);
+export const I=require('../vendor/upstream/season-inspect.user.js');
+const cleanup=require('./generated/cleanup-core.cjs');
+const archive=require('./generated/archive-core.cjs');
+const version=require('./generated/version-download.cjs');
+const download=require('./generated/download-core.cjs');
+const broadcast=require('./generated/broadcast-audit.cjs');
+const repair=require('./generated/transfer-repair.cjs');
+const repairState=require('./generated/repair-state.cjs');
+export const K=cleanup(I),V=version(K),B=broadcast(),R=repairState();
+const cleanTitleText=v=>String(v||'').normalize('NFKC').replace(/[\u200b-\u200f\u202a-\u202e\ufeff]/g,'').replace(/\s*\((?:台|臺|港|台湾|臺灣|香港|大陆|大陸|中国大陆|中國大陸)\)\s*$/u,'').trim();
+export const D=download({norm:I.norm,cleanTitleText},V,B);
+export const T=repair(D,I,R,V);
+export const A=(source,destination)=>archive(I,{source,destination});

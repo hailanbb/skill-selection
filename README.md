@@ -19,6 +19,7 @@ skill-selection/
 │   └── README.md
 ├── emby-tools/                 # emby工具：媒体整理与订阅维护
 │   ├── README.md               # 分类索引
+│   ├── tv-season-linux/        # 剧集整理Linux版：SSH菜单与远端API
 │   ├── tv-season-workflow-backend/ # 剧集整理工作流(后端)
 │   ├── tv-season-workflow/      # 剧集整理工作流(油猴版)
 │   └── moviepilot-unsubscribe/ # MoviePilot订阅批量取消脚本 v2.4.0
@@ -107,6 +108,7 @@ skill-selection/
 
 | 工具名称 | 适用环境 | 核心功能 | 文件与说明 |
 | :--- | :--- | :--- | :--- |
+| **剧集整理Linux版** | **Ubuntu / SSH + Node.js** | 中文菜单与彩色实时进度，远端CloudDrive2/MoviePilot API；电视剧与动漫四阶段、持久防重、Excel/CSV/JSON及独立日志路径。 | [项目与源码](emby-tools/tv-season-linux/README.md) · [安装](emby-tools/tv-season-linux/INSTALL.md) · [操作说明](emby-tools/tv-season-linux/docs/USAGE.md) |
 | **剧集整理工作流(后端)** | **Windows 11 / Ubuntu 24 + Node.js** | 四阶段API后端，CloudDrive2 / MoviePilot / TMDB接口、持久化计划与日志、Excel报告衔接。 | [项目与源码](emby-tools/tv-season-workflow-backend/README.md) · [从零安装](emby-tools/tv-season-workflow-backend/INSTALL.md) · [接口与使用](emby-tools/tv-season-workflow-backend/docs/API.md) |
 | **剧集整理工作流(油猴版)** | **Chrome + Tampermonkey + CloudDrive2 / MoviePilot** | ① 初检 → ② 补缺下载 → ③ 复核清理 → ④ 归档；Excel衔接，逐项记录下载、删除和移动。 | [项目与四个脚本](emby-tools/tv-season-workflow/README.md) · [从零安装](emby-tools/tv-season-workflow/INSTALL.md) · [报告与追溯](emby-tools/tv-season-workflow/REPORT.md) |
 | **MoviePilot订阅批量取消脚本 · v2.4.0** | **Chrome + Tampermonkey + MoviePilot** | 电影批量取消；电视剧零进度取消、未完成订阅维护、跳过名单、资源筛选及结果导出。 | [安装脚本](emby-tools/moviepilot-unsubscribe/moviepilot-unsubscribe.user.js) · [配置与使用](emby-tools/moviepilot-unsubscribe/README.md) |
