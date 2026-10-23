@@ -1,0 +1,93 @@
+npm notice run tv-season-backend@1.0.0 test
+npm notice run node --test test/*.test.cjs
+TAP version 13
+# (node:613784) ExperimentalWarning: SQLite is an experimental feature and might change at any time
+# (Use `node --trace-warnings ...` to show where the warning was created)
+# Subtest: Chinese paths, TMDB finale policy, unknown counts
+ok 1 - Chinese paths, TMDB finale policy, unknown counts
+  ---
+  duration_ms: 2.3925
+  type: 'test'
+  ...
+# Subtest: scan, inspect, immutable archive plan, execute and prevent replay
+ok 2 - scan, inspect, immutable archive plan, execute and prevent replay
+  ---
+  duration_ms: 41.6276
+  type: 'test'
+  ...
+# Subtest: changed source blocks archive without mutation
+ok 3 - changed source blocks archive without mutation
+  ---
+  duration_ms: 22.1171
+  type: 'test'
+  ...
+# Subtest: failed listing is not an empty season
+ok 4 - failed listing is not an empty season
+  ---
+  duration_ms: 16.0769
+  type: 'test'
+  ...
+# Subtest: network API authentication, dry run and job result
+ok 5 - network API authentication, dry run and job result
+  ---
+  duration_ms: 266.3305
+  type: 'test'
+  ...
+# Subtest: MoviePilot credentials in header and no redirect following
+ok 6 - MoviePilot credentials in header and no redirect following
+  ---
+  duration_ms: 0.6084
+  type: 'test'
+  ...
+# Subtest: multiple complete versions cannot be deleted
+ok 7 - multiple complete versions cannot be deleted
+  ---
+  duration_ms: 17.5132
+  type: 'test'
+  ...
+# Subtest: gRPC-Web consumes all stream frames and requires successful trailers
+ok 8 - gRPC-Web consumes all stream frames and requires successful trailers
+  ---
+  duration_ms: 17.2919
+  type: 'test'
+  ...
+# Subtest: runtime schema exposes correct gRPC-Web method path
+ok 9 - runtime schema exposes correct gRPC-Web method path
+  ---
+  duration_ms: 232.7907
+  type: 'test'
+  ...
+# (node:620200) ExperimentalWarning: SQLite is an experimental feature and might change at any time
+# (Use `node --trace-warnings ...` to show where the warning was created)
+# Subtest: approved download plan hides secret contexts and uncertain submissions never repeat
+ok 10 - approved download plan hides secret contexts and uncertain submissions never repeat
+  ---
+  duration_ms: 41.0616
+  type: 'test'
+  ...
+# Subtest: Chinese XLSX export/import round trip and duplicate import has no partial writes
+ok 11 - Chinese XLSX export/import round trip and duplicate import has no partial writes
+  ---
+  duration_ms: 85.0231
+  type: 'test'
+  ...
+# Subtest: restart preserves uncertain plans and journal
+ok 12 - restart preserves uncertain plans and journal
+  ---
+  duration_ms: 29.0301
+  type: 'test'
+  ...
+1..12
+# tests 12
+# suites 0
+# pass 12
+# fail 0
+# cancelled 0
+# skipped 0
+# todo 0
+# duration_ms 712.9244
+npm notice
+npm notice New minor version of npm available! 12.0.2 -> 12.2.1
+npm notice Changelog: https://github.com/npm/cli/releases/tag/v12.2.1
+npm notice To update run: npm install -g npm@12.2.1
+npm notice

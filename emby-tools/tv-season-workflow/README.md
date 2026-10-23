@@ -55,6 +55,6 @@
 
 ## 项目维护
 
-[版本与验证](CHANGELOG.md) · [构建与测试](DEVELOPMENT.md) · [第三方许可](THIRD_PARTY.md) · [返回 Script Tools](../README.md)
+[版本与验证](CHANGELOG.md) · [构建与测试](DEVELOPMENT.md) · [第三方许可](THIRD_PARTY.md) · [返回 emby工具](../README.md)
 
 旧综合版已从当前仓库目录及索引移除，由本项目统一维护。安装四阶段版本前请停用浏览器中的旧综合版。四个脚本核对的是文件名、界面列表和来源信息，不验证视频播放质量或文件内容哈希；界面或接口升级可能需要适配。

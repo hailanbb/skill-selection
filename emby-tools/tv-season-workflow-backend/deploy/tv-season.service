@@ -1,0 +1,16 @@
+[Unit]
+Description=TV Season Workflow Backend
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+WorkingDirectory=/opt/tv-season-backend
+EnvironmentFile=/opt/tv-season-backend/config.env
+ExecStart=/usr/bin/node app/server.cjs
+Restart=on-failure
+RestartSec=5
+UMask=0077
+
+[Install]
+WantedBy=multi-user.target

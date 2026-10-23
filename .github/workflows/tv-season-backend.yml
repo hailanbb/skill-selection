@@ -1,0 +1,28 @@
+name: TV season backend
+on:
+  push:
+    paths: ['emby-tools/tv-season-workflow-backend/**', '.github/workflows/tv-season-backend.yml']
+  pull_request:
+    paths: ['emby-tools/tv-season-workflow-backend/**', '.github/workflows/tv-season-backend.yml']
+  workflow_dispatch:
+jobs:
+  test:
+    strategy:
+      matrix:
+        os: [windows-2025, ubuntu-24.04]
+        node: [22, 24]
+    runs-on: ${{ matrix.os }}
+    defaults:
+      run:
+        working-directory: emby-tools/tv-season-workflow-backend
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ matrix.node }}
+          cache: npm
+          cache-dependency-path: emby-tools/tv-season-workflow-backend/package-lock.json
+      - run: npm ci --ignore-scripts
+        shell: bash
+      - run: npm test
+        shell: bash

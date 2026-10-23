@@ -1,6 +1,6 @@
 # 个人开发
 
-个人开发与维护的 Agent 配置、精选技能和脚本工具集合。包含自动化归档、数据提取、知识管理与 MoviePilot 订阅维护工具，以及按 Agent 区分的行为规范。
+个人开发与维护的 Agent 配置、精选技能、脚本工具和emby工具集合。包含自动化归档、数据提取、知识管理与 MoviePilot 订阅维护工具，以及按 Agent 区分的行为规范。
 
 ---
 
@@ -15,14 +15,13 @@ skill-selection/
 │       ├── AGENTS.md           # 全局个人行为规范 v1.2
 │       ├── README.md           # 安装、适用范围、验证与回滚说明
 │       └── codex-quota-mode/    # Astra medium + Luna medium 全局省额度开关
-├── script-tools/               # 脚本工具（独立于 Skills）
-│   ├── README.md               # 脚本工具索引
-│   ├── tv-season-workflow/      # 一个项目：初检、下载、复核清理、归档
-│   └── moviepilot-unsubscribe/ # MoviePilot订阅批量取消脚本
-│       ├── README.md           # 安装、站点配置与操作指南
-│       ├── moviepilot-unsubscribe.user.js # Tampermonkey 安装文件
-│       ├── build.cjs           # 从维护源码构建安装文件
-│       └── tests/              # 本地模拟回归测试
+├── script-tools/               # 通用脚本工具索引
+│   └── README.md
+├── emby-tools/                 # emby工具：媒体整理与订阅维护
+│   ├── README.md               # 分类索引
+│   ├── tv-season-workflow-backend/ # 剧集整理工作流(后端)
+│   ├── tv-season-workflow/      # 剧集整理工作流(油猴版)
+│   └── moviepilot-unsubscribe/ # MoviePilot订阅批量取消脚本 v2.4.0
 └── skills/                     # 技能集合目录
     ├── octopus-statement/      # 八达通详单：截图裁剪、消费提取与 Excel
     ├── task-memory-to-obsdian/ # Task Memory To Obsdian：智能全自动任务归档
@@ -102,16 +101,23 @@ skill-selection/
 
 ---
 
+## 🎬 emby工具
+
+本类别收录Emby媒体库相关的剧集整理、下载、归档及MoviePilot订阅维护工具，与Agent配置、Skills分开管理。
+
+| 工具名称 | 适用环境 | 核心功能 | 文件与说明 |
+| :--- | :--- | :--- | :--- |
+| **剧集整理工作流(后端)** | **Windows 11 / Ubuntu 24 + Node.js** | 四阶段API后端，CloudDrive2 / MoviePilot / TMDB接口、持久化计划与日志、Excel报告衔接。 | [项目与源码](emby-tools/tv-season-workflow-backend/README.md) · [从零安装](emby-tools/tv-season-workflow-backend/INSTALL.md) · [接口与使用](emby-tools/tv-season-workflow-backend/docs/API.md) |
+| **剧集整理工作流(油猴版)** | **Chrome + Tampermonkey + CloudDrive2 / MoviePilot** | ① 初检 → ② 补缺下载 → ③ 复核清理 → ④ 归档；Excel衔接，逐项记录下载、删除和移动。 | [项目与四个脚本](emby-tools/tv-season-workflow/README.md) · [从零安装](emby-tools/tv-season-workflow/INSTALL.md) · [报告与追溯](emby-tools/tv-season-workflow/REPORT.md) |
+| **MoviePilot订阅批量取消脚本 · v2.4.0** | **Chrome + Tampermonkey + MoviePilot** | 电影批量取消；电视剧零进度取消、未完成订阅维护、跳过名单、资源筛选及结果导出。 | [安装脚本](emby-tools/moviepilot-unsubscribe/moviepilot-unsubscribe.user.js) · [配置与使用](emby-tools/moviepilot-unsubscribe/README.md) |
+
+按各工具指南配置自己的站点；安装或导入后默认不执行。后端当前没有图形前端，支持HTTP API调用；真实写入与Ubuntu实机验收范围见项目说明。更多内容见[emby工具索引](emby-tools/README.md)。
+
+---
+
 ## 🧰 脚本工具 (Script Tools)
 
-本类别收录可独立安装、运行的实用脚本，与 Agent 配置、Skills 分开管理。每个工具均提供适用环境、配置步骤和验证范围。
-
-| 脚本名称 | 适用环境 | 核心功能 | 文件与说明 |
-| :--- | :--- | :--- | :--- |
-| **MoviePilot订阅批量取消脚本 · v2.4.0** | **Chrome + Tampermonkey + MoviePilot** | 从底部逐项取消订阅；支持电视剧零进度取消、2026年前未完成订阅维护、跳过名单、整季资源比较、可折叠面板与处理记录。 | [安装脚本](script-tools/moviepilot-unsubscribe/moviepilot-unsubscribe.user.js) · [👉 配置与使用指南](script-tools/moviepilot-unsubscribe/README.md) |
-| **剧集整理工作流(油猴版)** | **Chrome + Tampermonkey + CloudDrive2 / MoviePilot** | ① 初检 → ② 补缺下载 → ③ 复核清理 → ④ 归档；Excel 衔接，逐项记录下载、删除和移动。 | [项目与四个脚本](script-tools/tv-season-workflow/README.md) · [从零安装](script-tools/tv-season-workflow/INSTALL.md) · [报告与追溯](script-tools/tv-season-workflow/REPORT.md) |
-
-脚本需按指南配置自己的站点地址；安装后默认不运行。单项试跑与批量运行自由选择，不需要先安装 Agent Skill。更多工具见 [脚本工具索引](script-tools/README.md)。
+通用独立脚本的分类入口。原MoviePilot订阅维护与剧集整理油猴脚本已移入上方emby工具分类，见[脚本工具索引](script-tools/README.md)。
 
 ---
 

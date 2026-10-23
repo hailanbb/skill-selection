@@ -4,7 +4,7 @@
 
 通过 MoviePilot 页面上的卡片、菜单及下载确认窗口处理订阅，从页面末尾向上逐项执行。安装后默认不运行。
 
-[安装脚本](moviepilot-unsubscribe.user.js) · [返回脚本工具](../README.md) · [返回个人开发](../../README.md)
+[安装脚本](moviepilot-unsubscribe.user.js) · [返回 emby工具](../README.md) · [返回个人开发](../../README.md)
 
 ---
 
