@@ -32,7 +32,8 @@ jobs:
       - run: npm run build
       - run: npm test
       - run: npm run test:upstream
-      - run: bash -n install.sh && bash -n manage.sh && bash -n test/manager-smoke.sh
+      - run: bash -n install.sh && bash -n manage.sh && bash -n test/manager-smoke.sh && bash -n test/runtime-selection.sh
+      - run: bash test/runtime-selection.sh
       - run: python3 test/terminal-smoke.py
       - run: git diff --exit-code -- lib/generated
       - name: root安装卸载与保留Node

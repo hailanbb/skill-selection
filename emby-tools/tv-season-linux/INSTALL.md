@@ -15,17 +15,21 @@ bash <(curl -fsSL https://raw.githubusercontent.com/hailanbb/skill-selection/mas
 
 ## 选择1：安装
 
-自动获取本项目、安装Node、校验官方Node下载摘要、安装锁定依赖、构建程序并创建 `tvflow` 命令。有运行中的systemd时，同时启用本程序后台及开机启动。不会自动提交下载或操作云盘文件。
+自动检测并优先复用已有Node/npm，必要时才下载Node并校验官方摘要，然后获取本项目、安装锁定依赖、构建程序并创建 `tvflow` 命令。有运行中的systemd时，同时启用本程序后台及开机启动。不会自动提交下载或操作云盘文件。
 
 | 内容 | 默认位置 |
 |---|---|
 | 程序 | `/home/tv-season-linux/` |
-| Node.js | `/home/tvflow-node/`，卸载程序时保留 |
+| Node.js | 优先复用现有路径；只有没有合格版本时才安装到 `/home/tvflow-node/`，卸载程序时保留 |
 | 命令 | `/usr/local/bin/tvflow` |
 | 后台服务 | `/etc/systemd/system/tvflow.service` |
 | 配置、任务库、默认报告与日志 | `/root/.local/share/tvflow/` |
 
-运行要求是 **Node.js 22.13或更新版本**，管理器自动安装Node 22系列最新补丁，无需提前手动安装Node/npm。Node与程序分目录保存，已有合格的 `/home/tvflow-node/` 会复用；不会覆盖服务器的系统Node或nvm。
+运行要求是 **Node.js 22.13或更新版本**。管理器先检查当前PATH中的Node，再检查保留的独立Node、系统常见路径和当前账户的nvm版本目录，选择可运行且有可用npm的版本，**直接复用，不重复下载或安装Node**。不需要提前加载nvm，也不扫描其他用户的目录。
+
+若仅有合格Node但缺少可用npm，会明确提示补齐npm并停止，不会为获取npm重复安装Node。只有没有任何合格Node时，才自动安装Node 22系列最新补丁到 `/home/tvflow-node/`；该目录已被占用时不覆盖。不会更改系统Node或nvm的默认版本。
+
+安装时显示实际复用的Node/npm路径，服务和 `tvflow` 命令记录所选Node的绝对路径，不依赖后台加载nvm。请保留该Node版本；卸载本程序不会删除它。
 
 仅获取 `emby-tools/tv-season-linux` 项目及必要的Git元数据/少量索引；安装暂存目录结束后清理，不保留其他工具源码。现有程序、命令或服务已占用目标时停止，不覆盖；先选择2卸载旧版，再重新运行此命令选择1。
 

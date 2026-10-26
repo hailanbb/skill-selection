@@ -6,6 +6,8 @@ TVFLOW_NODE_DIR='/home/tvflow-node'
 TVFLOW_REPO='https://github.com/hailanbb/skill-selection.git'
 TVFLOW_RAW='https://raw.githubusercontent.com/hailanbb/skill-selection/master/emby-tools/tv-season-linux'
 TVFLOW_STAGE=''
+TVFLOW_NODE_BIN=''
+TVFLOW_NPM_CLI=''
 cleanup_stage() {
   if [[ -n "$TVFLOW_STAGE" && -d "$TVFLOW_STAGE" ]]; then
     local actual
@@ -15,6 +17,62 @@ cleanup_stage() {
 }
 fetch() { curl --fail --silent --show-error --location --retry 2 --connect-timeout 20 --max-time 600 "$1" --output "$2"; }
 node_ok() { "$1" -e 'const [a,b]=process.versions.node.split(".").map(Number);process.exit(a>22||(a===22&&b>=13)?0:1)' >/dev/null 2>&1; }
+# 只检查当前账户可见的运行时；不加载Shell配置、不切换nvm默认版本，也不扫描其他用户。
+node_candidates() {
+  if (($#)); then printf '%s\n' "$@"; return; fi
+  type -a -p node 2>/dev/null || true
+  printf '%s\n' "$TVFLOW_NODE_DIR/bin/node" /usr/local/bin/node /usr/bin/node /bin/node
+  local dir candidate
+  for dir in "${NVM_DIR:-$HOME/.nvm}" "$HOME/.nvm" "${XDG_CONFIG_HOME:-$HOME/.config}/nvm"; do
+    for candidate in "$dir"/versions/node/v*/bin/node; do [[ ! -x "$candidate" ]] || printf '%s\n' "$candidate"; done
+  done | sort -Vr
+}
+npm_candidates() {
+  printf '%s\n' "$(dirname -- "$1")/npm" "$(dirname -- "$2")/npm"
+  type -a -p npm 2>/dev/null || true
+  printf '%s\n' /usr/local/bin/npm /usr/bin/npm /bin/npm
+}
+# 返回0=找到可用Node/npm，1=没有合格Node，2=Node合格但npm缺失；2绝不触发重复安装Node。
+find_existing_runtime() {
+  local candidate resolved npmcli npmreal version found_node=0
+  local -A seen=() npm_seen=()
+  TVFLOW_NODE_BIN=''; TVFLOW_NPM_CLI=''
+  while IFS= read -r candidate; do
+    [[ -x "$candidate" ]] || continue
+    resolved="$(readlink -f -- "$candidate")" || continue
+    [[ -z "${seen[$resolved]+present}" ]] || continue
+    seen["$resolved"]=1
+    node_ok "$resolved" || continue
+    found_node=1; npm_seen=(); [[ -n "$TVFLOW_NODE_BIN" ]] || TVFLOW_NODE_BIN="$resolved"
+    while IFS= read -r npmcli; do
+      [[ -f "$npmcli" ]] || continue
+      npmreal="$(readlink -f -- "$npmcli")" || continue
+      [[ -z "${npm_seen[$npmreal]+present}" ]] || continue
+      npm_seen["$npmreal"]=1
+      # 用所选Node直接运行npm入口，避免npm的env node误用另一套低版本Node。
+      version="$("$resolved" "$npmreal" --version 2>/dev/null)" || continue
+      [[ "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+([+-].*)?$ ]] || continue
+      TVFLOW_NODE_BIN="$resolved"; TVFLOW_NPM_CLI="$npmreal"; return 0
+    done < <(npm_candidates "$resolved" "$candidate")
+  done < <(node_candidates "$@")
+  if ((found_node)); then return 2; fi
+  return 1
+}
+prepare_runtime() {
+  local result
+  if find_existing_runtime; then
+    printf '%s\n' "复用现有Node：$TVFLOW_NODE_BIN" "复用现有npm：$TVFLOW_NPM_CLI"
+    return 0
+  else result=$?; fi
+  if [[ "$result" == 2 ]]; then
+    printf '%s\n' '已有Node满足22.13+，但没有找到可用npm。请补齐该Node对应的npm后重试；不会重复安装Node。' >&2
+    return 1
+  fi
+  [[ ! -e "$TVFLOW_NODE_DIR" && ! -L "$TVFLOW_NODE_DIR" ]] || { printf '%s\n' '未发现合格Node，且独立Node目录已被占用；未覆盖，请先检查该目录。' >&2; return 1; }
+  install_node "$TVFLOW_STAGE/node" || return 1
+  mv -T -- "$TVFLOW_STAGE/node" "$TVFLOW_NODE_DIR" || return 1
+  if ! find_existing_runtime "$TVFLOW_NODE_DIR/bin/node"; then printf '%s\n' '新安装Node/npm验证失败；Node目录已保留。' >&2; return 1; fi
+}
 install_node() {
   local dest="$1" arch archive digest extra
   case "$(uname -m)" in x86_64) arch='x64';; aarch64|arm64) arch='arm64';; *) printf '%s\n' '暂只支持Ubuntu x86_64/arm64。' >&2; return 1;; esac
@@ -44,21 +102,18 @@ install_app() {
   for tool in git curl tar xz sha256sum; do command -v "$tool" >/dev/null || missing=1; done
   if ((missing)); then apt-get update; apt-get install -y ca-certificates curl git tar xz-utils coreutils; fi
   TVFLOW_STAGE="$(mktemp -d /home/.tvflow-install.XXXXXXXX)"
+  prepare_runtime
   fetch_source
-  if [[ -e "$TVFLOW_NODE_DIR" || -L "$TVFLOW_NODE_DIR" ]]; then
-    [[ ! -L "$TVFLOW_NODE_DIR" && -x "$TVFLOW_NODE_DIR/bin/node" ]] && node_ok "$TVFLOW_NODE_DIR/bin/node" || { printf '%s\n' '已有Node目录不符合要求，未覆盖。' >&2; return 1; }
-    printf '%s\n' "复用已安装Node：$TVFLOW_NODE_DIR"
-  else
-    install_node "$TVFLOW_STAGE/node"
-    mv -T -- "$TVFLOW_STAGE/node" "$TVFLOW_NODE_DIR"
-  fi
-  export PATH="$TVFLOW_NODE_DIR/bin:$PATH"
-  (cd -- "$TVFLOW_STAGE/app"; npm ci --ignore-scripts --no-audit --no-fund && npm run build)
+  # 仅安装阶段临时补齐node命令名；即使系统node是别名或符号链接，也用已验证的同一版本构建。
+  mkdir -p -- "$TVFLOW_STAGE/runtime-bin"
+  ln -s -- "$TVFLOW_NODE_BIN" "$TVFLOW_STAGE/runtime-bin/node"
+  export PATH="$TVFLOW_STAGE/runtime-bin:$(dirname -- "$TVFLOW_NODE_BIN"):$PATH"
+  (cd -- "$TVFLOW_STAGE/app"; "$TVFLOW_NODE_BIN" "$TVFLOW_NPM_CLI" ci --ignore-scripts --no-audit --no-fund && "$TVFLOW_NODE_BIN" "$TVFLOW_NPM_CLI" run build)
   # 源码准备完成后才占用正式目录；先再次确认目的地不存在。
   [[ ! -e "$TVFLOW_APP" && ! -L "$TVFLOW_APP" ]] || { printf '%s\n' '安装目标已出现，停止。' >&2; return 1; }
   mv -T -- "$TVFLOW_STAGE/app" "$TVFLOW_APP"
-  TVFLOW_NODE="$TVFLOW_NODE_DIR/bin/node" "$TVFLOW_NODE_DIR/bin/node" "$TVFLOW_APP/scripts/install-user.js"
-  "$TVFLOW_NODE_DIR/bin/node" --input-type=module - "$TVFLOW_APP" "$TVFLOW_NODE_DIR/bin/node" <<'NODE'
+  TVFLOW_NODE="$TVFLOW_NODE_BIN" "$TVFLOW_NODE_BIN" "$TVFLOW_APP/scripts/install-user.js"
+  "$TVFLOW_NODE_BIN" --input-type=module - "$TVFLOW_APP" "$TVFLOW_NODE_BIN" <<'NODE'
 import fs from 'node:fs';
 import path from 'node:path';
 import {pathToFileURL} from 'node:url';
@@ -72,14 +127,14 @@ NODE
     systemctl enable --now tvflow.service
     printf '%s\n' '已启用本程序后台服务与开机启动。'
   else printf '%s\n' '当前环境没有运行systemd；输入tvflow时会自动启动后台。'; fi
-  printf '\n%s\n' '安装完成。输入 tvflow 打开菜单；配置文件：~/.local/share/tvflow/config.json。' "程序：$TVFLOW_APP" "Node：$TVFLOW_NODE_DIR（卸载程序时保留）"
+  printf '\n%s\n' '安装完成。输入 tvflow 打开菜单；配置文件：~/.local/share/tvflow/config.json。' "程序：$TVFLOW_APP" "Node：$TVFLOW_NODE_BIN（卸载程序时保留）"
 }
 uninstall_app() {
   TVFLOW_STAGE="$(mktemp -d /tmp/tvflow-manager.XXXXXXXX)"
   fetch "$TVFLOW_RAW/scripts/uninstall.js" "$TVFLOW_STAGE/uninstall.mjs"
   local nodebin=''
-  if [[ -x "$TVFLOW_NODE_DIR/bin/node" ]] && node_ok "$TVFLOW_NODE_DIR/bin/node"; then nodebin="$TVFLOW_NODE_DIR/bin/node"
-  elif command -v node >/dev/null && node_ok "$(command -v node)"; then nodebin="$(command -v node)"
+  if find_existing_runtime; then nodebin="$TVFLOW_NODE_BIN"
+  elif [[ -n "$TVFLOW_NODE_BIN" ]] && node_ok "$TVFLOW_NODE_BIN"; then nodebin="$TVFLOW_NODE_BIN"
   else
     command -v xz >/dev/null || { apt-get update; apt-get install -y xz-utils; }
     install_node "$TVFLOW_STAGE/node"; nodebin="$TVFLOW_STAGE/node/bin/node"

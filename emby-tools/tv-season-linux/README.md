@@ -1,6 +1,6 @@
 # 剧集整理Linux版
 
-**v1.1.0 · Ubuntu / SSH · 一键安装Node与程式**
+**v1.1.1 · Ubuntu / SSH · 自动复用已有Node**
 
 在Ubuntu控制端通过API连接远端CloudDrive2和MoviePilot，完成电视剧、动漫的 **初检 → 补缺下载 → 复核清理 → 归档**，并提供旧整理历史阻挡修复。无需本机挂载媒体，无需浏览器操作，也无需AI服务。
 
@@ -49,7 +49,7 @@ q 退出界面，后台任务继续
 bash <(curl -fsSL https://raw.githubusercontent.com/hailanbb/skill-selection/master/emby-tools/tv-season-linux/manage.sh)
 ```
 
-程序默认 `/home/tv-season-linux/`，Node独立保存在 `/home/tvflow-node/`，卸载程序时保留。安装后运行 `tvflow`；可用[配置文件](config.example.json)代替逐项填写，再进行只读诊断和小范围初检。[安装、卸载及完整清理说明](INSTALL.md)。
+程序默认 `/home/tv-season-linux/`。优先复用PATH、系统或当前账户nvm中已有的Node 22.13+及npm；仅没有合格Node时才安装到 `/home/tvflow-node/`，卸载保留Node。安装后运行 `tvflow`；可用[配置文件](config.example.json)代替逐项填写，再进行只读诊断和小范围初检。[安装、卸载及完整清理说明](INSTALL.md)。
 
 补缺搜索保留MoviePilot默认站点并追加 **天空、观众**；归档后自动对照CloudDrive2并导出 **归档核验、归档文件核验** 明细。菜单 `4 → 5` 可再次只读核验，发现差异标红，确认一致才标紫。
 
