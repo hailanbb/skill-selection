@@ -2,15 +2,55 @@ import fs from 'node:fs';
 import path from 'node:path';
 import os from 'node:os';
 import {fileURLToPath} from 'node:url';
-const root=path.resolve(fileURLToPath(new URL('..',import.meta.url))),bin=path.join(os.homedir(),'.local/bin');
-fs.mkdirSync(bin,{recursive:true});const target=path.join(bin,'tvflow');
-if(fs.existsSync(target)){const old=fs.lstatSync(target);if(!old.isSymbolicLink()||fs.readlinkSync(target)!==path.join(root,'bin/tvflow.js'))throw Error('已有不同的tvflow命令，未覆盖：'+target);}
-else fs.symlinkSync(path.join(root,'bin/tvflow.js'),target);
-fs.chmodSync(path.join(root,'bin/tvflow.js'),0o755);
-const unitDir=path.join(os.homedir(),'.config/systemd/user');fs.mkdirSync(unitDir,{recursive:true});
-const unit=path.join(unitDir,'tvflow.service');
-// systemd interprets percent specifiers; reject control characters and escape quotes and percent.
-const quote=s=>{if(/[\r\n\x00]/.test(s))throw Error('安装路径包含控制字符');return '"'+s.replaceAll('\\','\\\\').replaceAll('"','\\"').replaceAll('%','%%')+'"';};
-const text='[Unit]\nDescription=TVFlow 剧集整理Linux版\nAfter=network-online.target\n\n[Service]\nType=simple\nExecStart='+quote(process.execPath)+' '+quote(path.join(root,'bin/tvflow.js'))+' daemon\nRestart=on-failure\nRestartSec=5\nTimeoutStopSec=75\nUMask=0077\n\n[Install]\nWantedBy=default.target\n';
-if(fs.existsSync(unit)&&fs.readFileSync(unit,'utf8')!==text)throw Error('已有不同的服务配置，未覆盖：'+unit);
-fs.writeFileSync(unit,text,{encoding:'utf8',mode:0o600});console.log('已安装命令和用户服务文件；尚未启用自启动。');
+
+// 保留原安装入口；root无需用户会话或linger，普通用户保持原有安装位置。
+export function installLayout({system,homeDir}) {
+ return system?{binDir:'/usr/local/bin',unitDir:'/etc/systemd/system'}:
+  {binDir:path.join(homeDir,'.local/bin'),unitDir:path.join(homeDir,'.config/systemd/user')};
+}
+
+// systemd会解释百分号，ExecStart还会解释美元符号；路径必须按字段转义。
+export function quoteUnit(value,{exec=false}={}) {
+ if(/[\r\n\x00]/.test(value))throw Error('安装路径包含控制字符');
+ let text=value.replaceAll('\\','\\\\').replaceAll('"','\\"').replaceAll('%','%%');
+ if(exec)text=text.replaceAll('$',()=> '$$');
+ return '"'+text+'"';
+}
+function existing(file) {
+ try{return fs.lstatSync(file);}catch(e){if(e.code==='ENOENT')return null;throw e;}
+}
+
+// 参数用于临时目录测试；正常安装始终使用当前账号的固定布局，不启用或重启服务。
+export function installForAccount({
+ system=process.platform==='linux'&&process.geteuid?.()===0,
+ appDir=path.resolve(fileURLToPath(new URL('..',import.meta.url))),
+ homeDir=system?os.userInfo().homedir:os.homedir(),
+ nodePath=process.execPath,stateDir=process.env.TVFLOW_HOME,
+ binDir,unitDir,
+}={}) {
+ const layout=installLayout({system,homeDir});
+ binDir??=layout.binDir;unitDir??=layout.unitDir;
+ const entry=path.join(appDir,'bin/tvflow.js'),target=path.join(binDir,'tvflow'),unit=path.join(unitDir,'tvflow.service');
+ const data=path.resolve(stateDir||path.join(homeDir,'.local/share/tvflow'));
+ const text='[Unit]\nDescription=TVFlow 剧集整理Linux版\nAfter=network-online.target\n\n[Service]\nType=simple\n'+
+  (system?'User=root\nEnvironment='+quoteUnit('HOME='+homeDir)+' '+quoteUnit('TVFLOW_HOME='+data)+'\n':'')+
+  'ExecStart='+quoteUnit(nodePath,{exec:true})+' '+quoteUnit(entry,{exec:true})+' daemon\nRestart=on-failure\nRestartSec=5\nTimeoutStopSec=75\nUMask=0077\n\n[Install]\nWantedBy='+(system?'multi-user.target':'default.target')+'\n';
+ // 所有冲突先检查，避免仅装好一半；包括失效符号链接，不覆盖不同的既有命令或服务。
+ const old=existing(target),oldUnit=existing(unit);
+ if(old&&(!old.isSymbolicLink()||fs.readlinkSync(target)!==entry))throw Error('已有不同的tvflow命令，未覆盖：'+target);
+ if(oldUnit&&(!oldUnit.isFile()||fs.readFileSync(unit,'utf8')!==text))throw Error('已有不同的服务配置，未覆盖：'+unit);
+ fs.accessSync(entry,fs.constants.R_OK);
+ fs.mkdirSync(binDir,{recursive:true});fs.mkdirSync(unitDir,{recursive:true});
+ if(!old)fs.symlinkSync(entry,target);
+ fs.chmodSync(entry,0o755);
+ if(!oldUnit)fs.writeFileSync(unit,text,{encoding:'utf8',mode:system?0o644:0o600,flag:'wx'});
+ return {system,target,unit,data};
+}
+
+if(process.argv[1]&&path.resolve(process.argv[1])===fileURLToPath(import.meta.url)) {
+ const result=installForAccount();
+ console.log('已安装命令：'+result.target+'\n服务文件：'+result.unit+'\n数据目录：'+result.data+'\n尚未启用自启动。');
+ console.log('进入中文菜单：'+result.target);
+ console.log(result.system?'启用后台：systemctl daemon-reload && systemctl enable --now tvflow.service':
+  '启用后台：systemctl --user daemon-reload && systemctl --user enable --now tvflow.service（SSH退出后保留服务还需配置linger，参见INSTALL.md）');
+}
