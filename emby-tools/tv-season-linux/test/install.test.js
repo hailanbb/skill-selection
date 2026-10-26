@@ -17,17 +17,18 @@ function fixture(t) {
   t.mock.method(fs,'lstatSync',(...args)=>links.has(args[0])?{isSymbolicLink:()=>true,isFile:()=>false}:lstat(...args));
   t.mock.method(fs,'readlinkSync',(...args)=>links.has(args[0])?links.get(args[0]):readlink(...args));
  }
- return {dir,entry,options:{appDir,homeDir:path.join(dir,'account'),binDir:path.join(dir,'bin'),unitDir:path.join(dir,'units'),nodePath:'/opt/node/bin/node',stateDir:''},close(){if(process.platform==='win32')t.mock.restoreAll();fs.rmSync(dir,{recursive:true,force:true});}};
+ return {dir,entry,options:{appDir,homeDir:path.join(dir,'account'),binDir:path.join(dir,'bin'),unitDir:path.join(dir,'units'),nodePath:'/opt/node/bin/node'},close(){if(process.platform==='win32')t.mock.restoreAll();fs.rmSync(dir,{recursive:true,force:true});}};
 }
 
-test('root安装到系统布局，固定root状态目录，不依赖用户服务或linger',t=>{
+test('root命令和服务只注册链接，实际文件及任务目录在程序下',t=>{
  assert.deepEqual(installLayout({system:true,homeDir:'/root'}),{binDir:'/usr/local/bin',unitDir:'/etc/systemd/system'});
  const f=fixture(t);try{
-  const result=installForAccount({...f.options,system:true}),unit=fs.readFileSync(result.unit,'utf8');
-  assert.equal(fs.readlinkSync(result.target),f.entry);assert.match(unit,/\nUser=root\n/);
+  const result=installForAccount({...f.options,system:true}),unit=fs.readFileSync(result.unitFile,'utf8');
+  assert.equal(fs.readlinkSync(result.target),result.commandFile);assert.equal(fs.readlinkSync(result.unit),result.unitFile);assert.match(unit,/\nUser=root\n/);
+  assert.equal(result.data,path.join(f.options.appDir,'data'));assert.equal(result.config,path.join(f.options.appDir,'config/config.json'));
   assert.match(unit,/WantedBy=multi-user.target\n/);assert.match(unit,/UMask=0077/);
   assert.ok(unit.includes(quoteUnit('HOME='+f.options.homeDir)));
-  assert.ok(unit.includes(quoteUnit('TVFLOW_HOME='+result.data)));
+  assert.ok(unit.includes(quoteUnit('TVFLOW_ROOT='+f.options.appDir)));assert.ok(!unit.includes('TVFLOW_HOME'));
   assert.ok(unit.includes(quoteUnit(f.entry,{exec:true})+' daemon'));
   assert.deepEqual(installForAccount({...f.options,system:true}),result);
  }finally{f.close();}
@@ -38,8 +39,8 @@ test('普通用户保留原命令和用户级服务，重复安装兼容既有�
  assert.equal(layout.binDir,path.join(homeDir,'.local/bin'));
  assert.equal(layout.unitDir,path.join(homeDir,'.config/systemd/user'));
  const f=fixture(t);try{
-  const result=installForAccount({...f.options,system:false}),unit=fs.readFileSync(result.unit,'utf8');
-  assert.match(unit,/WantedBy=default.target\n/);assert.ok(!unit.includes('User=root'));assert.ok(!unit.includes('Environment='));
+  const result=installForAccount({...f.options,system:false}),unit=fs.readFileSync(result.unitFile,'utf8');
+  assert.match(unit,/WantedBy=default.target\n/);assert.ok(!unit.includes('User=root'));assert.ok(unit.includes(quoteUnit('TVFLOW_ROOT='+f.options.appDir)));
   assert.deepEqual(installForAccount({...f.options,system:false}),result);
  }finally{f.close();}
 });
@@ -59,16 +60,16 @@ test('不同的既有命令、服务或失效链接不被覆盖，不产生半�
 
 test('服务路径转义保留中文、空格和特殊字符，拒绝控制字符',t=>{
  assert.equal(quoteUnit('/中文 a%/$x"b',{exec:true}),'"/中文 a%%/$$x\\"b"');
- assert.equal(quoteUnit('TVFLOW_HOME=/中文 a%/$x'),'"TVFLOW_HOME=/中文 a%%/$x"');
+ assert.equal(quoteUnit('TVFLOW_ROOT=/中文 a%/$x'),'"TVFLOW_ROOT=/中文 a%%/$x"');
  for(const value of ['a\nb','a\rb','a\0b'])assert.throws(()=>quoteUnit(value),/控制字符/);
- const f=fixture(t);try{const custom=path.join(f.dir,'自定义 数据%$');const r=installForAccount({...f.options,system:true,stateDir:custom});assert.equal(r.data,custom);assert.ok(fs.readFileSync(r.unit,'utf8').includes(quoteUnit('TVFLOW_HOME='+custom)));}finally{f.close();}
+ const f=fixture(t);try{const custom=path.join(f.dir,'自定义 程序%$');fs.mkdirSync(path.join(custom,'bin'),{recursive:true});fs.copyFileSync(f.entry,path.join(custom,'bin/tvflow.js'));const r=installForAccount({...f.options,system:true,appDir:custom});assert.equal(r.data,path.join(custom,'data'));assert.ok(fs.readFileSync(r.unitFile,'utf8').includes(quoteUnit('TVFLOW_ROOT='+custom)));}finally{f.close();}
 });
 
 test('专用Node通过独立包装命令启动，不依赖服务器全局Node或nvm',t=>{
  const f=fixture(t);try{
   const managed=path.join(f.dir,'independent-node/bin/node');fs.mkdirSync(path.dirname(managed),{recursive:true});fs.writeFileSync(managed,'runtime fixture');
-  const r=installForAccount({...f.options,system:true,runtimeNode:managed}),command=fs.readFileSync(r.target,'utf8');
-  assert.ok(command.includes('# tvflow-managed-command'));assert.ok(command.includes('# tvflow-app: '+f.options.appDir));assert.ok(command.includes('"$@"'));assert.ok(fs.readFileSync(r.unit,'utf8').includes(quoteUnit(managed,{exec:true})));
+  const r=installForAccount({...f.options,system:true,runtimeNode:managed}),command=fs.readFileSync(r.commandFile,'utf8');
+  assert.ok(command.includes('# tvflow-managed-command'));assert.ok(command.includes('# tvflow-app: '+f.options.appDir));assert.ok(command.includes('export TVFLOW_ROOT='));assert.ok(command.includes('"$@"'));assert.ok(fs.readFileSync(r.unitFile,'utf8').includes(quoteUnit(managed,{exec:true})));
   assert.deepEqual(installForAccount({...f.options,system:true,runtimeNode:managed}),r);
  }finally{f.close();}
 });

@@ -19,11 +19,16 @@ bash <(curl -fsSL https://raw.githubusercontent.com/hailanbb/skill-selection/mas
 
 | 内容 | 默认位置 |
 |---|---|
-| 程序 | `/home/tv-season-linux/` |
+| 程序及依赖 | `/home/tv-season-linux/`（含 `bin/`、`lib/`、`node_modules/`） |
 | Node.js | 优先复用现有路径；只有没有合格版本时才安装到 `/home/tvflow-node/`，卸载程序时保留 |
-| 命令 | `/usr/local/bin/tvflow` |
-| 后台服务 | `/etc/systemd/system/tvflow.service` |
-| 配置、任务库、默认报告与日志 | `/root/.local/share/tvflow/` |
+| 配置 | `/home/tv-season-linux/config/config.json` |
+| 任务库、后台状态、安装记录、安装缓存 | `/home/tv-season-linux/data/` |
+| Excel、CSV | `/home/tv-season-linux/reports/J编号/` |
+| 完整JSON | `/home/tv-season-linux/records/J编号/` |
+| 任务日志、后台启动日志 | `/home/tv-season-linux/logs/` |
+| 实际命令 | `/home/tv-season-linux/bin/tvflow` |
+| 实际后台服务配置 | `/home/tv-season-linux/config/systemd/tvflow.service` |
+| 系统注册链接 | `/usr/local/bin/tvflow`、`/etc/systemd/system/tvflow.service`，都指向程序目录中的实际文件 |
 
 运行要求是 **Node.js 22.13或更新版本**。管理器先检查当前PATH中的Node，再检查保留的独立Node、系统常见路径和当前账户的nvm版本目录，选择可运行且有可用npm的版本，**直接复用，不重复下载或安装Node**。不需要提前加载nvm，也不扫描其他用户的目录。
 
@@ -33,7 +38,9 @@ bash <(curl -fsSL https://raw.githubusercontent.com/hailanbb/skill-selection/mas
 
 仅获取 `emby-tools/tv-season-linux` 项目及必要的Git元数据/少量索引；安装暂存目录结束后清理，不保留其他工具源码。现有程序、命令或服务已占用目标时停止，不覆盖；先选择2卸载旧版，再重新运行此命令选择1。
 
-安装完成后输入 `tvflow`。第一次可在菜单 `8` 设置连接，也可以在本地填写配置后上传至 `/root/.local/share/tvflow/config.json`。参考 [配置模板](config.example.json)，文件需为UTF-8无BOM的合法JSON，权限设为仅root读写。地址只填协议、主机和端口，不加 `/api/v1/`。程序每次处理命令时重新读取配置；修改前暂停任务。
+安装完成后输入 `tvflow`。第一次可在菜单 `8` 设置连接，也可以在本地填写配置后上传至 `/home/tv-season-linux/config/config.json`。参考 [配置模板](config.example.json)，文件需为UTF-8无BOM的合法JSON，权限设为仅root读写（`chmod 600 /home/tv-season-linux/config/config.json`）。模板的三项 `outputs` 已填写新目录。用本地配置覆盖前先暂停任务并停止后台，覆盖后重新启动；不要上传旧输出路径的配置。地址只填协议、主机和端口，不加 `/api/v1/`。程序每次处理命令时重新读取配置；修改前暂停任务。
+
+这是全新安装布局，不迁移旧版数据。默认不再使用 `/root/.local/share/tvflow/`。菜单 `8 → 7` 允许在各自的 `reports/`、`records/`、`logs/` 下选择子目录，不能把输出移到程序目录之外。`data/state.sqlite` 保存任务与防重记录；`logs/daemon-start.log` 保存菜单自动启动后台时的输出。安装缓存也位于 `data/npm-cache/`。
 
 CloudDrive2按实际入口选择 `grpc` 或 `grpc-web`；网页能打开不等于原生gRPC可用。MoviePilot支持 `apikey` 或 `bearer`。运行 `tvflow doctor` 进行只读连接检查，所有 `ok` 为 `true` 后再开始初检。TMDB/豆瓣通过MoviePilot获取，不需要给本程序单独填写TMDB API Key。
 

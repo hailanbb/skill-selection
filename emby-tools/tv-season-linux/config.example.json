@@ -7,9 +7,9 @@
   "moviepilot": {"url": "https://moviepilot.example", "auth": "apikey", "token": "填写MoviePilot API Key"},
   "repair": {"source": "", "target": ""},
   "outputs": {
-    "reports": "/root/.local/share/tvflow/reports",
-    "records": "/root/.local/share/tvflow/records",
-    "logs": "/root/.local/share/tvflow/logs"
+    "reports": "/home/tv-season-linux/reports",
+    "records": "/home/tv-season-linux/records",
+    "logs": "/home/tv-season-linux/logs"
   },
   "sourceGapMs": 45000
 }

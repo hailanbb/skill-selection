@@ -1,6 +1,6 @@
 # 剧集整理Linux版
 
-**v1.2.0 · Ubuntu / SSH · 独立归档库复核**
+**v1.3.0 · Ubuntu / SSH · 程序、配置与输出集中保存**
 
 在Ubuntu控制端通过API连接远端CloudDrive2和MoviePilot，完成电视剧、动漫的 **初检 → 补缺下载 → 复核清理 → 归档**，并提供旧整理历史阻挡修复。无需本机挂载媒体，无需浏览器操作，也无需AI服务。
 
@@ -31,7 +31,7 @@ q 退出界面，后台任务继续
 - **复核/清理/归档**：先只读检查，展示具体文件清单；输入 `执行 P编号` 才操作远端文件。多个完整版本保留为待人工处理，不自动选择并删除。
 - **进度**：彩色状态、已处理/总量、当前作品和步骤、耗时、近期事件；总量未确定时不显示伪造百分比。清理/归档显示已核实文件或移动单元进度。
 - **结束输出**：完成、暂停或可处理的失败后自动写Excel、各工作表CSV、完整JSON和日志，逐项显示真实文件名和绝对路径。
-- **路径**：`8 → 7 报告与保存路径` 分别设置Excel/CSV、JSON、日志目录；修改影响新任务，旧任务保持原位置。
+- **本机文件**：程序、配置、任务库和输出统一位于 `/home/tv-season-linux/`；配置在 `config/config.json`，任务在 `data/`，Excel/CSV在 `reports/`，JSON在 `records/`，日志在 `logs/`。菜单 `8 → 7` 可在各自目录内选择子目录。系统命令和服务位置仅保留链接，Node独立保留。
 - **断点与防重**：SQLite保存工作流、任务、清单、批准和操作记录。重启暂停未完成任务，结果不明先核实，不盲目重发下载/删除/移动。
 - **归档库复核**：菜单 `9` 单独选择 `/115/Library_incs/nas.finish/` 下的电视剧、动漫分类，复核每个现有标准季的缺集、多完整版本、混版拼齐、重复副本、异常文件；自动导出库复核、版本和文件明细。只读工作流不进入补缺、清理或归档操作，也不切换原整理源目录。
 
@@ -51,7 +51,7 @@ q 退出界面，后台任务继续
 bash <(curl -fsSL https://raw.githubusercontent.com/hailanbb/skill-selection/master/emby-tools/tv-season-linux/manage.sh)
 ```
 
-程序默认 `/home/tv-season-linux/`。优先复用PATH、系统或当前账户nvm中已有的Node 22.13+及npm；仅没有合格Node时才安装到 `/home/tvflow-node/`，卸载保留Node。安装后运行 `tvflow`；可用[配置文件](config.example.json)代替逐项填写，再进行只读诊断和小范围初检。[安装、卸载及完整清理说明](INSTALL.md)。
+程序、配置与所有默认产物位于 `/home/tv-season-linux/`；本版按全新安装处理。优先复用PATH、系统或当前账户nvm中已有的Node 22.13+及npm；仅没有合格Node时才安装到 `/home/tvflow-node/`，卸载保留Node。安装后运行 `tvflow`；可用[配置文件](config.example.json)代替逐项填写，再进行只读诊断和小范围初检。[安装、卸载及完整清理说明](INSTALL.md)。
 
 补缺搜索保留MoviePilot默认站点并追加 **天空、观众**；归档后自动对照CloudDrive2并导出 **归档核验、归档文件核验** 明细。菜单 `4 → 5` 可再次只读核验，发现差异标红，确认一致才标紫。
 

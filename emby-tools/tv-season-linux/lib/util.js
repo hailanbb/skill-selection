@@ -2,6 +2,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import os from 'node:os';
 import crypto from 'node:crypto';
+import {layout} from './layout.js';
 export const now=()=>new Date().toISOString();
 export const id=p=>p+crypto.randomBytes(5).toString('hex');
 export const digest=x=>crypto.createHash('sha256').update(JSON.stringify(x)).digest('hex');
@@ -15,7 +16,7 @@ export const parent=p=>path.posix.dirname(p);
 export const base=p=>path.posix.basename(p);
 export const within=(p,r)=>p===r||(r==='/'?p.startsWith('/'):p.startsWith(r+'/'));
 export function independent(a,b){a=cloudPath(a);b=cloudPath(b);if(a==='/'||b==='/'||within(a,b)||within(b,a))throw Error('源与归档目录须独立，不能相同、嵌套或为云盘根');}
-export const home=()=>path.resolve(process.env.TVFLOW_HOME||path.join(os.homedir(),'.local/share/tvflow'));
+export const home=()=>layout().data;
 export function localPath(p){if(p==='~')p=os.homedir();else if(p.startsWith('~/'))p=path.join(os.homedir(),p.slice(2));if(!path.isAbsolute(p))throw Error('请输入Ubuntu本机绝对路径');return path.resolve(p);}
 export function atomic(file,value){fs.mkdirSync(path.dirname(file),{recursive:true,mode:0o700});const tmp=file+'.'+id('tmp');const fd=fs.openSync(tmp,'wx',0o600);try{fs.writeFileSync(fd,value);fs.fsyncSync(fd);}finally{fs.closeSync(fd);}fs.renameSync(tmp,file);}
 export function writable(p){p=localPath(p);fs.mkdirSync(p,{recursive:true,mode:0o700});const f=path.join(p,id('.probe-'));fs.writeFileSync(f,'',{flag:'wx',mode:0o600});fs.unlinkSync(f);return p;}

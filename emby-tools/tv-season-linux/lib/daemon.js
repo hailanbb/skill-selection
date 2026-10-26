@@ -3,7 +3,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import {Store} from './store.js';
 import {Engine} from './workflow.js';
-import {readConfig,writeConfig,publicConfig} from './config.js';
+import {readConfig,writeConfig,publicConfig,validate} from './config.js';
 import {Cloud,MoviePilot} from './clients.js';
 import {exportJob,importScopes} from './reports.js';
 import {home,digest,writable,errorText,cloudPath,within,localPath} from './util.js';
@@ -16,16 +16,16 @@ export async function startDaemon(){
  const store=new Store(),engine=new Engine(store,readConfig);store.recover();let shutting=false;
  const dispatch=async(method,p)=>{
   const config=readConfig();
-  if(method==='ping')return {version:'1.2.0',pid:process.pid};
+  if(method==='ping')return {version:'1.3.0',pid:process.pid};
   if(method==='config')return publicConfig(config);
   if(method==='set-config'){
    if(store.all('job').some(j=>['running','queued'].includes(j.status))&&['cloud','moviepilot','repair'].includes(p.section))throw Error('请先暂停任务，再修改连接或修复路径');
    const keys={root:['source','destination','libraryRoot'],cloud:['url','token','transport'],moviepilot:['url','token','auth'],repair:['source','target'],outputs:['reports','records','logs']};
    if(!keys[p.section]?.includes(p.key)||typeof p.value!=='string')throw Error('配置字段无效');
-   if(p.section==='outputs')p.value=writable(p.value);
    if(p.section==='root'){
     if(!p.value)throw Error('路径不能为空');const c=new Cloud(config);try{await c.list(cloudPath(p.value));}finally{c.close();}config[p.key]=p.value;
    }else config[p.section][p.key]=p.value;
+   if(p.section==='outputs'){validate(config);writable(config.outputs[p.key]);}
    writeConfig(config);return publicConfig(config);
   }
   if(method==='browse'){const c=new Cloud(config);try{return await c.list(cloudPath(p.path));}finally{c.close();}}

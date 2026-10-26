@@ -1,6 +1,6 @@
 import fs from 'node:fs';
 import path from 'node:path';
-import os from 'node:os';
+import {layout} from './layout.js';
 import readline from 'node:readline/promises';
 import {rpc} from './daemon.js';
 import {jobSummary} from './reports.js';
@@ -67,9 +67,9 @@ async function settings(){while(true){print('\n设置与连接诊断\n1 当前�
  }catch(e){console.log(paint(errorText(e),31));}
 }}
 async function outputSettings(){while(true){const c=await rpc('config');print('\n报告与保存路径\n1 报告目录（Excel / CSV）：'+c.outputs.reports+'\n2 完整记录目录（JSON）：'+c.outputs.records+'\n3 运行日志目录：'+c.outputs.logs+'\n4 检查可写性\n5 恢复默认路径\nb 返回');const k=await ask('请选择：');if(k==='b')return;
- if(['1','2','3'].includes(k)){const value=await ask('Ubuntu本机绝对路径（支持~/；不存在则创建；b返回）：');if(value==='b')continue;await rpc('set-config',{section:'outputs',key:['reports','records','logs'][Number(k)-1],value});print('已检查后台账户可写性并保存，影响新任务。');}
+ if(['1','2','3'].includes(k)){const key=['reports','records','logs'][Number(k)-1];const value=await ask('请输入 '+layout().outputs[key]+' 内的绝对路径（不存在则创建；b返回）：');if(value==='b')continue;await rpc('set-config',{section:'outputs',key,value});print('已检查后台账户可写性并保存，影响新任务。');}
  else if(k==='4')print(JSON.stringify(await rpc('outputs-check'),null,2));
- else if(k==='5'){const root=process.env.TVFLOW_HOME||path.join(os.homedir(),'.local/share/tvflow');print('恢复到：'+root+'/reports、records、logs；旧文件不移动。');if(await ask('输入恢复确认：')==='恢复')for(const key of ['reports','records','logs'])await rpc('set-config',{section:'outputs',key,value:path.join(root,key)});}
+ else if(k==='5'){const outputs=layout().outputs;print('恢复到：'+Object.values(outputs).join('、')+'；已有文件保持原位。');if(await ask('输入恢复确认：')==='恢复')for(const key of ['reports','records','logs'])await rpc('set-config',{section:'outputs',key,value:outputs[key]});}
 }}
 let currentWorkflow=null,currentLibraryWorkflow=null;
 async function chooseWorkflow(force=false){const list=(await rpc('workflows')).filter(w=>w.kind!=='library-audit');if(!list.length)throw Error('还没有初检记录');if(!force&&currentWorkflow&&list.some(w=>w.id===currentWorkflow))return currentWorkflow;if(!force&&list.length===1){currentWorkflow=list[0].id;return currentWorkflow;}list.forEach((w,i)=>print((i+1)+' '+w.id+' '+w.createdAt+' '+w.scopes.join('、')+' / '+w.count+'条'));const a=await ask('选择关联工作流编号，b返回：');if(a==='b')return null;const w=list[Number(a)-1];if(!w)throw Error('编号无效');currentWorkflow=w.id;return w.id;}
@@ -114,7 +114,7 @@ export function planLines(p){const b=p.body,lines=['清单 '+p.id+' · '+({clean
 async function jobsMenu(){const jobs=await rpc('jobs');jobs.forEach((j,i)=>console.log((i+1)+' '+j.id+' '+(labels[j.stage]||j.stage)+' '+colored(labels[j.status]||j.status)));const a=await ask('任务编号，b返回：');if(a==='b')return;const j=jobs[Number(a)-1];if(!j)throw Error('编号无效');print('1 实时观看\n2 查看结果/路径\n3 暂停\n4 继续\n5 重新导出\nb 返回');const action=await ask('请选择：');if(action==='1')await watch(j.id);if(action==='2')completed(await rpc('job',{id:j.id}));if(action==='3')await rpc('pause',{id:j.id});if(action==='4'){await rpc('resume',{id:j.id});await watch(j.id);}if(action==='5')print(JSON.stringify(await rpc('export',{id:j.id}),null,2));}
 async function reportsMenu(){print('1 查看任务报告与历史\n2 导入Excel/JSON作为重新检查范围\n3 设置报告保存路径\nb 返回');const a=await ask('请选择：');if(a==='1')await jobsMenu();if(a==='3')await outputSettings();if(a==='2'){const file=await ask('Ubuntu本机文件绝对路径：');const result=await rpc('import',{file});print(result.note+'\n'+result.scopes.join('\n'));if(await ask('1 重新初检；其他返回：')==='1')await start('inspect',{scopes:result.scopes});}}
 export async function menu(){if(!process.stdin.isTTY){print('非交互终端请使用 tvflow status / doctor / export；不会自动确认写操作。');return;}
- while(true){const c=await rpc('config'),jobs=await rpc('jobs');print('\n剧集整理Linux版 v1.2.0\n当前源根：'+c.source+'\n当前工作流：'+(currentWorkflow||'未选择')+'\n正在运行：'+jobs.filter(j=>['running','queued'].includes(j.status)).length+'；暂停/受阻：'+jobs.filter(j=>['paused','failed'].includes(j.status)).length+'\n\n1 初检目录\n2 补缺下载与整理修复\n3 复核与版本清理\n4 归档\n5 任务与进度\n6 待处理事项\n7 报告与历史记录\n8 设置与连接诊断\n9 归档库复核（只读）\nq 退出界面，后台任务继续');
+ while(true){const c=await rpc('config'),jobs=await rpc('jobs');print('\n剧集整理Linux版 v1.3.0\n当前源根：'+c.source+'\n当前工作流：'+(currentWorkflow||'未选择')+'\n正在运行：'+jobs.filter(j=>['running','queued'].includes(j.status)).length+'；暂停/受阻：'+jobs.filter(j=>['paused','failed'].includes(j.status)).length+'\n\n1 初检目录\n2 补缺下载与整理修复\n3 复核与版本清理\n4 归档\n5 任务与进度\n6 待处理事项\n7 报告与历史记录\n8 设置与连接诊断\n9 归档库复核（只读）\nq 退出界面，后台任务继续');
   const v=await ask('请选择：');if(v==='q')return;try{if(v==='1')await inspectMenu();if(v==='2')await stageMenu('download');if(v==='3')await stageMenu('review');if(v==='4')await stageMenu('archive');if(v==='5')await jobsMenu();if(v==='6'){const w=await chooseWorkflow();if(w)await showResults(w,true);}if(v==='7')await reportsMenu();if(v==='8')await settings();if(v==='9')await libraryMenu();}catch(e){console.log(paint(errorText(e),31));}
  }
 }

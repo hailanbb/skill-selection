@@ -9,7 +9,7 @@ import time
 from pathlib import Path
 
 with tempfile.TemporaryDirectory(prefix="tvflow-pty-") as folder:
-    env = dict(os.environ, TVFLOW_HOME=folder, TERM="xterm-256color")
+    env = dict(os.environ, TVFLOW_ROOT=folder, TERM="xterm-256color")
     master, slave = pty.openpty()
     app = subprocess.Popen(["node", "bin/tvflow.js"], stdin=slave, stdout=slave, stderr=slave, env=env, start_new_session=True)
     os.close(slave)
@@ -42,7 +42,7 @@ with tempfile.TemporaryDirectory(prefix="tvflow-pty-") as folder:
         expect("q 退出界面")
         os.write(master, b"q\n")
         assert app.wait(timeout=10) == 0
-        lock = Path(folder, "daemon.lock")
+        lock = Path(folder, "data", "daemon.lock")
         assert lock.exists(), "Menu exit must leave daemon running"
         os.kill(int(lock.read_text(encoding="utf-8")), 0)
         print("Linux PTY菜单、中文、返回键和退出后后台存活：通过")
@@ -50,7 +50,7 @@ with tempfile.TemporaryDirectory(prefix="tvflow-pty-") as folder:
         if app.poll() is None:
             app.kill()
             app.wait()
-        lock = Path(folder, "daemon.lock")
+        lock = Path(folder, "data", "daemon.lock")
         if lock.exists():
             try:
                 os.kill(int(lock.read_text(encoding="utf-8")), signal.SIGTERM)

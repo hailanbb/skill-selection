@@ -5,3 +5,9 @@ config.json
 *.log
 coverage/
 .test-tmp/
+config/
+reports/
+records/
+logs/
+backups/
+bin/tvflow

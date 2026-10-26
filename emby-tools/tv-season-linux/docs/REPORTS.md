@@ -20,12 +20,12 @@ Excel超过单格长度的诊断详情明确提示查看JSON，不静默声称�
 默认位置：
 
 ```text
-~/.local/share/tvflow/reports/J编号/   Excel、各CSV
-~/.local/share/tvflow/records/J编号/   完整JSON
-~/.local/share/tvflow/logs/J编号/      task.log
+/home/tv-season-linux/reports/J编号/   Excel、各CSV
+/home/tv-season-linux/records/J编号/   完整JSON
+/home/tv-season-linux/logs/J编号/      task.log
 ```
 
-三类路径均可从 `8 → 7`分别更改。输出页展开为真实绝对路径，同时显示文件名。失败文件不列为保存成功，单独报告错误；数据库结果仍保留，可恢复目录可写性后从任务页重新导出。
+三类路径可从 `8 → 7` 分别选择各自默认目录内的子目录，禁止保存到程序目录外。配置在 `/home/tv-season-linux/config/config.json`，任务库在 `/home/tv-season-linux/data/state.sqlite`，后台启动日志在 `/home/tv-season-linux/logs/daemon-start.log`。输出页展开为真实绝对路径，同时显示文件名。失败文件不列为保存成功，单独报告错误；数据库结果仍保留，可恢复目录可写性后从任务页重新导出。
 
 在任务执行中强制断电不能保证最后一份报表已导出，但请求前持久操作日志仍用于防重复。重启后任务暂停，可查看并重新导出当前持久结果。
 

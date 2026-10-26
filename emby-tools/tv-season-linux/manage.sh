@@ -95,7 +95,7 @@ fetch_source() {
   cp -a -- "$TVFLOW_STAGE/repo/emby-tools/tv-season-linux" "$TVFLOW_STAGE/app" || return 1
 }
 install_app() {
-  if [[ -e "$TVFLOW_APP" || -L "$TVFLOW_APP" || -e /usr/local/bin/tvflow || -L /usr/local/bin/tvflow || -e /etc/systemd/system/tvflow.service ]]; then
+  if [[ -e "$TVFLOW_APP" || -L "$TVFLOW_APP" || -e /usr/local/bin/tvflow || -L /usr/local/bin/tvflow || -e /etc/systemd/system/tvflow.service || -L /etc/systemd/system/tvflow.service ]]; then
     printf '%s\n' '检测到已有程序、命令或服务；请先选择2卸载旧版，再选择1安装。不会覆盖已有文件。' >&2; return 1
   fi
   local missing=0 tool
@@ -108,26 +108,28 @@ install_app() {
   mkdir -p -- "$TVFLOW_STAGE/runtime-bin"
   ln -s -- "$TVFLOW_NODE_BIN" "$TVFLOW_STAGE/runtime-bin/node"
   export PATH="$TVFLOW_STAGE/runtime-bin:$(dirname -- "$TVFLOW_NODE_BIN"):$PATH"
+  export npm_config_cache="$TVFLOW_STAGE/app/data/npm-cache"
   (cd -- "$TVFLOW_STAGE/app"; "$TVFLOW_NODE_BIN" "$TVFLOW_NPM_CLI" ci --ignore-scripts --no-audit --no-fund && "$TVFLOW_NODE_BIN" "$TVFLOW_NPM_CLI" run build)
   # 源码准备完成后才占用正式目录；先再次确认目的地不存在。
   [[ ! -e "$TVFLOW_APP" && ! -L "$TVFLOW_APP" ]] || { printf '%s\n' '安装目标已出现，停止。' >&2; return 1; }
   mv -T -- "$TVFLOW_STAGE/app" "$TVFLOW_APP"
-  TVFLOW_NODE="$TVFLOW_NODE_BIN" "$TVFLOW_NODE_BIN" "$TVFLOW_APP/scripts/install-user.js"
-  "$TVFLOW_NODE_BIN" --input-type=module - "$TVFLOW_APP" "$TVFLOW_NODE_BIN" <<'NODE'
+  TVFLOW_ROOT="$TVFLOW_APP" TVFLOW_NODE="$TVFLOW_NODE_BIN" "$TVFLOW_NODE_BIN" "$TVFLOW_APP/scripts/install-user.js"
+  TVFLOW_ROOT="$TVFLOW_APP" "$TVFLOW_NODE_BIN" --input-type=module - "$TVFLOW_APP" "$TVFLOW_NODE_BIN" <<'NODE'
 import fs from 'node:fs';
 import path from 'node:path';
 import {pathToFileURL} from 'node:url';
 const app=process.argv[2],{defaults,writeConfig}=await import(pathToFileURL(path.join(app,'lib/config.js')));
-const data=process.env.TVFLOW_HOME||path.join(process.env.HOME,'.local/share/tvflow');
-if(!fs.existsSync(path.join(data,'config.json')))writeConfig(defaults());
-fs.writeFileSync(path.join(app,'.tvflow-install.json'),JSON.stringify({schema:1,appDir:app,dataDir:data,nodePath:process.argv[3],preserveNode:true,installedAt:new Date().toISOString()},null,2)+'\n',{mode:0o600});
+const data=path.join(app,'data');
+for(const dir of ['data','reports','records','logs'])fs.mkdirSync(path.join(app,dir),{recursive:true,mode:0o700});
+if(!fs.existsSync(path.join(app,'config/config.json')))writeConfig(defaults());
+fs.writeFileSync(path.join(data,'install.json'),JSON.stringify({schema:2,appDir:app,dataDir:data,configFile:path.join(app,'config/config.json'),nodePath:process.argv[3],preserveNode:true,installedAt:new Date().toISOString()},null,2)+'\n',{mode:0o600});
 NODE
   if [[ -d /run/systemd/system ]] && command -v systemctl >/dev/null; then
     systemctl daemon-reload
     systemctl enable --now tvflow.service
     printf '%s\n' '已启用本程序后台服务与开机启动。'
   else printf '%s\n' '当前环境没有运行systemd；输入tvflow时会自动启动后台。'; fi
-  printf '\n%s\n' '安装完成。输入 tvflow 打开菜单；配置文件：~/.local/share/tvflow/config.json。' "程序：$TVFLOW_APP" "Node：$TVFLOW_NODE_BIN（卸载程序时保留）"
+  printf '\n%s\n' '安装完成。输入 tvflow 打开菜单；配置文件：/home/tv-season-linux/config/config.json。' "程序、配置、任务与输出：$TVFLOW_APP" "Node：$TVFLOW_NODE_BIN（卸载程序时保留）"
 }
 uninstall_app() {
   TVFLOW_STAGE="$(mktemp -d /tmp/tvflow-manager.XXXXXXXX)"
@@ -148,7 +150,7 @@ uninstall_app() {
 main() {
   [[ "$OSTYPE" == linux* && "$EUID" == 0 ]] || { printf '%s\n' '请在Ubuntu服务器的root终端执行本管理入口。' >&2; return 1; }
   trap cleanup_stage EXIT
-  printf '%s\n' '剧集整理Linux版 · 安装与卸载' '1 一键安装（包含Node.js和程式）' '2 一键卸载（清除清理已安装的程式）' '安装位置：/home/tv-season-linux/' '卸载清除本机程序及其数据；保留Node，不删除云盘媒体。'
+  printf '%s\n' '剧集整理Linux版 · 安装与卸载' '1 一键安装（包含Node.js和程式）' '2 一键卸载（清除清理已安装的程式）' '程序、配置、任务与输出：/home/tv-season-linux/' '卸载清除本机程序及其数据；保留Node，不删除云盘媒体。'
   local choice
   read -r -p '请选择 1 / 2：' choice </dev/tty
   case "$choice" in 1) install_app;; 2) uninstall_app;; *) printf '%s\n' '已退出。';; esac

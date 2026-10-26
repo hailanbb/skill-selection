@@ -14,27 +14,31 @@ function json(p){try{return JSON.parse(fs.readFileSync(p,'utf8'));}catch{return 
 export function uninstallPlan({homeDir=os.userInfo().homedir,defaultApp='/home/tv-season-linux',
  binPaths=['/usr/local/bin/tvflow',path.join(homeDir,'.local/bin/tvflow')],
  unitPaths=['/etc/systemd/system/tvflow.service',path.join(homeDir,'.config/systemd/user/tvflow.service')],
- dataDir=process.env.TVFLOW_HOME||path.join(homeDir,'.local/share/tvflow')}={}){
+ dataDir=path.join(defaultApp,'data')}={}){
  const context={homeDir,defaultApp,binPaths,unitPaths,dataDir},apps=new Set(),commands=[],units=[],warnings=[],dataDirs=new Set([safe(dataDir)]),files=[],serviceDirs=[],busyJobs=[];
  if(isApp(defaultApp))apps.add(safe(defaultApp));
  for(const bin of binPaths){const s=stat(bin);if(!s)continue;let entry;
   if(s.isSymbolicLink())entry=path.resolve(path.dirname(bin),fs.readlinkSync(bin));
   else if(s.isFile()){const t=fs.readFileSync(bin,'utf8');const m=/^# tvflow-app: (.+)$/m.exec(t);if(t.includes('# tvflow-managed-command')&&m)entry=path.join(m[1],'bin/tvflow.js');}
   const app=entry&&path.dirname(path.dirname(entry));
-  if(app&&path.basename(entry)==='tvflow.js'&&path.basename(path.dirname(entry))==='bin'&&(isApp(app)||app===defaultApp&&!fs.existsSync(app))){if(isApp(app))apps.add(safe(app));commands.push(bin);}else warnings.push('未识别的同名命令保留：'+bin);
+  if(app&&['tvflow.js','tvflow'].includes(path.basename(entry))&&path.basename(path.dirname(entry))==='bin'&&(isApp(app)||app===defaultApp&&!fs.existsSync(app))){if(isApp(app))apps.add(safe(app));commands.push(bin);}else warnings.push('未识别的同名命令保留：'+bin);
  }
- for(const unit of unitPaths){if(!stat(unit))continue;if(!stat(unit).isFile()||stat(unit).isSymbolicLink())throw Error('服务文件不是普通文件，停止：'+unit);
+ for(const unit of unitPaths){if(!stat(unit))continue;
+  const linked=stat(unit).isSymbolicLink();
+  if(linked&&![...apps].some(app=>path.resolve(path.dirname(unit),fs.readlinkSync(unit))===path.join(app,'config/systemd/tvflow.service')))throw Error('服务链接不属于本程序，停止：'+unit);
+  if(!linked&&!stat(unit).isFile())throw Error('服务文件不是普通文件，停止：'+unit);
   const text=fs.readFileSync(unit,'utf8');
   if(!text.includes('Description=TVFlow 剧集整理Linux版')||![...apps,defaultApp].some(app=>text.includes(path.join(app,'bin/tvflow.js')))){warnings.push('未识别的同名服务保留：'+unit);continue;}
   units.push(unit);
-  for(const wanted of ['multi-user.target.wants','default.target.wants']){const link=path.join(path.dirname(unit),wanted,'tvflow.service');if(stat(link)?.isSymbolicLink()&&path.resolve(path.dirname(link),fs.readlinkSync(link))===unit)commands.push(link);}
-  const drop=unit+'.d';if(stat(drop)){safe(drop);if(!stat(drop).isDirectory())throw Error('服务附加配置不是目录：'+drop);serviceDirs.push(drop);}
-  const match= /"TVFLOW_HOME=((?:\\.|[^"\\])*)"/.exec(text);
-  if(match)dataDirs.add(safe(match[1].replaceAll('%%','%').replace(/\\([\\"])/g,'$1')));
+  for(const wanted of ['multi-user.target.wants','default.target.wants']){const link=path.join(path.dirname(unit),wanted,'tvflow.service');if(stat(link)?.isSymbolicLink()&&[unit,...[...apps].map(app=>path.join(app,'config/systemd/tvflow.service'))].includes(path.resolve(path.dirname(link),fs.readlinkSync(link))))commands.push(link);}
+  const drop=unit+'.d';if(stat(drop)){if(stat(drop).isSymbolicLink()){if(![...apps].some(app=>path.resolve(path.dirname(drop),fs.readlinkSync(drop))===path.join(app,'config/systemd/tvflow.service.d')))throw Error('服务附加配置链接不属于本程序：'+drop);commands.push(drop);}else{safe(drop);if(!stat(drop).isDirectory())throw Error('服务附加配置不是目录：'+drop);serviceDirs.push(drop);}}
+  const match= /"TVFLOW_ROOT=((?:\\.|[^"\\])*)"/.exec(text);
+  if(match){const root=match[1].replaceAll('%%','%').replace(/\\([\\"])/g,'$1');if(apps.has(root))dataDirs.add(safe(path.join(root,'data')));}
  }
+ for(const app of apps)if(json(path.join(app,'config/config.json'))?.schema===1)dataDirs.add(safe(path.join(app,'data')));
  for(const dir of dataDirs){
   if(!stat(dir))continue;
-  const cfg=json(path.join(dir,'config.json'));
+  const cfg=json(path.join(dir,'config.json'))||([...apps].some(app=>dir===path.join(app,'data'))?json(path.join(path.dirname(dir),'config/config.json')):null);
   const database=path.join(dir,'state.sqlite');
   if(!cfg?.cloud||!cfg?.moviepilot||cfg.schema!==1){if(!fs.existsSync(database)){warnings.push('未确认归属的数据目录保留：'+dir);dataDirs.delete(dir);continue;}}
   if(fs.existsSync(database)){

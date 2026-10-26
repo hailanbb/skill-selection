@@ -15,7 +15,12 @@ install_node() { printf '%s\n' '已有合格Node时不应再次安装Node' >&2; 
 install_app
 /usr/local/bin/tvflow status
 [[ ! -e /home/tvflow-node ]]
-"$HOST_NODE" -e 'const fs=require("fs"); const x=JSON.parse(fs.readFileSync("/home/tv-season-linux/.tvflow-install.json","utf8"));if(x.nodePath!==fs.realpathSync(process.execPath))process.exit(1);'
+[[ ! -e /root/.local/share/tvflow ]]
+[[ -f /home/tv-season-linux/config/config.json && -f /home/tv-season-linux/data/state.sqlite ]]
+[[ -L /usr/local/bin/tvflow && -L /etc/systemd/system/tvflow.service ]]
+[[ "$(readlink -f /usr/local/bin/tvflow)" == /home/tv-season-linux/bin/tvflow ]]
+[[ "$(readlink -f /etc/systemd/system/tvflow.service)" == /home/tv-season-linux/config/systemd/tvflow.service ]]
+"$HOST_NODE" -e 'const fs=require("fs"); const x=JSON.parse(fs.readFileSync("/home/tv-season-linux/data/install.json","utf8"));if(x.nodePath!==fs.realpathSync(process.execPath))process.exit(1);const c=JSON.parse(fs.readFileSync(x.configFile,"utf8"));for(const k of ["reports","records","logs"])if(c.outputs[k]!=="/home/tv-season-linux/"+k)process.exit(2);'
 "$HOST_NODE" "$SOURCE/scripts/uninstall.js" --yes
 [[ ! -e /home/tv-season-linux && ! -e /usr/local/bin/tvflow && ! -e /etc/systemd/system/tvflow.service && ! -e /root/.local/share/tvflow && -x "$HOST_NODE" ]]
 cleanup_stage
@@ -35,7 +40,7 @@ install_node() {
 }
 install_app
 /usr/local/bin/tvflow status
-[[ -f /home/tv-season-linux/.tvflow-install.json && -f /etc/systemd/system/tvflow.service ]]
+[[ -f /home/tv-season-linux/data/install.json && -L /etc/systemd/system/tvflow.service ]]
 "$HOST_NODE" "$SOURCE/scripts/uninstall.js" --yes
 [[ ! -e /home/tv-season-linux && ! -e /usr/local/bin/tvflow && ! -e /etc/systemd/system/tvflow.service && ! -e /root/.local/share/tvflow ]]
 [[ -x /home/tvflow-node/bin/node ]]

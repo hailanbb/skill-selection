@@ -5,6 +5,7 @@ import os from 'node:os';
 import path from 'node:path';
 import {DatabaseSync} from 'node:sqlite';
 import {uninstallPlan,uninstall} from '../scripts/uninstall.js';
+import {installForAccount} from '../scripts/install-user.js';
 function setup(){
  const dir=fs.mkdtempSync(path.join(process.env.TVFLOW_TEST_TMP||os.tmpdir(),'tvflow-uninstall-')),app=path.join(dir,'app'),homeDir=path.join(dir,'home'),bin=path.join(dir,'tvflow'),unit=path.join(dir,'tvflow.service'),dataDir=path.join(homeDir,'.local/share/tvflow');
  fs.mkdirSync(path.join(app,'bin'),{recursive:true});fs.writeFileSync(path.join(app,'package.json'),JSON.stringify({name:'tv-season-linux'}));fs.writeFileSync(path.join(app,'bin/tvflow.js'),'// fixture');
@@ -24,4 +25,18 @@ test('未识别的同名服务或命令不删除；后台未退出时拒绝继�
 });
 test('无法确认归属的数据目录保留；危险公共路径不能加入递归清理清单',()=>{
  const f=setup();try{fs.unlinkSync(path.join(f.dataDir,'config.json'));fs.writeFileSync(path.join(f.dataDir,'personal.txt'),'keep');const p=uninstallPlan(f.options);assert.equal(p.dataDirs.length,0);assert.ok(p.warnings.length);if(process.platform==='linux')for(const dir of ['/','/home','/root','/usr/local'])assert.throws(()=>uninstallPlan({...f.options,dataDir:dir}),/拒绝清理公共目录/);}finally{f.close();}
+});
+
+test('集中安装卸载识别真实命令/服务链接，移除配置和产物并保留外部Node',{skip:process.platform==='win32'},async()=>{
+ const f=setup();try{
+  fs.unlinkSync(f.bin);fs.unlinkSync(f.unit);fs.rmSync(f.dataDir,{recursive:true});
+  const binDir=path.join(f.dir,'commands'),unitDir=path.join(f.dir,'services');
+  const entry=installForAccount({system:true,appDir:f.app,homeDir:f.options.homeDir,binDir,unitDir,nodePath:process.execPath});
+  fs.mkdirSync(entry.data,{recursive:true});fs.writeFileSync(entry.config,JSON.stringify({schema:1,cloud:{},moviepilot:{},outputs:{}}));
+  for(const role of ['reports','records','logs']){const p=path.join(f.app,role,'J0123456789');fs.mkdirSync(p,{recursive:true});fs.writeFileSync(path.join(p,'记录.txt'),'中文产物');}
+  const node=path.join(f.dir,'node');fs.writeFileSync(node,'keep');
+  const options={homeDir:f.options.homeDir,defaultApp:f.app,binPaths:[entry.target],unitPaths:[entry.unit]};
+  const plan=uninstallPlan(options);assert.deepEqual(plan.units,[entry.unit]);assert.deepEqual(plan.dataDirs,[entry.data]);assert.equal(plan.warnings.length,0);
+  await uninstall(plan,{run:()=>{},findPids:()=>[]});for(const p of [f.app,entry.target,entry.unit])assert.ok(!fs.existsSync(p));assert.equal(fs.readFileSync(node,'utf8'),'keep');
+ }finally{f.close();}
 });
