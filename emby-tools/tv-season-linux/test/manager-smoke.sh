@@ -17,6 +17,7 @@ install_app
 [[ ! -e /home/tvflow-node ]]
 [[ ! -e /root/.local/share/tvflow ]]
 [[ -f /home/tv-season-linux/config/config.json && -f /home/tv-season-linux/data/state.sqlite ]]
+[[ "$(stat -c %a /home/tv-season-linux/data)" == 700 ]]
 [[ -L /usr/local/bin/tvflow && -L /etc/systemd/system/tvflow.service ]]
 [[ "$(readlink -f /usr/local/bin/tvflow)" == /home/tv-season-linux/bin/tvflow ]]
 [[ "$(readlink -f /etc/systemd/system/tvflow.service)" == /home/tv-season-linux/config/systemd/tvflow.service ]]

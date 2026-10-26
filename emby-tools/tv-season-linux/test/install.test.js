@@ -26,6 +26,7 @@ test('root命令和服务只注册链接，实际文件及任务目录在程序�
   const result=installForAccount({...f.options,system:true}),unit=fs.readFileSync(result.unitFile,'utf8');
   assert.equal(fs.readlinkSync(result.target),result.commandFile);assert.equal(fs.readlinkSync(result.unit),result.unitFile);assert.match(unit,/\nUser=root\n/);
   assert.equal(result.data,path.join(f.options.appDir,'data'));assert.equal(result.config,path.join(f.options.appDir,'config/config.json'));
+  if(process.platform!=='win32')for(const name of ['config','data','reports','records','logs'])assert.equal(fs.statSync(path.join(f.options.appDir,name)).mode&0o777,0o700);
   assert.match(unit,/WantedBy=multi-user.target\n/);assert.match(unit,/UMask=0077/);
   assert.ok(unit.includes(quoteUnit('HOME='+f.options.homeDir)));
   assert.ok(unit.includes(quoteUnit('TVFLOW_ROOT='+f.options.appDir)));assert.ok(!unit.includes('TVFLOW_HOME'));

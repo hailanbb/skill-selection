@@ -44,7 +44,10 @@ export function installForAccount({
   const s=stat(file);if(s&&(!s.isFile()||s.isSymbolicLink()||fs.readFileSync(file,'utf8')!==content))throw Error('程序内存在不同配置，未覆盖：'+file);
  }
  fs.accessSync(entry,fs.constants.R_OK);
- fs.mkdirSync(binDir,{recursive:true});fs.mkdirSync(unitDir,{recursive:true});fs.mkdirSync(path.dirname(unitFile),{recursive:true,mode:0o700});
+ fs.mkdirSync(binDir,{recursive:true});fs.mkdirSync(unitDir,{recursive:true});
+ // npm缓存可能先创建data/；显式收紧现有目录，任务库与报告仍仅安装账户可读。
+ for(const name of ['config','data','reports','records','logs']){const dir=path.join(appDir,name);fs.mkdirSync(dir,{recursive:true,mode:0o700});fs.chmodSync(dir,0o700);}
+ fs.mkdirSync(path.dirname(unitFile),{recursive:true,mode:0o700});
  fs.writeFileSync(commandFile,command,{encoding:'utf8',mode:0o755});fs.chmodSync(commandFile,0o755);fs.chmodSync(entry,0o755);
  fs.writeFileSync(unitFile,text,{encoding:'utf8',mode:0o600});
  if(!old)fs.symlinkSync(commandFile,target);
