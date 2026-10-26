@@ -1,6 +1,6 @@
 {
   "name": "tv-season-linux",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "private": true,
   "description": "剧集整理Linux版：SSH中文菜单、远端API、持久四阶段工作流",
   "type": "module",

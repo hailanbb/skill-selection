@@ -2,7 +2,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import X from 'xlsx-js-style';
 import {atomic,now,id,localPath,cloudPath,within,parent,base} from './util.js';
-const columns=['作品','分类路径','季','季目录','状态','原因','来源集数','本地集数','缺集','播出状态','来源链接','核查时间'];
+const columns=['作品','分类路径','季','季目录','状态','原因','来源集数','本地集数','缺集','播出状态','来源链接','核查时间','归档源季目录','归档目标季目录','归档核验结果','归档核验时间'];
 const colors={green:['C6EFCE','006100'],blue:['BDD7EE','1F4E78'],yellow:['FFFF00','000000'],red:['FFC7CE','9C0006'],archived:['E4DFEC','7030A0']};
 function cell(v){if(v===null||v===undefined)return '';if(typeof v==='object')return JSON.stringify(v);return v;}
 export function csv(rows){return '\ufeff'+rows.map(row=>row.map(v=>{let s=String(cell(v));if(/^[\s]*[=+@-]/.test(s))s="'"+s;return '"'+s.replaceAll('"','""')+'"';}).join(',')).join('\r\n')+'\r\n';}
@@ -13,7 +13,13 @@ export function exportJob(job,workflow,plans=[]){
  const results=redact(job.results),seasons=redact(workflow?.seasons||[]),reportDir=path.join(localPath(job.config.outputs.reports),job.id),recordDir=path.join(localPath(job.config.outputs.records),job.id);
  const stem=job.stage+'_'+job.id+'_'+now().replace(/[:.]/g,'-')+'_'+id('').slice(0,4),tables=[];
  tables.push(['任务统计',[['项目','值'],['任务',job.id],['工作流',job.workflow],['阶段',job.stage],['状态',job.status],['开始',job.startedAt||job.createdAt],['结束/快照',now()],['工作流作品数',new Set(seasons.map(s=>s.showPath)).size],['工作流季数',seasons.filter(s=>s.season).length],...Object.entries(jobSummary(job))]]);
- tables.push(['作品结果',[columns,...seasons.map(s=>[s.name,s.category,s.season,s.path,s.state,s.note,s.total,s.current,s.missing===null?'未确认':s.missing?.join('、'),s.broadcast,s.source?.url,s.checkedAt])]]);
+ tables.push(['作品结果',[columns,...seasons.map(s=>[s.name,s.category,s.season,s.archiveAudit?.targetPath||s.path,s.state,s.note,s.total,s.current,s.missing===null?'未确认':s.missing?.join('、'),s.broadcast,s.source?.url,s.checkedAt,s.archiveAudit?.sourcePath,s.archiveAudit?.targetPath,s.archiveAudit?.state,s.archiveAudit?.checkedAt])]]);
+ const archived=seasons.filter(s=>s.archiveAudit);
+ if(archived.length){
+  tables.push(['归档核验',[['作品','季','源季目录','目标季目录','核验结果','报告来源集数','报告识别集数','云盘识别集数','报告视频数','云盘视频数','缺失集号','差异','核验时间'],...archived.map(s=>{const a=s.archiveAudit;return [s.name,s.season,a.sourcePath,a.targetPath,a.state,a.expectedTotal,a.expectedEpisodes,a.actualEpisodes,a.expectedVideos,a.actualVideos,a.missing?.join('、'),a.differences?.join('；'),a.checkedAt];})]]);
+  const seen=new Set(),files=[];for(const s of archived){const a=s.archive?.reportAudit;if(!a||seen.has(a.source))continue;seen.add(a.source);for(const f of a.files||[])files.push([s.name,f.path,f.state,f.expectedSize,f.actualSize,f.expectedModified,f.actualModified]);}
+  tables.push(['归档文件核验',[['作品','目标文件路径','核验结果','期望大小','云盘大小','期望修改时间','云盘修改时间'],...files]]);
+ }
  tables.push(['操作结果',[['对象','状态','说明','结果详情'],...results.map(r=>[r.name||r.path||'',r.state||'',r.note||'',JSON.stringify(r)])]]);
  const audit=[['阶段','对象','动作','状态','源路径或资源','目标路径或任务ID','时间','原因']];
  for(const entry of job.operationRecords||[]){const r=entry.record;
@@ -36,7 +42,7 @@ export function exportJob(job,workflow,plans=[]){
  const outputs=[],errors=[];
  function save(file,data,verify){try{atomic(file,data);verify?.(fs.readFileSync(file));outputs.push(file);}catch(e){errors.push({file,error:e.message});}}
  save(path.join(recordDir,stem+'.json'),JSON.stringify({schema:'tvflow/1',exportedAt:now(),job:redact(job),workflow:redact(workflow),plans:redact(plans)},null,2)+'\n',b=>JSON.parse(b.toString('utf8')));
- save(path.join(reportDir,stem+'.xlsx'),Buffer.from(X.write(book,{type:'buffer',bookType:'xlsx',compression:true})),b=>{const r=X.read(b,{type:'buffer'});if(r.SheetNames.length!==tables.length)throw Error('Excel回读不一致');});
+ save(path.join(reportDir,stem+'.xlsx'),Buffer.from(X.write(book,{type:'buffer',bookType:'xlsx',compression:true})),b=>{const r=X.read(b,{type:'buffer'});if(r.SheetNames.length!==tables.length)throw Error('Excel回读不一致');if(archived.length){const name='归档核验',expected=tables.find(t=>t[0]===name)[1].map(row=>row.map(v=>cell(v)??'')),actual=X.utils.sheet_to_json(r.Sheets[name],{header:1,defval:''});if(JSON.stringify(actual)!==JSON.stringify(expected))throw Error('归档核验数据写入Excel后不一致');}});
  for(const [name,rows] of tables)save(path.join(reportDir,stem+'_'+name+'.csv'),csv(rows),b=>new TextDecoder('utf-8',{fatal:true}).decode(b));
  if(job.logPath&&fs.existsSync(job.logPath))outputs.push(job.logPath);
  return {files:outputs,errors};

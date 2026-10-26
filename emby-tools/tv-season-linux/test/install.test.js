@@ -63,3 +63,12 @@ test('服务路径转义保留中文、空格和特殊字符，拒绝控制字�
  for(const value of ['a\nb','a\rb','a\0b'])assert.throws(()=>quoteUnit(value),/控制字符/);
  const f=fixture(t);try{const custom=path.join(f.dir,'自定义 数据%$');const r=installForAccount({...f.options,system:true,stateDir:custom});assert.equal(r.data,custom);assert.ok(fs.readFileSync(r.unit,'utf8').includes(quoteUnit('TVFLOW_HOME='+custom)));}finally{f.close();}
 });
+
+test('专用Node通过独立包装命令启动，不依赖服务器全局Node或nvm',t=>{
+ const f=fixture(t);try{
+  const managed=path.join(f.dir,'independent-node/bin/node');fs.mkdirSync(path.dirname(managed),{recursive:true});fs.writeFileSync(managed,'runtime fixture');
+  const r=installForAccount({...f.options,system:true,runtimeNode:managed}),command=fs.readFileSync(r.target,'utf8');
+  assert.ok(command.includes('# tvflow-managed-command'));assert.ok(command.includes('# tvflow-app: '+f.options.appDir));assert.ok(command.includes('"$@"'));assert.ok(fs.readFileSync(r.unit,'utf8').includes(quoteUnit(managed,{exec:true})));
+  assert.deepEqual(installForAccount({...f.options,system:true,runtimeNode:managed}),r);
+ }finally{f.close();}
+});

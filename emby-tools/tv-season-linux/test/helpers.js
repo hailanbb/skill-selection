@@ -19,7 +19,7 @@ export function fixture(){
  const db={source:'douban',title:'测试动漫 (2025)',releaseYears:['2025'],aliases:[],tv:true,total:2,url:'https://movie.douban.com/subject/123/',broadcast:'已播完',checkedAt:new Date().toISOString()};
  const metadata={inspect:async(_show,season,files)=>({db:structuredClone(db),audit:I.auditSource(files,season,db)}),douban:async()=>structuredClone(db)};
  let active=[];const resource={media_info:{type:'电视剧',tmdb_id:123,title:'测试动漫',year:'2025'},meta_info:{begin_season:1,season_list:[1],episode_list:[2]},torrent_info:{site:1,site_name:'测试站',title:'测试动漫.S01E02.1080p.WEB-DL.x264-Group',enclosure:'https://invalid/?passkey=SECRET',seeders:8,size:100}};
- const mp={c:config.moviepilot,defaults:{baseURL:'http://mp.invalid/api/v1/'},active:async()=>structuredClone(active),get:async p=>{if(p==='download/')return structuredClone(active);if(p.startsWith('search/'))return {success:true,data:[resource]};throw Error('unsupported '+p);},post:async(p,b)=>{calls.push(['submit',p]);return {success:true,data:{download_id:'download-id'}};}};
+ const mp={c:config.moviepilot,defaults:{baseURL:'http://mp.invalid/api/v1/'},active:async()=>structuredClone(active),get:async p=>{if(p==='download/')return structuredClone(active);if(p==='site/')return [{id:7,name:'天空'},{id:8,name:'观众'}];if(p.startsWith('search/'))return {success:true,data:[resource]};throw Error('unsupported '+p);},post:async(p,b)=>{calls.push(['submit',p]);return {success:true,data:{download_id:'download-id'}};}};
  const store=new Store(root),engine=new Engine(store,()=>config,{cloud,mp,metadata});
  return {root,config,show,season,tree,file,video,cloud,metadata,mp,store,engine,calls,db,name,setActive:a=>active=a,close:()=>{store.close();fs.rmSync(root,{recursive:true,force:true});}};
 }

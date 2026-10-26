@@ -6,6 +6,8 @@ import {snapshot,hydrate} from './config.js';
 import {id,now,digest,clone,cloudPath,parent,base,within,fingerprint,assertSame,Pause,errorText,writable} from './util.js';
 import {exportJob} from './reports.js';
 import {inventory,runArchive} from './archive-runner.js';
+import {withExtraSites} from './search-sites.js';
+import {auditArchive} from './archive-audit.js';
 const media=/\.(mp4|mkv|avi|mov|m4v|ts|m2ts|wmv|flv|webm|mpg|mpeg|strm)$/i;
 const seasonNo=n=>{const m=/^Season\s+(\d+)$/i.exec(n);return m?Number(m[1]):null;};
 export const journalKey=(config,s)=>digest([config.cloud.url,s.path]);
@@ -15,7 +17,7 @@ export class Engine{
  workflow(w){const v=this.store.get('workflow',w);if(!v)throw Error('工作流不存在');return v;}
  create(stage,{workflow,scopes,plan}={}){
   const config=this.getConfig();
-  if(!['inspect','download','review','archive','repair','execute','reconcile'].includes(stage))throw Error('阶段无效');
+  if(!['inspect','download','review','archive','archive-audit','repair','execute','reconcile'].includes(stage))throw Error('阶段无效');
   if(this.store.all('job').some(j=>['running','queued'].includes(j.status)))throw Error('已有任务运行中，请先完成或暂停，避免同目录并发');
   if(stage==='inspect'){
    if(!Array.isArray(scopes)||!scopes.length)throw Error('请选择检查目录');scopes=[...new Set(scopes.map(cloudPath))].filter((p,_i,all)=>!all.some(other=>other!==p&&within(p,other)));if(scopes.some(p=>!within(p,config.source)))throw Error('检查范围超出当前源根');
@@ -36,7 +38,7 @@ export class Engine{
  event(j,text){text=errorText(text);this.store.event(j,text);if(j.logPath)fs.appendFileSync(j.logPath,now()+' '+text+'\n','utf8');}
  saveSeason(w,s){const at=w.seasons.findIndex(x=>x.path===s.path);if(at<0)w.seasons.push(s);else w.seasons[at]=s;this.store.put('workflow',w.id,w);}
  plan(j,w,kind,s,body){for(const old of this.store.all('plan'))if(old.kind===kind&&old.seasonPath===s?.path&&old.config.cloud.url===j.config.cloud.url&&!old.executionJob&&['ready','approved'].includes(old.status)){old.status='superseded';this.store.put('plan',old.id,old);}const p={id:id('P'),workflow:w.id,job:j.id,kind,seasonPath:s?.path,showPath:s?.showPath,config:j.config,body:clone(body),hash:digest(body),status:'ready',createdAt:now()};this.store.put('plan',p.id,p);return p;}
- blocked(config,s,ignoreArchive=false){const key=journalKey(config,s);const down=this.store.get('download',key,[]),clean=this.store.get('cleanup',key),repair=this.store.get('repair',key),archive=this.store.get('archive',digest([config.cloud.url,s.showPath]));return down.some(r=>['uncertain','submitting'].includes(r.state))||!!clean?.pending||R.pending(repair)||(!ignoreArchive&&(archive?.pending||archive?.incomplete));}
+ blocked(config,s,ignoreArchive=false){const key=journalKey(config,s);const down=this.store.get('download',key,[]),clean=this.store.get('cleanup',key),repair=this.store.get('repair',key),archive=this.store.get('archive',digest([config.cloud.url,s.showPath]));return down.some(r=>['uncertain','submitting'].includes(r.state))||!!clean?.pending||R.pending(repair)||(!ignoreArchive&&(archive?.pending||archive?.incomplete||archive?.reportAudit?.pending||archive?.reportAudit?.ok===false));}
  async noActive(ctx,seasons){const active=await ctx.mp.active();if(!Array.isArray(active))throw Error('下载列表读取不完整，不能清理或归档');for(const s of seasons.filter(s=>s.season)){const t={...task(s,ctx.config),title:I.showInfo(s.name).title,year:I.showInfo(s.name).year,tmdb:s.tmdb,total:s.total||10000};if(active.some(a=>D.activeMatch(t,a,[])))throw Error('本作品仍有下载任务，请等待完成后复核');}}
  async run(j){
   if(this.active)throw Error('已有工作进程');this.active=j.id;let cloud;const w=this.workflow(j.workflow);j.status='running';j.startedAt||=now();j.errors=[];this.store.put('job',j.id,j);
@@ -48,6 +50,7 @@ export class Engine{
    if(j.stage==='inspect')await this.inspect(ctx);
    else if(j.stage==='execute')await this.execute(ctx);
    else if(j.stage==='archive')await this.archive(ctx);
+   else if(j.stage==='archive-audit')await this.archiveAudit(ctx);
    else if(j.stage==='reconcile')await this.reconcile(ctx);
    else await this.seasons(ctx,j.stage);
    this.event(j,'本阶段已结束，正在自动生成报告');j.status=j.results.some(r=>r.state==='失败'||r.state==='待核实')?'completed-with-issues':'completed';
@@ -96,8 +99,10 @@ export class Engine{
     if(stage==='download'){
      if(this.blocked(config,s))throw Error('存在未闭环操作，先核实，不能重复下载');
      await this.inspectSeason(ctx,s);const t=D.taskFromRow(task(s,config));
-     const adapter=D.createAdapter(mp,mp.c.url);
+     ctx.searchApi??=withExtraSites(mp,{progress:t=>this.event(j,t)});
+     const adapter=D.createAdapter(ctx.searchApi,mp.c.url);
      result=await D.processTask(t,{...adapter,submit:async resource=>{assertSame(s.snapshot,await cloud.list(s.path));return adapter.submit(resource);},load:k=>this.store.get('download',k,[]),save:(k,v)=>this.store.put('download',k,v),checkpoint:()=>this.checkpoint(j),progress:t=>this.event(j,t)});
+     result.searchSites={defaults:true,additional:ctx.searchApi.selection()};
      s.color=result.color||s.color;s.state=result.state;s.note=result.note;s.download=result;
     }else if(stage==='review'){
      const rows=await cloud.list(s.path),db=await metadata.douban(I.showInfo(s.name),s.season,s.source?.source==='douban'?s.source.url:'');this.checkpoint(j);assertSame(rows,await cloud.list(s.path));
@@ -113,7 +118,7 @@ export class Engine{
      if(!config.repair.source||!config.repair.target)throw Error('请设置MoviePilot整理修复源/目标路径');
      const body=await T.check(t,T.adapter(mp,mp.c.url),config.repair,()=>this.checkpoint(j));result={state:body.state,note:body.note};if(body.state==='ready')result.planId=this.plan(j,w,'repair',s,{task:t,record:body}).id;
     }
-   }catch(e){if(e.name==='Pause')throw e;result={state:'待核实',note:errorText(e)};s.state='待核实';s.note=result.note;s.color='yellow';}
+   }catch(e){if(e.name==='Pause')throw e;result={state:'待核实',note:[errorText(e),stage==='download'?ctx.searchApi?.failure():''].filter(Boolean).join('；')};s.state='待核实';s.note=result.note;s.color='yellow';}
    this.saveSeason(w,s);j.results.push({path:s.path,name:s.name,...result});this.store.put('job',j.id,{...j,index:j.index+1});
   }
  }
@@ -144,19 +149,40 @@ export class Engine{
    }else if(p.kind==='archive'){
     if(w.seasons.filter(x=>x.showPath===p.body.source).some(x=>this.blocked(config,x,true)))throw Error('本作品有未闭环下载、清理或修复');
     const a=A(p.body.context.source,p.body.context.destination),key=digest([config.cloud.url,p.body.source]);
-    if(!this.store.get('archive',key)||this.store.get('archive',key).verified){const rows=w.seasons.filter(x=>x.showPath===p.body.source).map(x=>({...task(x,config),category:p.body.context.category}));const fresh=await a.plan(rows,p=>cloud.list(p),p.body.id);if(!a.equal(fresh.manifest,p.body.manifest)||!a.equal(fresh.destinationBefore,p.body.destinationBefore)||digest(fresh.operations)!==digest(p.body.operations))throw Error('当前归档条件与确认清单不同，请重新检查');}
+    if(!this.store.get('archive',key)){const rows=w.seasons.filter(x=>x.showPath===p.body.source).map(x=>({...task(x,config),category:p.body.context.category}));const fresh=await a.plan(rows,p=>cloud.list(p),p.body.id);if(!a.equal(fresh.manifest,p.body.manifest)||!a.equal(fresh.destinationBefore,p.body.destinationBefore)||digest(fresh.operations)!==digest(p.body.operations))throw Error('当前归档条件与确认清单不同，请重新检查');}
     result=await runArchive(p.body,{core:a,cloud,load:()=>this.store.get('archive',key),save:v=>{this.store.put('archive',key,v);j.operationProgress={done:(v.operations||[]).filter(o=>o.state==='verified').length+(v.cleanup?.state==='verified'?1:0),total:p.body.operations.length+(p.body.cleanup?1:0),unit:'移动/源清理单元'};this.store.put('job',j.id,j);},checkpoint:()=>this.checkpoint(j),progress:t=>this.event(j,t),noActive:()=>this.noActive(ctx,w.seasons.filter(x=>x.showPath===p.body.source))});
-    for(const row of w.seasons.filter(x=>x.showPath===p.body.source)){row.color='archived';row.state='已归档';row.archive=result;}
+    const audit=await this.auditPlan(ctx,p,result);result={...result,reportAudit:audit,state:audit.ok?'已归档':'待核实'};
    }else throw Error('未知计划类型');
    if(s)this.saveSeason(w,s);this.store.put('workflow',w.id,w);j.results.push({name:s?.name||p.body.name,state:result.state||'已验证',result});j.index=1;p.status='completed';this.store.put('plan',p.id,p);
   }catch(e){p.status=e.name==='Pause'?'approved':'uncertain';p.error=errorText(e);this.store.put('plan',p.id,p);throw e;}
+ }
+ async auditPlan(ctx,p,journal){
+  const {w,j,cloud,config}=ctx,rows=w.seasons.filter(s=>s.showPath===p.body.source),key=digest([config.cloud.url,p.body.source]);
+  journal={...journal,reportAudit:{pending:true,checkedAt:now()}};this.store.put('archive',key,journal);
+  for(const row of rows){row.color='yellow';row.state='归档已移动，报告待核验';row.archive=journal;row.archiveAudit={sourcePath:row.path,targetPath:p.body.target+row.path.slice(p.body.source.length),pending:true,checkedAt:now(),state:'待核验',expectedTotal:row.total,expectedEpisodes:row.current};}this.store.put('workflow',w.id,w);
+  this.event(j,'归档报告对照云盘：'+p.body.target);
+  const audit=await auditArchive(p.body,rows,cloud,{checkpoint:()=>this.checkpoint(j)});
+  journal.reportAudit=audit;this.store.put('archive',key,journal);
+  for(const row of rows){row.archive=journal;row.archiveAudit={...(audit.seasons.find(s=>s.sourcePath===row.path)||{sourcePath:row.path,targetPath:p.body.target+row.path.slice(p.body.source.length)}),ok:audit.ok,checkedAt:audit.checkedAt,state:audit.state,differences:audit.differences};row.color=audit.ok?'archived':'red';row.state=audit.ok?'已归档':'归档核验异常';row.note=audit.ok?'归档报告与CloudDrive2一致；源目录已移除':audit.differences.join('；');}
+  this.store.put('workflow',w.id,w);return audit;
+ }
+ async archiveAudit(ctx){
+  const {j,w,config}=ctx,shows=[...new Set(w.seasons.filter(s=>this.store.get('archive',digest([config.cloud.url,s.showPath]))).map(s=>s.showPath))];j.total=shows.length;
+  if(!shows.length)throw Error('当前工作流没有可复核的归档记录');
+  for(;j.index<shows.length;j.index++){
+   this.checkpoint(j);const source=shows[j.index],journal=this.store.get('archive',digest([config.cloud.url,source]));
+   const p=this.store.all('plan').find(p=>p.kind==='archive'&&p.body.source===source&&p.body.id===journal.id&&p.workflow===w.id);
+   let result;try{if(!p)throw Error('缺少对应归档清单，无法验证报告');if(!journal.verified||journal.pending||journal.incomplete)throw Error('归档操作尚未闭环，请先核实上次结果');const audit=await this.auditPlan(ctx,p,journal);result={state:audit.ok?'报告与云盘一致':'待核实',audit};}
+   catch(e){if(e.name==='Pause')throw e;result={state:'待核实',note:errorText(e)};for(const row of w.seasons.filter(s=>s.showPath===source)){row.color='red';row.state='归档核验异常';row.note=result.note;row.archiveAudit={...row.archiveAudit,sourcePath:row.path,targetPath:journal.target+row.path.slice(source.length),state:'归档核验异常',checkedAt:now(),ok:false,differences:[result.note]};}this.store.put('workflow',w.id,w);}
+   j.results.push({path:source,...result});this.store.put('job',j.id,{...j,index:j.index+1});
+  }
  }
  async reconcile(ctx){const {j,w,config,cloud,mp}=ctx;j.total=w.seasons.length;
   for(;j.index<w.seasons.length;j.index++){this.checkpoint(j);const s=w.seasons[j.index],key=journalKey(config,s);let result={state:'无待核实操作'};
    try{const clean=this.store.get('cleanup',key);if(clean?.pending){const pending=clean.pending,files=pending.files||[pending],rows=await cloud.list(s.path),gone=files.filter(f=>!rows.some(r=>r.path===f.path));if(gone.length!==files.length)throw Error('部分待删文件仍存在，保留待核实；不会再次删除');const removed=new Set([...(clean.records||[]).filter(r=>r.batchId===pending.batchId&&r.state==='verified').map(r=>r.path),...gone.map(r=>r.path)]);if(!pending.beforeSnapshot)throw Error('缺少完整快照，无法自动核实');assertSame(pending.beforeSnapshot.filter(f=>!removed.has(f.path)),rows);clean.records.push(...files.map(f=>({...f,state:'verified',finishedAt:now()})));clean.pending=null;this.store.put('cleanup',key,clean);result={state:'删除已核实，请重新复核'};}
     const repair=this.store.get('repair',key);if(repair&&R.uncertain(repair)){const r=await T.reconcile(D.taskFromRow(task(s,config)),repair,T.adapter(mp,mp.c.url),config.repair,()=>this.checkpoint(j));this.store.put('repair',key,r);s.repair=r;result={state:'修复请求已核实，待文件复核'};}
     const down=this.store.get('download',key,[]);if(down.some(r=>['uncertain','submitting'].includes(r.state))){const active=await mp.active();if(!Array.isArray(active))throw Error('下载列表不完整');for(const r of down.filter(r=>['uncertain','submitting'].includes(r.state))){const matches=active.filter(t=>t.title===r.title&&t.site_name===r.site&&t.hash&&D.activeMatch(D.taskFromRow(task(s,config)),t,[]));if(matches.length!==1)throw Error('没有唯一匹配的活动任务，仍待核实，不解除防重');r.state='existing';r.id=matches[0].hash;r.finishedAt=now();}this.store.put('download',key,down);result={state:'已有下载已核实，待复核文件'};}
-    const ak=digest([config.cloud.url,s.showPath]),ar=this.store.get('archive',ak);if(ar?.pending||ar?.incomplete){const plan=this.store.all('plan').find(p=>p.kind==='archive'&&p.body.source===s.showPath&&p.workflow===w.id);if(!plan)throw Error('缺少原归档计划');const a=A(plan.body.context.source,plan.body.context.destination),r=await runArchive(plan.body,{core:a,cloud,load:()=>ar,save:v=>this.store.put('archive',ak,v),verifyOnly:true});if(r.verified)for(const row of w.seasons.filter(x=>x.showPath===s.showPath)){row.state='已归档';row.color='archived';}result={state:r.verified?'归档已核实':r.state};}
+    const ak=digest([config.cloud.url,s.showPath]),ar=this.store.get('archive',ak);if(ar?.pending||ar?.incomplete||ar?.reportAudit?.pending){const plan=this.store.all('plan').find(p=>p.kind==='archive'&&p.body.source===s.showPath&&p.workflow===w.id);if(!plan)throw Error('缺少原归档计划');const a=A(plan.body.context.source,plan.body.context.destination),r=await runArchive(plan.body,{core:a,cloud,load:()=>ar,save:v=>this.store.put('archive',ak,v),verifyOnly:true});const audit=r.verified?await this.auditPlan(ctx,plan,r):null;result={state:audit?.ok?'归档已核实':r.verified?'待核实':r.state};}
    }catch(e){if(e.name==='Pause')throw e;result={state:'待核实',note:errorText(e)};}
    this.saveSeason(w,s);j.results.push({name:s.name,path:s.path,...result});this.store.put('job',j.id,{...j,index:j.index+1});
   }

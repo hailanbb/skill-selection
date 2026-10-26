@@ -1,10 +1,10 @@
 # 剧集整理Linux版
 
-**v1.0.0 · Ubuntu / SSH · Node.js 22.13+**
+**v1.1.0 · Ubuntu / SSH · 一键安装Node与程式**
 
 在Ubuntu控制端通过API连接远端CloudDrive2和MoviePilot，完成电视剧、动漫的 **初检 → 补缺下载 → 复核清理 → 归档**，并提供旧整理历史阻挡修复。无需本机挂载媒体，无需浏览器操作，也无需AI服务。
 
-输入 `tvflow` 打开中文数字菜单。启动任务自动进入彩色实时进度；退出菜单或断开SSH不会主动取消后台任务。支持root直接安装：root使用systemd系统服务，普通用户使用用户服务并启用linger，避免会话退出导致后台被系统清理。
+输入 `tvflow` 打开中文数字菜单。启动任务自动进入彩色实时进度；退出菜单或断开SSH不会主动取消后台任务。root一键管理器自动设置系统级后台服务，安装和卸载共用一个入口，卸载保留Node。
 
 [从零安装](INSTALL.md) · [完整操作说明](docs/USAGE.md) · [报告与多份记录](docs/REPORTS.md) · [验证与限制](docs/VALIDATION.md) · [设计记录](docs/DESIGN.md) · [来源与许可](THIRD_PARTY.md)
 
@@ -43,17 +43,15 @@ q 退出界面，后台任务继续
 
 ## 快速开始
 
-需要 **Node.js 22.13或更新版本**，root可直接安装。没有Node或版本太旧时，先按[Node安装命令](INSTALL.md#安装nodejsroot可直接复制)操作。下面只获取本项目及必要的Git元数据和少量索引，不下载其他工具正文：
+在Ubuntu的root终端复制这一条命令，选择 `1` 安装（自动包含Node），或选择 `2` 清理旧版：
 
 ```bash
-git clone --depth 1 --filter=blob:none --sparse https://github.com/hailanbb/skill-selection.git tvflow-source
-git -C tvflow-source sparse-checkout set emby-tools/tv-season-linux
-cd tvflow-source/emby-tools/tv-season-linux
-bash install.sh
-tvflow
+bash <(curl -fsSL https://raw.githubusercontent.com/hailanbb/skill-selection/master/emby-tools/tv-season-linux/manage.sh)
 ```
 
-先在 `8` 配置两个远端服务及认证，再进行只读诊断和小范围初检。安装脚本不替你配置账号、不修改远端设置，也不启动云端操作。后台服务与SSH长期运行方式见[安装说明](INSTALL.md)。
+程序默认 `/home/tv-season-linux/`，Node独立保存在 `/home/tvflow-node/`，卸载程序时保留。安装后运行 `tvflow`；可用[配置文件](config.example.json)代替逐项填写，再进行只读诊断和小范围初检。[安装、卸载及完整清理说明](INSTALL.md)。
+
+补缺搜索保留MoviePilot默认站点并追加 **天空、观众**；归档后自动对照CloudDrive2并导出 **归档核验、归档文件核验** 明细。菜单 `4 → 5` 可再次只读核验，发现差异标红，确认一致才标紫。
 
 ## 实现与边界
 

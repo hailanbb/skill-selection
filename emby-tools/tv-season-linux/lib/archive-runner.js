@@ -27,6 +27,8 @@ export async function runArchive(plan,{cloud,load,save,checkpoint,progress,noAct
  let journal=load();
  if(!journal||journal.verified&&journal.id!==plan.id){if(verifyOnly)throw Error('没有匹配的可核实归档记录');journal={...clone(plan),rows:undefined,operations:clone(plan.operations),pending:false,incomplete:true,at:now(),history:journal?[journal]:[]};}
  if(journal.id!==plan.id)throw Error('存在另一份未闭环归档记录');
+ // 移动已闭环但报告核验被暂停时，只读复验；绝不重新进入源清理步骤。
+ if(journal.verified){checkpoint?.();const result={...journal,...await core.verify(journal,p=>cloud.list(p)),incomplete:false};save(result);return result;}
  // Read-only reconciliation can prove completion, but never retries an ambiguous request.
  for(const op of journal.operations.filter(o=>o.state==='pending')){await verifyUnit(plan,op,cloud);op.state='verified';op.finishedAt=now();save(journal);}
  if(journal.cleanup?.state==='pending'){

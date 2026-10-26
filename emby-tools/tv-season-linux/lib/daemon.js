@@ -16,7 +16,7 @@ export async function startDaemon(){
  const store=new Store(),engine=new Engine(store,readConfig);store.recover();let shutting=false;
  const dispatch=async(method,p)=>{
   const config=readConfig();
-  if(method==='ping')return {version:'1.0.0',pid:process.pid};
+  if(method==='ping')return {version:'1.1.0',pid:process.pid};
   if(method==='config')return publicConfig(config);
   if(method==='set-config'){
    if(store.all('job').some(j=>['running','queued'].includes(j.status))&&['cloud','moviepilot','repair'].includes(p.section))throw Error('请先暂停任务，再修改连接或修复路径');
