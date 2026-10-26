@@ -8,6 +8,7 @@ import {exportJob} from './reports.js';
 import {inventory,runArchive} from './archive-runner.js';
 import {withExtraSites} from './search-sites.js';
 import {auditArchive} from './archive-audit.js';
+import {libraryRoot,inspectLibrary} from './library-audit.js';
 const media=/\.(mp4|mkv|avi|mov|m4v|ts|m2ts|wmv|flv|webm|mpg|mpeg|strm)$/i;
 const seasonNo=n=>{const m=/^Season\s+(\d+)$/i.exec(n);return m?Number(m[1]):null;};
 export const journalKey=(config,s)=>digest([config.cloud.url,s.path]);
@@ -17,12 +18,13 @@ export class Engine{
  workflow(w){const v=this.store.get('workflow',w);if(!v)throw Error('工作流不存在');return v;}
  create(stage,{workflow,scopes,plan}={}){
   const config=this.getConfig();
-  if(!['inspect','download','review','archive','archive-audit','repair','execute','reconcile'].includes(stage))throw Error('阶段无效');
+  if(!['inspect','library-audit','download','review','archive','archive-audit','repair','execute','reconcile'].includes(stage))throw Error('阶段无效');
   if(this.store.all('job').some(j=>['running','queued'].includes(j.status)))throw Error('已有任务运行中，请先完成或暂停，避免同目录并发');
-  if(stage==='inspect'){
-   if(!Array.isArray(scopes)||!scopes.length)throw Error('请选择检查目录');scopes=[...new Set(scopes.map(cloudPath))].filter((p,_i,all)=>!all.some(other=>other!==p&&within(p,other)));if(scopes.some(p=>!within(p,config.source)))throw Error('检查范围超出当前源根');
-   workflow=id('W');this.store.put('workflow',workflow,{id:workflow,createdAt:now(),config:snapshot(config),scopes,seasons:[]});
-  }else{const w=this.workflow(workflow);if(w.config.cloud.url!==config.cloud.url||w.config.moviepilot.url!==config.moviepilot.url||w.config.source!==config.source)throw Error('工作流连接/源根与当前设置不同，请恢复原设置或重新初检');}
+  if(stage==='inspect'||stage==='library-audit'){
+   const audit=stage==='library-audit',root=audit?libraryRoot(config):config.source;
+   if(!Array.isArray(scopes)||!scopes.length)throw Error('请选择检查目录');scopes=[...new Set(scopes.map(cloudPath))].filter((p,_i,all)=>!all.some(other=>other!==p&&within(p,other)));if(scopes.some(p=>!within(p,root)))throw Error(audit?'复核范围超出归档库根目录':'检查范围超出当前源根');
+   workflow=id('W');this.store.put('workflow',workflow,{id:workflow,createdAt:now(),config:snapshot(config),kind:audit?'library-audit':'normal',...(audit?{auditRoot:root}:{}),scopes,seasons:[]});
+  }else{const w=this.workflow(workflow);if(w.kind==='library-audit')throw Error('归档库复核是只读工作流，不能用于补缺、清理、修复或移动');if(w.config.cloud.url!==config.cloud.url||w.config.moviepilot.url!==config.moviepilot.url||w.config.source!==config.source)throw Error('工作流连接/源根与当前设置不同，请恢复原设置或重新初检');}
   if(stage==='execute'){
    const p=this.store.get('plan',plan);if(!p||p.workflow!==workflow||p.status!=='approved'||p.approvedHash!==digest(p.body))throw Error('具体清单尚未确认或已变化');
    if(p.config.destination!==config.destination)throw Error('归档配置已变化，请重新生成计划');
@@ -37,17 +39,19 @@ export class Engine{
  checkpoint(j){if(this.store.get('job',j.id)?.pauseRequested)throw new Pause();}
  event(j,text){text=errorText(text);this.store.event(j,text);if(j.logPath)fs.appendFileSync(j.logPath,now()+' '+text+'\n','utf8');}
  saveSeason(w,s){const at=w.seasons.findIndex(x=>x.path===s.path);if(at<0)w.seasons.push(s);else w.seasons[at]=s;this.store.put('workflow',w.id,w);}
+ inspectResult(j,result){const at=j.stage==='library-audit'?j.results.findIndex(r=>r.path===result.path):-1;if(at>=0)j.results[at]=result;else j.results.push(result);}
  plan(j,w,kind,s,body){for(const old of this.store.all('plan'))if(old.kind===kind&&old.seasonPath===s?.path&&old.config.cloud.url===j.config.cloud.url&&!old.executionJob&&['ready','approved'].includes(old.status)){old.status='superseded';this.store.put('plan',old.id,old);}const p={id:id('P'),workflow:w.id,job:j.id,kind,seasonPath:s?.path,showPath:s?.showPath,config:j.config,body:clone(body),hash:digest(body),status:'ready',createdAt:now()};this.store.put('plan',p.id,p);return p;}
  blocked(config,s,ignoreArchive=false){const key=journalKey(config,s);const down=this.store.get('download',key,[]),clean=this.store.get('cleanup',key),repair=this.store.get('repair',key),archive=this.store.get('archive',digest([config.cloud.url,s.showPath]));return down.some(r=>['uncertain','submitting'].includes(r.state))||!!clean?.pending||R.pending(repair)||(!ignoreArchive&&(archive?.pending||archive?.incomplete||archive?.reportAudit?.pending||archive?.reportAudit?.ok===false));}
  async noActive(ctx,seasons){const active=await ctx.mp.active();if(!Array.isArray(active))throw Error('下载列表读取不完整，不能清理或归档');for(const s of seasons.filter(s=>s.season)){const t={...task(s,ctx.config),title:I.showInfo(s.name).title,year:I.showInfo(s.name).year,tmdb:s.tmdb,total:s.total||10000};if(active.some(a=>D.activeMatch(t,a,[])))throw Error('本作品仍有下载任务，请等待完成后复核');}}
  async run(j){
   if(this.active)throw Error('已有工作进程');this.active=j.id;let cloud;const w=this.workflow(j.workflow);j.status='running';j.startedAt||=now();j.errors=[];this.store.put('job',j.id,j);
   try{
+   if(w.kind==='library-audit'&&j.stage!=='library-audit')throw Error('归档库复核为只读任务，拒绝执行其他阶段');
    const config=hydrate(j.config,this.getConfig());const logDir=writable(path.join(config.outputs.logs,j.id));j.logPath=path.join(logDir,'task.log');
    cloud=this.clients?.cloud||new Cloud(config);const mp=this.clients?.mp||new MoviePilot(config);const metadata=this.clients?.metadata||new Metadata(mp,this.store,()=>this.checkpoint(j),text=>this.event(j,text));
    this.event(j,'任务开始：'+j.stage);
    const ctx={j,w,config,cloud,mp,metadata};
-   if(j.stage==='inspect')await this.inspect(ctx);
+   if(j.stage==='inspect'||j.stage==='library-audit')await this.inspect(ctx);
    else if(j.stage==='execute')await this.execute(ctx);
    else if(j.stage==='archive')await this.archive(ctx);
    else if(j.stage==='archive-audit')await this.archiveAudit(ctx);
@@ -56,39 +60,44 @@ export class Engine{
    this.event(j,'本阶段已结束，正在自动生成报告');j.status=j.results.some(r=>r.state==='失败'||r.state==='待核实')?'completed-with-issues':'completed';
   }catch(e){j.errors.push(errorText(e));this.event(j,errorText(e));j.status=e.name==='Pause'?'paused':'failed';}
   finally{
-   j.finishedAt=now();j.operationRecords=[];const collected=new Set();for(const s of w.seasons){for(const kind of ['download','cleanup','repair','archive']){const key=kind==='archive'?digest([j.config.cloud.url,s.showPath]):journalKey(j.config,s),unique=kind+key;if(collected.has(unique))continue;collected.add(unique);const record=this.store.get(kind,key);if(record)j.operationRecords.push({kind,path:kind==='archive'?s.showPath:s.path,record});}}
+   j.finishedAt=now();j.operationRecords=[];const collected=new Set();if(w.kind!=='library-audit')for(const s of w.seasons){for(const kind of ['download','cleanup','repair','archive']){const key=kind==='archive'?digest([j.config.cloud.url,s.showPath]):journalKey(j.config,s),unique=kind+key;if(collected.has(unique))continue;collected.add(unique);const record=this.store.get(kind,key);if(record)j.operationRecords.push({kind,path:kind==='archive'?s.showPath:s.path,record});}}
    try{const output=exportJob(j,w,this.store.all('plan').filter(p=>p.job===j.id||p.id===j.payload.plan));j.files=[...new Set([...(j.files||[]),...output.files])];j.exportErrors=output.errors;}catch(e){j.exportErrors=[{error:errorText(e)}];}
    j.pauseRequested=false;this.store.put('job',j.id,j);if(!this.clients)cloud?.close();this.active=null;
   }return j;
  }
- async discover(ctx){const {j,cloud,config}=ctx,shows=[],seen=new Set();let count=0;
+ async discover(ctx){const {j,w,cloud,config}=ctx,shows=[],seen=new Set(),readOnly=w.kind==='library-audit',root=readOnly?w.auditRoot:config.source;let count=0;
   const walk=async(p,depth)=>{this.checkpoint(j);if(depth>8||++count>50000)throw Error('目录数量/深度过大，请缩小范围');if(seen.has(p))return;seen.add(p);this.event(j,'正在发现目录：'+p+'；已发现 '+shows.length+' 部');
-   const rows=await cloud.list(p),dirs=rows.filter(r=>r.directory),seasons=dirs.filter(r=>seasonNo(r.name)!==null);
+   let rows;try{rows=await cloud.list(p);}catch(e){if(!readOnly||e.name==='Pause')throw e;shows.push({path:p});return;}
+   if(readOnly&&!rows.length){shows.push({path:p});return;}
+   const dirs=rows.filter(r=>r.directory),seasons=dirs.filter(r=>seasonNo(r.name)!==null);
    if(seasons.length||rows.some(r=>!r.directory&&media.test(r.name))||/\[tmdbid=\d+\]|[（(](?:19|20)\d{2}[)）]/.test(base(p))){shows.push({path:p,rows});return;}
    for(const d of I.sortModified(dirs))await walk(d.path,depth+1);
   };
-  for(const scope of j.payload.scopes){if(seasonNo(base(scope))!==null){const p=parent(scope);if(!within(p,config.source))throw Error('季目录超出范围');if(!seen.has(p)){seen.add(p);shows.push({path:p,rows:await cloud.list(p),only:[scope]});}}else await walk(scope,0);}
+  for(const scope of j.payload.scopes){if(seasonNo(base(scope))!==null){const p=parent(scope);if(!within(p,root))throw Error('季目录超出范围');if(!seen.has(p)){seen.add(p);shows.push({path:p,only:[scope]});}else{const show=shows.find(s=>s.path===p);if(show?.only&&!show.only.includes(scope))show.only.push(scope);}}else await walk(scope,0);}
   j.payload.shows=shows.map(s=>({path:s.path,only:s.only}));j.total=shows.length;this.store.put('job',j.id,j);return shows;
  }
- async inspect(ctx){const {j,w,cloud,config}=ctx;if(!j.payload.shows)await this.discover(ctx);const shows=j.payload.shows;j.total=shows.length;
+ async inspect(ctx){const {j,w,cloud,config}=ctx,readOnly=w.kind==='library-audit',root=readOnly?w.auditRoot:config.source,category=p=>within(parent(p),root)?path.posix.relative(root,parent(p)):'';if(!j.payload.shows)await this.discover(ctx);const shows=j.payload.shows;j.total=shows.length;
   for(;j.index<shows.length;j.index++){
    this.checkpoint(j);const show=shows[j.index];this.event(j,'读取作品：'+show.path);
-   let rows;try{rows=await cloud.list(show.path);}catch(e){throw Error('目录读取失败，暂停当前作品：'+errorText(e));}
+   let rows;try{rows=await cloud.list(show.path);}catch(e){if(e.name==='Pause')throw e;if(!readOnly)throw Error('目录读取失败，暂停当前作品：'+errorText(e));const s={path:show.path,showPath:show.path,name:base(show.path),category:category(show.path),season:null,state:'待核实',note:'目录读取失败：'+errorText(e),color:'yellow',checkedAt:now()};this.saveSeason(w,s);this.inspectResult(j,{path:s.path,name:s.name,state:s.state,note:s.note});this.store.put('job',j.id,{...j,index:j.index+1});continue;}
    const dirs=rows.filter(r=>r.directory&&seasonNo(r.name)>0&&(!show.only||show.only.includes(r.path)));
    const abnormal=rows.some(r=>r.directory&&!(seasonNo(r.name)>0)||!r.directory&&media.test(r.name));
-   if(!dirs.length||abnormal){const s={path:show.path,showPath:show.path,name:base(show.path),category:path.posix.relative(config.source,parent(show.path)),season:null,state:'待核实',note:'存在未分季视频、特别篇、未知目录或没有标准Season季目录',color:'',checkedAt:now()};this.saveSeason(w,s);j.results.push({path:s.path,name:s.name,state:s.state,note:s.note});}
-   for(const dir of I.sortModified(dirs)){this.checkpoint(j);const s={path:dir.path,showPath:show.path,name:base(show.path),category:path.posix.relative(config.source,parent(show.path)),season:seasonNo(dir.name)};
-    try{await this.inspectSeason(ctx,s);this.saveSeason(w,s);j.results.push({path:s.path,name:s.name,state:s.state,note:s.note});}catch(e){if(e.name==='Pause')throw e;s.state='待核实';s.note=errorText(e);s.color='';s.checkedAt=now();this.saveSeason(w,s);j.results.push({path:s.path,name:s.name,state:s.state,note:s.note});}
+   const duplicateSeasons=readOnly?[...new Set(dirs.map(d=>seasonNo(d.name)))].filter(n=>dirs.filter(d=>seasonNo(d.name)===n).length>1):[];
+   if(!dirs.length||abnormal||duplicateSeasons.length){const s={path:show.path,showPath:show.path,name:base(show.path),category:category(show.path),season:null,state:'待核实',note:duplicateSeasons.length?'同一季存在多个目录：'+dirs.filter(d=>duplicateSeasons.includes(seasonNo(d.name))).map(d=>d.name).join('、'):'存在未分季视频、特别篇、未知目录或没有标准Season季目录',color:readOnly?'yellow':'',checkedAt:now(),...(readOnly&&!rows.some(r=>r.directory||media.test(r.name))?{videoCount:0,current:0}:{})};this.saveSeason(w,s);this.inspectResult(j,{path:s.path,name:s.name,state:s.state,note:s.note});}
+   for(const dir of I.sortModified(dirs)){this.checkpoint(j);const s={path:dir.path,showPath:show.path,name:base(show.path),category:category(show.path),season:seasonNo(dir.name)};
+    try{await this.inspectSeason(ctx,s);if(duplicateSeasons.includes(s.season)){s.library.issues.push('同一季存在多个目录，需人工核实');s.library.state='待核实';s.library.color='yellow';s.note+='；同一季存在多个目录，需人工核实';s.state='待核实';s.color='yellow';}this.saveSeason(w,s);this.inspectResult(j,{path:s.path,name:s.name,state:readOnly&&s.color!=='green'&&s.color!=='blue'?'待核实':s.state,classification:s.state,note:s.note});}catch(e){if(e.name==='Pause')throw e;s.state='待核实';s.note=errorText(e);s.color=readOnly?'yellow':'';s.checkedAt=now();this.saveSeason(w,s);this.inspectResult(j,{path:s.path,name:s.name,state:s.state,note:s.note});}
    }
    this.store.put('job',j.id,{...j,index:j.index+1});
   }
  }
  async inspectSeason(ctx,s){const {cloud,metadata,j,config}=ctx;this.event(j,'检查 '+s.name+' / Season '+s.season);const files=await cloud.list(s.path);this.checkpoint(j);const show=I.showInfo(s.name);s.tmdb=show.tmdb;s.snapshot=files;s.fingerprint=fingerprint(files);s.checkedAt=now();
-  const {db,audit}=await metadata.inspect(show,s.season,files);assertSame(files,await cloud.list(s.path));
+  let checked;try{checked=await metadata.inspect(show,s.season,files);}catch(e){if(e.name==='Pause'||ctx.w.kind!=='library-audit')throw e;const db={source:'',total:null,broadcast:'未确认',error:errorText(e)};checked={db,audit:I.auditSource(files,s.season,db)};}
+  const {db,audit}=checked;assertSame(files,await cloud.list(s.path));if(ctx.w.kind==='library-audit')s.checkedAt=now();
   s.source=db;s.total=db.total??null;s.current=audit.current;s.missing=audit.missing;s.future=db.futureEpisodes||[];s.undated=db.undatedEpisodes||[];s.broadcast=db.broadcast||'未确认';s.data={};
   s.state=audit.integrity==='齐全'&&s.broadcast==='已播完'?'齐全':s.broadcast==='连载中'?'连载中':audit.integrity;s.note=[...(audit.issues||[]),db.error||'',db.broadcastEvidence||''].filter(Boolean).join('；');
   s.color=s.state==='齐全'?'green':s.broadcast==='连载中'?'blue':'';
   if(files.some(f=>/\.strm$/i.test(f.name))){s.state='待核实';s.color='';s.note+='；播放指针不作为可归档视频';}
+  if(ctx.w.kind==='library-audit'){s.library=inspectLibrary(files,s.season,db);s.current=s.library.current;s.missing=s.library.missing;s.state=s.library.state;s.color=s.library.color;s.note=[s.note,...s.library.issues].filter(Boolean).join('；');return;}
   const key=journalKey(config,s);s.repair=this.store.get('repair',key);if(this.blocked(config,s)){s.state='待核实';s.color='yellow';s.note+='；存在未闭环操作记录';}
  }
  async seasons(ctx,stage){const {j,w,config,cloud,mp,metadata}=ctx;

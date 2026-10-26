@@ -2,6 +2,7 @@
   "schema": 1,
   "source": "/115/Library_incs/nas",
   "destination": "/115/Library_incs/nas.finish",
+  "libraryRoot": "/115/Library_incs/nas.finish",
   "cloud": {"url": "https://cloud.example", "transport": "grpc-web", "token": "填写CloudDrive2认证值"},
   "moviepilot": {"url": "https://moviepilot.example", "auth": "apikey", "token": "填写MoviePilot API Key"},
   "repair": {"source": "", "target": ""},

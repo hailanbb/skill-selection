@@ -16,11 +16,11 @@ export async function startDaemon(){
  const store=new Store(),engine=new Engine(store,readConfig);store.recover();let shutting=false;
  const dispatch=async(method,p)=>{
   const config=readConfig();
-  if(method==='ping')return {version:'1.1.1',pid:process.pid};
+  if(method==='ping')return {version:'1.2.0',pid:process.pid};
   if(method==='config')return publicConfig(config);
   if(method==='set-config'){
    if(store.all('job').some(j=>['running','queued'].includes(j.status))&&['cloud','moviepilot','repair'].includes(p.section))throw Error('请先暂停任务，再修改连接或修复路径');
-   const keys={root:['source','destination'],cloud:['url','token','transport'],moviepilot:['url','token','auth'],repair:['source','target'],outputs:['reports','records','logs']};
+   const keys={root:['source','destination','libraryRoot'],cloud:['url','token','transport'],moviepilot:['url','token','auth'],repair:['source','target'],outputs:['reports','records','logs']};
    if(!keys[p.section]?.includes(p.key)||typeof p.value!=='string')throw Error('配置字段无效');
    if(p.section==='outputs')p.value=writable(p.value);
    if(p.section==='root'){
@@ -31,7 +31,7 @@ export async function startDaemon(){
   if(method==='browse'){const c=new Cloud(config);try{return await c.list(cloudPath(p.path));}finally{c.close();}}
   if(method==='jobs')return store.all('job').map(j=>({...j,results:undefined,config:undefined,payload:undefined}));
   if(method==='job'){const j=store.get('job',p.id);if(!j)throw Error('任务不存在');return j;}
-  if(method==='workflows')return store.all('workflow').map(w=>({id:w.id,createdAt:w.createdAt,scopes:w.scopes,count:w.seasons.length}));
+  if(method==='workflows')return store.all('workflow').map(w=>({id:w.id,createdAt:w.createdAt,scopes:w.scopes,count:w.seasons.length,kind:w.kind||'normal',auditRoot:w.auditRoot}));
   if(method==='workflow')return engine.workflow(p.id);
   if(method==='plans')return store.all('plan').filter(x=>(!p.workflow||x.workflow===p.workflow)&&(!p.kind||x.kind===p.kind));
   if(method==='approve')return engine.approve(p.id,p.hash);

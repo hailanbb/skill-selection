@@ -59,6 +59,8 @@ CloudDrive2按实际入口选择 `grpc` 或 `grpc-web`；网页能打开不等�
 
 输入 `tvflow` 打开菜单；root后台管理使用 `systemctl status tvflow.service`、`systemctl stop tvflow.service`、`systemctl start tvflow.service`，日志使用 `journalctl -u tvflow.service -n 100 --no-pager`。
 
+菜单 **9 归档库复核（只读）** 可独立复核已归档的电视剧与动漫；默认根目录为已有 `libraryRoot`，旧配置未填写时使用归档目标，未设置目标时为 `/115/Library_incs/nas.finish/`。不需要改变整理源根；可在该菜单浏览、多选分类或输入具体路径。详细说明见[归档库复核](docs/USAGE.md#归档库复核只读)。
+
 补缺搜索范围为 **MoviePilot默认站点 + 天空 + 观众**。程序按站点名称查出本机MoviePilot中的ID，合并并去重资源，不修改MoviePilot全局站点设置。追加站点缺失、重名、停用或搜索失败会列明原因，不按不完整资源池继续选择下载。
 
 归档结束自动复核报告与CloudDrive2。只有源目录已消失，目标路径、集号/视频数及文件大小、修改时间均符合记录，报告才标紫。异常标红并导出差异；菜单 `4 → 5` 可再次只读核验并输出新报告。核验不会自动删除、移动或“修正”云盘文件。

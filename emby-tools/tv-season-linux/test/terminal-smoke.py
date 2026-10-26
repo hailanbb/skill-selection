@@ -28,6 +28,10 @@ with tempfile.TemporaryDirectory(prefix="tvflow-pty-") as folder:
 
     try:
         expect("请选择：")
+        os.write(master, b"9\n")
+        expect("1 浏览并选择电视剧/动漫分类")
+        os.write(master, b"b\n")
+        expect("q 退出界面")
         os.write(master, b"8\n")
         expect("7 报告与保存路径")
         os.write(master, b"7\n")
