@@ -1,7 +1,0 @@
-node_modules/
-data/
-.env
-upstream/
-*.log
-
-config.env

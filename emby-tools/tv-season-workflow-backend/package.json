@@ -1,1 +1,0 @@
-{"name":"tv-season-backend","version":"1.0.0","private":true,"engines":{"node":">=22.13"},"scripts":{"start":"node app/server.cjs","test":"node --test test/*.test.cjs"},"dependencies":{"@grpc/grpc-js":"^1.14.0","@grpc/proto-loader":"^0.8.0","@xmldom/xmldom":"^0.9.12","fastify":"^5.6.0"}}

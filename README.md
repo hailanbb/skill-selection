@@ -1,6 +1,6 @@
 # 个人开发
 
-个人开发与维护的 Agent 配置、精选技能、脚本工具和emby工具集合。包含自动化归档、数据提取、知识管理与 MoviePilot 订阅维护工具，以及按 Agent 区分的行为规范。
+个人开发与维护的 Agent 配置、精选技能及脚本工具集合。媒体整理与 MoviePilot 订阅维护的油猴工具已迁移到[媒体工具仓库](https://github.com/hailanbb/media-tools)；本仓库保留剧集整理 Win11 版及按 Agent 区分的行为规范。
 
 ---
 
@@ -19,10 +19,7 @@ skill-selection/
 │   └── README.md
 ├── emby-tools/                 # emby工具：媒体整理与订阅维护
 │   ├── README.md               # 分类索引
-│   ├── tv-season-linux/        # 剧集整理Linux版：SSH菜单与远端API
-│   ├── tv-season-workflow-backend/ # 剧集整理工作流(后端)
-│   ├── tv-season-workflow/      # 剧集整理工作流(油猴版)
-│   └── moviepilot-unsubscribe/ # MoviePilot订阅批量取消脚本 v2.4.0
+│   └── tv-workflow-win/        # 保留的剧集整理 Win11 版
 └── skills/                     # 技能集合目录
     ├── octopus-statement/      # 八达通详单：截图裁剪、消费提取与 Excel
     ├── task-memory-to-obsdian/ # Task Memory To Obsdian：智能全自动任务归档
@@ -102,24 +99,23 @@ skill-selection/
 
 ---
 
-## 🎬 emby工具
+## 🎬 媒体工具
 
-本类别收录Emby媒体库相关的剧集整理、下载、归档及MoviePilot订阅维护工具，与Agent配置、Skills分开管理。
+剧集整理工作流（油猴版）与 MoviePilot 订阅批量取消脚本 v2.4.0 已迁移到独立的[媒体工具仓库](https://github.com/hailanbb/media-tools)。
 
-| 工具名称 | 适用环境 | 核心功能 | 文件与说明 |
-| :--- | :--- | :--- | :--- |
-| **剧集整理Linux版** | **Ubuntu / SSH + Node.js** | 中文菜单与彩色实时进度，远端CloudDrive2/MoviePilot API；电视剧与动漫四阶段、持久防重、Excel/CSV/JSON及独立日志路径。 | [项目与源码](emby-tools/tv-season-linux/README.md) · [安装](emby-tools/tv-season-linux/INSTALL.md) · [操作说明](emby-tools/tv-season-linux/docs/USAGE.md) |
-| **剧集整理工作流(后端)** | **Windows 11 / Ubuntu 24 + Node.js** | 四阶段API后端，CloudDrive2 / MoviePilot / TMDB接口、持久化计划与日志、Excel报告衔接。 | [项目与源码](emby-tools/tv-season-workflow-backend/README.md) · [从零安装](emby-tools/tv-season-workflow-backend/INSTALL.md) · [接口与使用](emby-tools/tv-season-workflow-backend/docs/API.md) |
-| **剧集整理工作流(油猴版)** | **Chrome + Tampermonkey + CloudDrive2 / MoviePilot** | ① 初检 → ② 补缺下载 → ③ 复核清理 → ④ 归档；Excel衔接，逐项记录下载、删除和移动。 | [项目与四个脚本](emby-tools/tv-season-workflow/README.md) · [从零安装](emby-tools/tv-season-workflow/INSTALL.md) · [报告与追溯](emby-tools/tv-season-workflow/REPORT.md) |
-| **MoviePilot订阅批量取消脚本 · v2.4.0** | **Chrome + Tampermonkey + MoviePilot** | 电影批量取消；电视剧零进度取消、未完成订阅维护、跳过名单、资源筛选及结果导出。 | [安装脚本](emby-tools/moviepilot-unsubscribe/moviepilot-unsubscribe.user.js) · [配置与使用](emby-tools/moviepilot-unsubscribe/README.md) |
+| 工具 | 当前位置 |
+| --- | --- |
+| 剧集整理工作流（油猴版） | [项目、四个安装脚本与说明](https://github.com/hailanbb/media-tools/tree/main/tv-season-workflow) |
+| MoviePilot 订阅批量取消脚本 · v2.4.0 | [项目与安装说明](https://github.com/hailanbb/media-tools/tree/main/moviepilot-unsubscribe) |
+| 剧集整理 Win11 版 | [本仓库保留项目](emby-tools/tv-workflow-win/README.md) |
 
-按各工具指南配置自己的站点；安装或导入后默认不执行。后端当前没有图形前端，支持HTTP API调用；真实写入与Ubuntu实机验收范围见项目说明。更多内容见[emby工具索引](emby-tools/README.md)。
+原 Linux 版、后端版及对应检查流程已移除。详细入口见 [emby 工具索引](emby-tools/README.md)。
 
 ---
 
 ## 🧰 脚本工具 (Script Tools)
 
-通用独立脚本的分类入口。原MoviePilot订阅维护与剧集整理油猴脚本已移入上方emby工具分类，见[脚本工具索引](script-tools/README.md)。
+通用独立脚本的分类入口。MoviePilot 订阅维护与剧集整理油猴脚本现位于[媒体工具仓库](https://github.com/hailanbb/media-tools)，见[脚本工具索引](script-tools/README.md)。
 
 ---
 
