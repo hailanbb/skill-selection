@@ -1,6 +1,6 @@
 # 个人开发
 
-个人开发与维护的 Agent 配置、精选技能及脚本工具集合。媒体整理与 MoviePilot 订阅维护的油猴工具已迁移到[媒体工具仓库](https://github.com/hailanbb/media-tools)；本仓库保留剧集整理 Win11 版及按 Agent 区分的行为规范。
+个人开发与维护的 Agent 配置、精选技能及通用脚本工具集合。
 
 ---
 
@@ -17,9 +17,6 @@ skill-selection/
 │       └── codex-quota-mode/    # Astra medium + Luna medium 全局省额度开关
 ├── script-tools/               # 通用脚本工具索引
 │   └── README.md
-├── emby-tools/                 # emby工具：媒体整理与订阅维护
-│   ├── README.md               # 分类索引
-│   └── tv-workflow-win/        # 保留的剧集整理 Win11 版
 └── skills/                     # 技能集合目录
     ├── octopus-statement/      # 八达通详单：截图裁剪、消费提取与 Excel
     ├── task-memory-to-obsdian/ # Task Memory To Obsdian：智能全自动任务归档
@@ -99,23 +96,9 @@ skill-selection/
 
 ---
 
-## 🎬 媒体工具
-
-剧集整理工作流（油猴版）与 MoviePilot 订阅批量取消脚本 v2.4.0 已迁移到独立的[媒体工具仓库](https://github.com/hailanbb/media-tools)。
-
-| 工具 | 当前位置 |
-| --- | --- |
-| 剧集整理工作流（油猴版） | [项目、四个安装脚本与说明](https://github.com/hailanbb/media-tools/tree/main/tv-season-workflow) |
-| MoviePilot 订阅批量取消脚本 · v2.4.0 | [项目与安装说明](https://github.com/hailanbb/media-tools/tree/main/moviepilot-unsubscribe) |
-| 剧集整理 Win11 版 | [本仓库保留项目](emby-tools/tv-workflow-win/README.md) |
-
-原 Linux 版、后端版及对应检查流程已移除。详细入口见 [emby 工具索引](emby-tools/README.md)。
-
----
-
 ## 🧰 脚本工具 (Script Tools)
 
-通用独立脚本的分类入口。MoviePilot 订阅维护与剧集整理油猴脚本现位于[媒体工具仓库](https://github.com/hailanbb/media-tools)，见[脚本工具索引](script-tools/README.md)。
+通用独立脚本的分类入口，见[脚本工具索引](script-tools/README.md)。
 
 ---
 
