@@ -57,6 +57,12 @@ skill-selection/
     │   ├── references/         # 输入规范与分配方法
     │   ├── scripts/            # 分配、步行路线与 Excel 生成脚本
     │   └── tests/              # 分配引擎自动测试
+    ├── video-download-captioner/     # 视频下载与智能字幕压制技能
+    │   ├── SKILL.md                  # 核心工作流、ASR 路由与压制规范
+    │   ├── README.md                 # 详细安装、配置、工作流与使用指南
+    │   ├── agents/                   # Agent 展示元数据
+    │   ├── references/               # 字幕工业级规范、ASR 引擎指南与流媒体抓取
+    │   └── scripts/                  # 样式初始化与自适应字号压制脚本
     └── 转存至github/            # 动态沙盒式开源工具备份技能
         ├── SKILL.md            # AI Agent 首次Onboarding与沙盒转存指令
         └── README.md           # 首次运行交互自建与沙盒工作流指南
@@ -91,6 +97,7 @@ skill-selection/
 | **香港活动客户均衡分配** | 按销售小组名单人数、客户类型权重、加权工作量、步行距离与地理聚集度，相对均衡地分配活动附近客户；诊所类客户按 1.5 倍工作量计权，并在确认后生成四页签 Excel。 | 香港公益义诊活动客户分工、销售小组扫街分组、活动附近客户路线规划。 | [👉 详细配置与使用指南](skills/hk-event-customer-allocation/README.md) |
 | **GitHub 工具收藏（通用 Agent）** | 将普通软件与实用工具收藏到用户指定仓库，生成中文指南、分类索引和可追溯快照；自带规范与校验脚本，不绑定账号或客户端。 | 收藏 GitHub 软件、更新工具快照、检查收藏库；支持 CLI、API 或连接器。 | [👉 安装与使用指南](skills/github-tools-collect/README.md) |
 | **转存至github** | 将网络上第三方工具、Skill 或 MCP 的源码及说明，一键克隆、重构并整合保存到个人的 GitHub 统一工具库中。支持源链接中文自识别与智能翻译分流。 | 用户发送需要克隆、备份或收藏的第三方 AI 工具链接并要求保存到 GitHub 时。 | [👉 详细配置与使用指南](skills/转存至github/README.md) |
+| **视频下载与智能字幕压制** | 全自动视频嗅探下载（含 HLS/m3u8 逆向），调度剪映/必剪/Whisper 智能 ASR 识别，方言口语转标准简体书面语精修，并按影视工业级自适应比例（720p 42px / 1080p 60px）压制高清硬/软字幕。 | 视频下载、视频配中文字幕、粤语/方言转字幕、字幕压制或调整字幕大小。 | [👉 详细配置与使用指南](skills/video-download-captioner/README.md) |
 
 *(未来新增的 Skill 或 MCP 服务将持续罗列于上表中，并对应放置于 `skills/` 子目录下。)*
 

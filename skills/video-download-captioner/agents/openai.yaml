@@ -1,0 +1,4 @@
+interface:
+  display_name: "视频下载与智能字幕压制"
+  short_description: "全自动下载视频，通过 VideoCaptioner 进行语音转写、方言转规范中文与标准比例字幕压制"
+  default_prompt: "使用 $video-download-captioner 帮我下载该视频，识别并优化为中文简体字幕，按影视工业级比例压制合成。"
