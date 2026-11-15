@@ -1,13 +1,16 @@
 from __future__ import annotations
 
 import argparse
+from datetime import datetime
 import json
 import os
+from pathlib import Path
+import re
 import shutil
 import subprocess
 import sys
-from pathlib import Path
 from typing import Any
+import urllib.request
 
 from common import is_within, local_timestamp, write_json
 from run_workspace import validate_workspace
@@ -48,16 +51,18 @@ def resolve_yt_dlp(explicit: str | None) -> str:
     raise FileNotFoundError("yt-dlp was not found on PATH; install it or pass --yt-dlp <executable>")
 
 
-def build_yt_dlp_command(executable: str, source_url: str) -> list[str]:
-    return [
+def build_yt_dlp_command(executable: str, source_url: str, cookies_from_browser: str | None = None) -> list[str]:
+    command = [
         executable,
         "--dump-single-json",
         "--skip-download",
         "--no-playlist",
         "--no-warnings",
-        "--",
-        source_url,
     ]
+    if cookies_from_browser:
+        command.extend(["--cookies-from-browser", cookies_from_browser])
+    command.extend(["--", source_url])
+    return command
 
 
 def child_environment() -> dict[str, str]:
@@ -74,31 +79,145 @@ def safe_metadata(raw: dict[str, Any], source_url: str) -> dict[str, Any]:
     return metadata
 
 
-def extract_metadata(source_url: str, output_path: Path, yt_dlp: str | None) -> dict[str, Any]:
-    executable = resolve_yt_dlp(yt_dlp)
-    command = build_yt_dlp_command(executable, source_url)
-    completed = subprocess.run(
-        command,
-        stdin=subprocess.DEVNULL,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.PIPE,
-        check=False,
-        shell=False,
-        env=child_environment(),
-        text=True,
-        encoding="utf-8",
-        errors="strict",
-    )
-    if completed.returncode != 0:
-        detail = completed.stderr.strip() or f"yt-dlp exited with code {completed.returncode}"
-        raise RuntimeError(detail)
+def find_item_detail(obj: Any) -> dict[str, Any] | None:
+    if isinstance(obj, dict):
+        if "desc" in obj and ("aweme_id" in obj or "item_id" in obj or "author" in obj):
+            return obj
+        for v in obj.values():
+            found = find_item_detail(v)
+            if found:
+                return found
+    elif isinstance(obj, list):
+        for item in obj:
+            found = find_item_detail(item)
+            if found:
+                return found
+    return None
+
+
+def extract_metadata_via_html_ssr(source_url: str) -> dict[str, Any]:
+    match = re.search(r"(?:video|note)/([0-9]{6,24})", source_url)
+    if not match:
+        raise ValueError(f"Cannot extract Douyin note/video ID from URL: {source_url}")
+    note_id = match.group(1)
+
+    headers = {
+        "User-Agent": (
+            "Mozilla/5.0 (iPhone; CPU iPhone OS 16_6 like Mac OS X) "
+            "AppleWebKit/605.1.15 (KHTML, like Gecko) Version/16.6 Mobile/15E148 Safari/604.1"
+        ),
+        "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+        "Accept-Language": "zh-CN,zh;q=0.9",
+    }
+    req = urllib.request.Request(f"https://www.iesdouyin.com/share/video/{note_id}/", headers=headers)
+    with urllib.request.urlopen(req, timeout=15) as res:
+        html = res.read().decode("utf-8", errors="ignore")
+
+    raw_data = None
+    for pattern in (
+        r"window\._ROUTER_DATA\s*=\s*(.*?)(?:;\s*</script>|</script>)",
+        r"window\._SSR_DATA\s*=\s*(.*?)(?:;\s*</script>|</script>)",
+    ):
+        m = re.search(pattern, html, re.S)
+        if m:
+            try:
+                candidate_str = m.group(1).strip().rstrip(";")
+                raw_data = json.loads(candidate_str)
+                break
+            except Exception:
+                continue
+
+    item = find_item_detail(raw_data) if raw_data else None
+    if item:
+        title = (item.get("desc") or "").strip()
+        author = item.get("author") if isinstance(item.get("author"), dict) else {}
+        uploader = author.get("nickname") or ""
+        uploader_id = str(author.get("sec_uid") or author.get("uid") or "")
+        dur_raw = item.get("duration") or (
+            item.get("video", {}).get("duration") if isinstance(item.get("video"), dict) else 0
+        ) or 0
+        duration = round(dur_raw / 1000.0, 3) if dur_raw > 1000 else float(dur_raw)
+        created = item.get("create_time") or 0
+        stats = item.get("statistics") if isinstance(item.get("statistics"), dict) else {}
+        upload_date = datetime.fromtimestamp(created).strftime("%Y%m%d") if created else ""
+        raw = {
+            "id": str(item.get("aweme_id") or item.get("item_id") or note_id),
+            "title": title or f"抖音作品_{note_id}",
+            "description": title,
+            "uploader": uploader,
+            "uploader_id": uploader_id,
+            "channel": uploader,
+            "channel_id": uploader_id,
+            "duration": duration,
+            "timestamp": created,
+            "upload_date": upload_date,
+            "like_count": stats.get("digg_count") or item.get("digg_count") or 0,
+            "comment_count": stats.get("comment_count") or 0,
+            "webpage_url": f"https://www.douyin.com/video/{note_id}",
+            "extractor": "douyin:html_ssr_fallback",
+            "extractor_key": "Douyin",
+        }
+        return safe_metadata(raw, source_url)
+
+    title_match = re.search(r"<title>(.*?)(?: - 抖音|\s*</title>)", html, re.S)
+    if title_match and title_match.group(1).strip():
+        title = title_match.group(1).strip()
+        raw = {
+            "id": note_id,
+            "title": title,
+            "description": title,
+            "uploader": "",
+            "duration": 0,
+            "webpage_url": f"https://www.douyin.com/video/{note_id}",
+            "extractor": "douyin:html_meta_fallback",
+            "extractor_key": "Douyin",
+        }
+        return safe_metadata(raw, source_url)
+
+    raise ValueError(f"Could not extract Douyin metadata from mobile SSR HTML for ID {note_id}")
+
+
+def extract_metadata(
+    source_url: str,
+    output_path: Path,
+    yt_dlp: str | None,
+    cookies_from_browser: str | None = None,
+) -> dict[str, Any]:
+    metadata = None
+    yt_err = None
     try:
-        raw = json.loads(completed.stdout)
-    except json.JSONDecodeError as exc:
-        raise ValueError(f"yt-dlp returned invalid JSON: {exc}") from exc
-    if not isinstance(raw, dict):
-        raise ValueError("yt-dlp metadata root must be an object")
-    metadata = safe_metadata(raw, source_url)
+        executable = resolve_yt_dlp(yt_dlp)
+        command = build_yt_dlp_command(executable, source_url, cookies_from_browser)
+        completed = subprocess.run(
+            command,
+            stdin=subprocess.DEVNULL,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            check=False,
+            shell=False,
+            env=child_environment(),
+            text=True,
+            encoding="utf-8",
+            errors="strict",
+        )
+        if completed.returncode == 0:
+            raw = json.loads(completed.stdout)
+            if isinstance(raw, dict):
+                metadata = safe_metadata(raw, source_url)
+            else:
+                yt_err = "yt-dlp returned non-dict JSON"
+        else:
+            yt_err = completed.stderr.strip() or f"yt-dlp exited with code {completed.returncode}"
+    except (FileNotFoundError, OSError, RuntimeError, ValueError) as exc:
+        yt_err = str(exc)
+
+    if metadata is None:
+        try:
+            metadata = extract_metadata_via_html_ssr(source_url)
+        except Exception as ssr_exc:
+            detail = f"yt-dlp extraction failed ({yt_err}); mobile SSR fallback failed ({ssr_exc})"
+            raise RuntimeError(detail) from ssr_exc
+
     write_json(output_path.expanduser().resolve(), metadata)
     return metadata
 
@@ -109,6 +228,7 @@ def background_command(
     status_path: Path,
     yt_dlp: str | None,
     run_dir: Path,
+    cookies_from_browser: str | None = None,
 ) -> list[str]:
     command = [
         sys.executable,
@@ -125,6 +245,8 @@ def background_command(
     ]
     if yt_dlp:
         command.extend(["--yt-dlp", yt_dlp])
+    if cookies_from_browser:
+        command.extend(["--cookies-from-browser", cookies_from_browser])
     return command
 
 
@@ -135,11 +257,12 @@ def start_background(
     log_path: Path,
     yt_dlp: str | None,
     run_dir: Path,
+    cookies_from_browser: str | None = None,
 ) -> int:
     output_path.parent.mkdir(parents=True, exist_ok=True)
     status_path.parent.mkdir(parents=True, exist_ok=True)
     log_path.parent.mkdir(parents=True, exist_ok=True)
-    command = background_command(source_url, output_path, status_path, yt_dlp, run_dir)
+    command = background_command(source_url, output_path, status_path, yt_dlp, run_dir, cookies_from_browser)
     popen_options: dict[str, Any] = {
         "stdin": subprocess.DEVNULL,
         "stderr": subprocess.STDOUT,
@@ -174,6 +297,8 @@ def main() -> int:
     parser.add_argument("--output", type=Path, required=True, help="UTF-8 JSON output path")
     parser.add_argument("--run-dir", type=Path, required=True, help="Marked workspace for all output/status/log files")
     parser.add_argument("--yt-dlp", help="Optional yt-dlp executable path")
+    parser.add_argument("--cookies-from-browser",
+                        help="Optional browser to extract cookies from (e.g. edge, chrome, firefox)")
     parser.add_argument("--background", action="store_true", help="Run extraction in a detached child process")
     parser.add_argument("--status-file", type=Path, help="Background job status JSON path")
     parser.add_argument("--log-file", type=Path, help="Background job log path")
@@ -204,7 +329,8 @@ def main() -> int:
             raise SystemExit("Metadata output, status, and log must stay inside the marked run workspace")
         write_json(status_path, status_payload("starting", output_path))
         try:
-            pid = start_background(args.url, output_path, status_path, log_path, args.yt_dlp, run_dir)
+            pid = start_background(args.url, output_path, status_path, log_path, args.yt_dlp, run_dir,
+                                   args.cookies_from_browser)
         except OSError as exc:
             write_json(status_path, status_payload("failed", output_path, error=str(exc)))
             print(str(exc), file=sys.stderr)
@@ -229,7 +355,7 @@ def main() -> int:
     if args.worker:
         write_json(status_path, status_payload("running", output_path, pid=os.getpid()))
     try:
-        metadata = extract_metadata(args.url, output_path, args.yt_dlp)
+        metadata = extract_metadata(args.url, output_path, args.yt_dlp, args.cookies_from_browser)
     except (FileNotFoundError, OSError, RuntimeError, UnicodeError, ValueError) as exc:
         if args.worker:
             write_json(status_path, status_payload("failed", output_path, error=str(exc)))
@@ -244,6 +370,7 @@ def main() -> int:
                 "output": str(output_path),
                 "id": metadata.get("id", ""),
                 "title": metadata.get("title", ""),
+                "extractor": metadata.get("extractor", ""),
             },
             ensure_ascii=False,
         )

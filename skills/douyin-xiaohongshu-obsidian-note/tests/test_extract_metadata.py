@@ -84,6 +84,55 @@ class ExtractMetadataTests(unittest.TestCase):
         self.assertFalse(options["shell"])
         self.assertNotIn("powershell", " ".join(command).lower())
 
+    def test_cookies_from_browser_included_in_yt_dlp_command(self) -> None:
+        source_url = "https://www.douyin.com/video/7531234567890123456"
+        completed = subprocess.CompletedProcess(
+            args=[], returncode=0, stdout=json.dumps({"id": "123", "title": "测试"}, ensure_ascii=False), stderr=""
+        )
+        with tempfile.TemporaryDirectory() as temp_dir:
+            output = Path(temp_dir) / "metadata.json"
+            with patch("extract_metadata.subprocess.run", return_value=completed) as run:
+                extract_metadata.extract_metadata(source_url, output, "yt-dlp.exe", cookies_from_browser="edge")
+
+            command = run.call_args.args[0]
+            self.assertIn("--cookies-from-browser", command)
+            self.assertIn("edge", command)
+            self.assertEqual(command[-2:], ["--", source_url])
+
+    def test_metadata_fallback_to_ssr_when_yt_dlp_fails_403(self) -> None:
+        import io
+        source_url = "https://www.douyin.com/video/7531234567890123456"
+        completed = subprocess.CompletedProcess(
+            args=[], returncode=1, stdout="", stderr="HTTP Error 403: Forbidden: Fresh cookies needed"
+        )
+        fake_router_data = {
+            "loaderData": {
+                "video_(id)/page": {
+                    "itemInfo": {
+                        "desc": "SSR回退测试标题",
+                        "aweme_id": "7531234567890123456",
+                        "author": {"nickname": "测试博主", "sec_uid": "sec123"},
+                        "duration": 45000,
+                        "create_time": 1700000000,
+                    }
+                }
+            }
+        }
+        fake_html = f"<html><script>window._ROUTER_DATA = {json.dumps(fake_router_data)};</script></html>".encode("utf-8")
+        mock_response = io.BytesIO(fake_html)
+        with tempfile.TemporaryDirectory() as temp_dir:
+            output = Path(temp_dir) / "metadata.json"
+            with patch("extract_metadata.subprocess.run", return_value=completed), \
+                 patch("urllib.request.urlopen", return_value=mock_response):
+                result = extract_metadata.extract_metadata(source_url, output, "yt-dlp.exe")
+
+            self.assertEqual(result["title"], "SSR回退测试标题")
+            self.assertEqual(result["uploader"], "测试博主")
+            self.assertEqual(result["duration"], 45.0)
+            self.assertEqual(result["extractor"], "douyin:html_ssr_fallback")
+            saved = json.loads(output.read_text(encoding="utf-8"))
+            self.assertEqual(saved["id"], "7531234567890123456")
+
 
 if __name__ == "__main__":
     unittest.main()

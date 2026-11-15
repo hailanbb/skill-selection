@@ -122,7 +122,7 @@ python -m pip install -r requirements.txt
 5. 排除黑屏、片头片尾、模糊转场、广告与重复构图；
 6. 按知识点写笔记，不输出完整逐字稿或时间轴堆砌。
 
-抖音元数据助手支持前台及后台模式，后台直接启动 Python worker，不嵌套 PowerShell 字符串，因此中文路径、`&` 和 `$env:...` 不会被父 PowerShell提前展开。小红书不假设 yt-dlp 可用，沿用已授权浏览器或用户提供的合法素材。
+抖音元数据助手支持前台及后台模式，原生具备双重抗阻断机制：支持 `--cookies-from-browser edge/chrome` 纯命令行只读复用现有 Cookie，且在 yt-dlp 遭遇 HTTP 403 / "Fresh cookies needed" 时自动无缝回退至移动端轻量 HTML SSR 解析，无需任何 Cookie 即可提取作品元数据。后台直接启动 Python worker，不嵌套 PowerShell 字符串，因此中文路径、`&` 和 `$env:...` 不会被父 PowerShell提前展开。小红书不假设 yt-dlp 可用，沿用公开 CDN 或用户提供的合法素材。
 
 没有可靠口播证据时只可发布明确标注的 `visual_only` 视觉笔记；只看封面不能称为完成了视频分析。详细流程见 [视频取证与清理](references/video-workflow.md)。
 
