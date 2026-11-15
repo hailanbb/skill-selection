@@ -20,6 +20,8 @@ except ImportError:
 class PackageTests(unittest.TestCase):
     def test_text_files_are_utf8_without_bom_or_private_developer_data(self):
         for path in ROOT.rglob("*"):
+            if any(part in {"cookies", ".cookies", ".pytest_cache", ".git"} or part.startswith(".") for part in path.parts):
+                continue
             if path.suffix not in {".md", ".py", ".yaml", ".txt"}:
                 continue
             with self.subTest(file=path.name):
@@ -59,7 +61,7 @@ class PackageTests(unittest.TestCase):
 
     def test_cli_entrypoints_from_arbitrary_cwd(self):
         for script in ("sources.py", "configure.py", "run_workspace.py", "extract_metadata.py", "fetch_asset.py",
-                       "extract_keyframes.py", "publish_note.py", "validate_note.py"):
+                       "extract_keyframes.py", "publish_note.py", "validate_note.py", "manage_cookies.py"):
             with self.subTest(script=script):
                 result = subprocess.run([sys.executable, "-X", "utf8", str(ROOT / "scripts" / script), "--help"],
                                         cwd=ROOT.parent, encoding="utf-8", capture_output=True)

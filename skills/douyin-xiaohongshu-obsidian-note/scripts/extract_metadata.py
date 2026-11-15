@@ -13,6 +13,7 @@ from typing import Any
 import urllib.request
 
 from common import is_within, local_timestamp, write_json
+from manage_cookies import cookie_file_path, cookie_guidance_message
 from run_workspace import validate_workspace
 
 
@@ -39,6 +40,7 @@ SAFE_METADATA_KEYS = (
     "webpage_url",
     "extractor",
     "extractor_key",
+    "cookie_status",
 )
 
 
@@ -51,7 +53,12 @@ def resolve_yt_dlp(explicit: str | None) -> str:
     raise FileNotFoundError("yt-dlp was not found on PATH; install it or pass --yt-dlp <executable>")
 
 
-def build_yt_dlp_command(executable: str, source_url: str, cookies_from_browser: str | None = None) -> list[str]:
+def build_yt_dlp_command(
+    executable: str,
+    source_url: str,
+    cookies_from_browser: str | None = None,
+    cookies_file: Path | None = None,
+) -> list[str]:
     command = [
         executable,
         "--dump-single-json",
@@ -61,6 +68,8 @@ def build_yt_dlp_command(executable: str, source_url: str, cookies_from_browser:
     ]
     if cookies_from_browser:
         command.extend(["--cookies-from-browser", cookies_from_browser])
+    elif cookies_file and cookies_file.is_file() and cookies_file.stat().st_size > 0:
+        command.extend(["--cookies", str(cookies_file)])
     command.extend(["--", source_url])
     return command
 
@@ -182,12 +191,21 @@ def extract_metadata(
     output_path: Path,
     yt_dlp: str | None,
     cookies_from_browser: str | None = None,
+    cookies_file: Path | None = None,
 ) -> dict[str, Any]:
     metadata = None
     yt_err = None
+    cookie_issue = False
+
+    resolved_cookies_file = cookies_file
+    if resolved_cookies_file is None and not cookies_from_browser:
+        default_file = cookie_file_path()
+        if default_file.is_file() and default_file.stat().st_size > 0:
+            resolved_cookies_file = default_file
+
     try:
         executable = resolve_yt_dlp(yt_dlp)
-        command = build_yt_dlp_command(executable, source_url, cookies_from_browser)
+        command = build_yt_dlp_command(executable, source_url, cookies_from_browser, resolved_cookies_file)
         completed = subprocess.run(
             command,
             stdin=subprocess.DEVNULL,
@@ -208,14 +226,24 @@ def extract_metadata(
                 yt_err = "yt-dlp returned non-dict JSON"
         else:
             yt_err = completed.stderr.strip() or f"yt-dlp exited with code {completed.returncode}"
+            err_lower = yt_err.lower()
+            if any(cue in err_lower for cue in ("fresh cookies needed", "http error 403", "http error 401", "login", "cookie")):
+                cookie_issue = True
     except (FileNotFoundError, OSError, RuntimeError, ValueError) as exc:
         yt_err = str(exc)
 
     if metadata is None:
         try:
             metadata = extract_metadata_via_html_ssr(source_url)
+            if cookie_issue:
+                metadata["cookie_status"] = "expired"
+                print(
+                    f"[提示] 本地抖音 Cookie 可能已失效，本次已自动通过移动端 SSR 回退成功。\n{cookie_guidance_message()}",
+                    file=sys.stderr,
+                )
         except Exception as ssr_exc:
-            detail = f"yt-dlp extraction failed ({yt_err}); mobile SSR fallback failed ({ssr_exc})"
+            guidance = f"\n\n{cookie_guidance_message()}" if (cookie_issue or resolved_cookies_file) else ""
+            detail = f"yt-dlp extraction failed ({yt_err}); mobile SSR fallback failed ({ssr_exc}){guidance}"
             raise RuntimeError(detail) from ssr_exc
 
     write_json(output_path.expanduser().resolve(), metadata)
@@ -229,6 +257,7 @@ def background_command(
     yt_dlp: str | None,
     run_dir: Path,
     cookies_from_browser: str | None = None,
+    cookies_file: Path | None = None,
 ) -> list[str]:
     command = [
         sys.executable,
@@ -247,6 +276,8 @@ def background_command(
         command.extend(["--yt-dlp", yt_dlp])
     if cookies_from_browser:
         command.extend(["--cookies-from-browser", cookies_from_browser])
+    if cookies_file:
+        command.extend(["--cookies-file", str(cookies_file)])
     return command
 
 
@@ -258,11 +289,12 @@ def start_background(
     yt_dlp: str | None,
     run_dir: Path,
     cookies_from_browser: str | None = None,
+    cookies_file: Path | None = None,
 ) -> int:
     output_path.parent.mkdir(parents=True, exist_ok=True)
     status_path.parent.mkdir(parents=True, exist_ok=True)
     log_path.parent.mkdir(parents=True, exist_ok=True)
-    command = background_command(source_url, output_path, status_path, yt_dlp, run_dir, cookies_from_browser)
+    command = background_command(source_url, output_path, status_path, yt_dlp, run_dir, cookies_from_browser, cookies_file)
     popen_options: dict[str, Any] = {
         "stdin": subprocess.DEVNULL,
         "stderr": subprocess.STDOUT,
@@ -299,6 +331,7 @@ def main() -> int:
     parser.add_argument("--yt-dlp", help="Optional yt-dlp executable path")
     parser.add_argument("--cookies-from-browser",
                         help="Optional browser to extract cookies from (e.g. edge, chrome, firefox)")
+    parser.add_argument("--cookies-file", type=Path, help="Optional local Netscape cookie file path")
     parser.add_argument("--background", action="store_true", help="Run extraction in a detached child process")
     parser.add_argument("--status-file", type=Path, help="Background job status JSON path")
     parser.add_argument("--log-file", type=Path, help="Background job log path")
@@ -329,8 +362,16 @@ def main() -> int:
             raise SystemExit("Metadata output, status, and log must stay inside the marked run workspace")
         write_json(status_path, status_payload("starting", output_path))
         try:
-            pid = start_background(args.url, output_path, status_path, log_path, args.yt_dlp, run_dir,
-                                   args.cookies_from_browser)
+            pid = start_background(
+                args.url,
+                output_path,
+                status_path,
+                log_path,
+                args.yt_dlp,
+                run_dir,
+                args.cookies_from_browser,
+                args.cookies_file,
+            )
         except OSError as exc:
             write_json(status_path, status_payload("failed", output_path, error=str(exc)))
             print(str(exc), file=sys.stderr)
@@ -355,7 +396,13 @@ def main() -> int:
     if args.worker:
         write_json(status_path, status_payload("running", output_path, pid=os.getpid()))
     try:
-        metadata = extract_metadata(args.url, output_path, args.yt_dlp, args.cookies_from_browser)
+        metadata = extract_metadata(
+            args.url,
+            output_path,
+            args.yt_dlp,
+            args.cookies_from_browser,
+            args.cookies_file,
+        )
     except (FileNotFoundError, OSError, RuntimeError, UnicodeError, ValueError) as exc:
         if args.worker:
             write_json(status_path, status_payload("failed", output_path, error=str(exc)))
@@ -371,6 +418,7 @@ def main() -> int:
                 "id": metadata.get("id", ""),
                 "title": metadata.get("title", ""),
                 "extractor": metadata.get("extractor", ""),
+                "cookie_status": metadata.get("cookie_status", "valid"),
             },
             ensure_ascii=False,
         )

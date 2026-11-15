@@ -1,6 +1,11 @@
-# Local private configurations
+# Local private configurations and cookies
 config.json
 .env
+cookies/
+.cookies/
+*.cookie
+*.cookies.txt
+douyin.txt
 
 # Python caching
 __pycache__/

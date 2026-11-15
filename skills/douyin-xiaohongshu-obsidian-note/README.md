@@ -103,6 +103,24 @@ python -m pip install -r requirements.txt
 
 两个目录必须位于同一个包含 `.obsidian` 的库内。中文、空格、`&` 与单引号受支持；相对部分不能含 `[]|#` 等 Obsidian 嵌入分隔符。配置默认写到 `~/.config/douyin-xiaohongshu-obsidian-note/config.json`，不会提交到 GitHub。
 
+## 本地 Cookie 管理（绝不同步至 GitHub）
+
+为了在无内置浏览器模式下稳定获取元数据，抖音 Cookie 保存在本地 `<skill-root>/cookies/douyin.txt`。该目录受 `.gitignore` 严密屏蔽，绝不会提交或同步至 GitHub。
+
+- **检查本地 Cookie 状态**：
+  ```bash
+  python -X utf8 scripts/manage_cookies.py --status
+  ```
+- **从本机浏览器一键更新（需先短暂关闭浏览器解除文件锁）**：
+  ```bash
+  python -X utf8 scripts/manage_cookies.py --from-browser edge   # 或 chrome
+  ```
+- **直接粘贴 Cookie 标头文本更新**：
+  ```bash
+  python -X utf8 scripts/manage_cookies.py --set "粘贴你的Cookie文本"
+  ```
+- **自动失效感知**：在提取过程中若检测到 Cookie 失效（403 或 Fresh cookies needed），系统会自动通过移动端 SSR 回退；若彻底受阻，将主动输出更新引导指令。
+
 ## 链接识别与去重
 
 `sources.py` 离线识别抖音、小红书域名和分享文本，支持 `--text`、`--stdin` 及本地清单文件 `--file` 批量读取。短链接通过 `--resolve` 参数在本地由标准 HTTP 302 重定向轻量嗅探解析，无需启动任何内置浏览器。最终笔记保存去掉 `xsec_token`、签名等访问参数的规范 URL。

@@ -1,0 +1,7 @@
+# Local private cookies and configuration - never commit to git
+cookies/
+.cookies/
+*.cookie
+*.cookies.txt
+douyin.txt
+config.json

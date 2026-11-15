@@ -133,6 +133,38 @@ class ExtractMetadataTests(unittest.TestCase):
             saved = json.loads(output.read_text(encoding="utf-8"))
             self.assertEqual(saved["id"], "7531234567890123456")
 
+    def test_auto_uses_local_cookie_file_if_present(self) -> None:
+        source_url = "https://www.douyin.com/video/7531234567890123456"
+        completed = subprocess.CompletedProcess(
+            args=[], returncode=0, stdout=json.dumps({"id": "123", "title": "测试"}, ensure_ascii=False), stderr=""
+        )
+        with tempfile.TemporaryDirectory() as temp_dir:
+            cookie_file = Path(temp_dir) / "douyin.txt"
+            cookie_file.write_text("test cookie content", encoding="utf-8")
+            output = Path(temp_dir) / "metadata.json"
+            with patch("extract_metadata.cookie_file_path", return_value=cookie_file), \
+                 patch("extract_metadata.subprocess.run", return_value=completed) as run:
+                extract_metadata.extract_metadata(source_url, output, "yt-dlp.exe")
+
+            command = run.call_args.args[0]
+            self.assertIn("--cookies", command)
+            self.assertIn(str(cookie_file), command)
+
+    def test_manage_cookies_roundtrip(self) -> None:
+        import manage_cookies
+        with tempfile.TemporaryDirectory() as temp_dir:
+            test_cookie_file = Path(temp_dir) / "douyin.txt"
+            with patch("manage_cookies.cookie_file_path", return_value=test_cookie_file):
+                self.assertFalse(manage_cookies.inspect_cookies()["exists"])
+                res = manage_cookies.save_cookie_text("ttwid=123; sessionid=abc")
+                self.assertTrue(res["saved"])
+                status = manage_cookies.inspect_cookies()
+                self.assertTrue(status["exists"])
+                self.assertEqual(status["cookie_count"], 2)
+                clear_res = manage_cookies.clear_cookies()
+                self.assertTrue(clear_res["cleared"])
+                self.assertFalse(manage_cookies.inspect_cookies()["exists"])
+
 
 if __name__ == "__main__":
     unittest.main()
