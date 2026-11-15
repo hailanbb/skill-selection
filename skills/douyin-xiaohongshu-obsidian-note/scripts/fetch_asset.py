@@ -19,7 +19,7 @@ from run_workspace import validate_workspace
 
 CDN_SUFFIXES = {
     "xiaohongshu": (".xhscdn.com",),
-    "douyin": (".douyinvod.com", ".douyinpic.com", ".byteimg.com"),
+    "douyin": (".douyinvod.com", ".douyinpic.com", ".byteimg.com", ".zjcdn.com"),
 }
 
 
@@ -32,7 +32,8 @@ def validate_url(url: str, platform: str | None = None) -> str:
     if not suffixes or not any(host.endswith(suffix) for suffix in suffixes):
         raise ValueError("Only observed platform CDN assets are supported; use authorized browser save for other hosts")
     addresses = socket.getaddrinfo(host, 443, type=socket.SOCK_STREAM)
-    if not addresses or any(not ipaddress.ip_address(item[4][0]).is_global for item in addresses):
+    fake_ip_net = ipaddress.ip_network("198.18.0.0/15")
+    if not addresses or any(not (ipaddress.ip_address(item[4][0]).is_global or ipaddress.ip_address(item[4][0]) in fake_ip_net) for item in addresses):
         raise ValueError("CDN hostname did not resolve exclusively to public addresses")
     return url
 

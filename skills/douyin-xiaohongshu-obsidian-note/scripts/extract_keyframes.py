@@ -3,6 +3,7 @@ from __future__ import annotations
 import argparse
 import json
 import math
+import re
 import shutil
 import subprocess
 import sys
@@ -40,6 +41,27 @@ def probe_duration(video: Path, ffprobe: str) -> float:
     return float(payload["format"]["duration"])
 
 
+def detect_scene_changes(video: Path, ffmpeg: str, threshold: float = 0.3) -> list[float]:
+    cmd = [
+        ffmpeg, "-hide_banner", "-loglevel", "error", "-i", str(video),
+        "-vf", f"select='gt(scene\\,{threshold:.2f})',showinfo",
+        "-f", "null", "-",
+    ]
+    try:
+        completed = subprocess.run(
+            cmd,
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            timeout=180,
+        )
+        matches = re.findall(r"pts_time:(\d+(?:\.\d+)?)", completed.stderr)
+        return sorted({round(float(ts), 3) for ts in matches})
+    except (subprocess.SubprocessError, OSError):
+        return []
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description="Extract review candidates or timestamped keyframes from a local video")
     parser.add_argument("--video", type=Path, required=True)
@@ -47,6 +69,10 @@ def main() -> int:
     parser.add_argument("--run-dir", type=Path, required=True, help="Marked workspace containing video and output")
     parser.add_argument("--auto-count", type=int, default=16)
     parser.add_argument("--at", action="append", type=parse_time, default=[])
+    parser.add_argument("--mode", choices=["auto", "scene", "interval"], default="auto",
+                        help="Candidate selection: scene (scene detection), interval (uniform), or auto (hybrid)")
+    parser.add_argument("--scene-threshold", type=float, default=0.3,
+                        help="Scene change detection sensitivity (0.0 to 1.0, default 0.3)")
     parser.add_argument("--ffmpeg", default=shutil.which("ffmpeg") or "ffmpeg")
     parser.add_argument("--ffprobe", default=shutil.which("ffprobe") or "ffprobe")
     args = parser.parse_args()
@@ -64,11 +90,44 @@ def main() -> int:
     duration = probe_duration(video, args.ffprobe)
     if not math.isfinite(duration) or duration <= 0:
         raise SystemExit("Video duration must be positive")
+
+    actual_mode = args.mode
+    scene_detected_count = 0
     if args.at:
         times = sorted({round(value, 3) for value in args.at if 0 <= value < duration})
-    else:
+        actual_mode = "manual"
+    elif args.mode == "interval":
         count = min(args.auto_count, max(1, int(duration)))
         times = [round((index + 0.5) * duration / count, 3) for index in range(count)]
+    else:  # auto or scene
+        scenes = [t for t in detect_scene_changes(video, args.ffmpeg, args.scene_threshold) if 0 <= t < duration]
+        scene_detected_count = len(scenes)
+        if args.mode == "scene":
+            if not scenes:
+                raise SystemExit("No scene changes detected at the given threshold")
+            if len(scenes) > args.auto_count:
+                step = (len(scenes) - 1) / (args.auto_count - 1) if args.auto_count > 1 else 1.0
+                times = [scenes[round(i * step)] for i in range(args.auto_count)]
+            else:
+                times = scenes
+        else:  # auto mode: hybrid
+            min_needed = min(max(3, args.auto_count // 3), args.auto_count)
+            if len(scenes) >= min_needed:
+                if len(scenes) > args.auto_count:
+                    step = (len(scenes) - 1) / (args.auto_count - 1) if args.auto_count > 1 else 1.0
+                    times = [scenes[round(i * step)] for i in range(args.auto_count)]
+                else:
+                    interval_candidates = [round((index + 0.5) * duration / args.auto_count, 3)
+                                           for index in range(args.auto_count)]
+                    combined = set(scenes)
+                    for cand in interval_candidates:
+                        if not any(abs(cand - s) < 1.0 for s in scenes):
+                            combined.add(cand)
+                    times = sorted(combined)[:args.auto_count]
+            else:
+                count = min(args.auto_count, max(1, int(duration)))
+                times = [round((index + 0.5) * duration / count, 3) for index in range(count)]
+
     if not times:
         raise SystemExit("No valid timestamps to extract")
 
@@ -87,10 +146,14 @@ def main() -> int:
             timeout=120,
         )
         frames.append({"index": index, "timestamp_seconds": timestamp, "path": str(output)})
-    manifest = {"video": str(video), "duration_seconds": round(duration, 3), "created_at": local_timestamp(), "frames": frames}
+    manifest = {
+        "video": str(video), "duration_seconds": round(duration, 3),
+        "mode": actual_mode, "scene_detected_count": scene_detected_count,
+        "created_at": local_timestamp(), "frames": frames
+    }
     manifest_path = out_dir / "candidates.json"
     write_json(manifest_path, manifest)
-    print(json.dumps({"count": len(frames), "manifest": str(manifest_path)}, ensure_ascii=False))
+    print(json.dumps({"count": len(frames), "manifest": str(manifest_path), "mode": actual_mode}, ensure_ascii=False))
     return 0
 
 

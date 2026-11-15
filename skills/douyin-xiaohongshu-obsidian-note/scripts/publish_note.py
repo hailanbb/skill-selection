@@ -69,8 +69,6 @@ def validate_evidence(meta: dict[str, Any], allow_partial: bool) -> tuple[dict[s
     kind = meta.get("media_type")
     if kind not in {"gallery", "video", "mixed"}:
         raise ValueError("media_type must be gallery, video, or mixed, verified in the note container")
-    if source["platform"] == "douyin" and kind != "video":
-        raise ValueError("This combined skill currently supports Douyin video links; use video media_type")
     if meta["content_basis"] not in {"text_and_images", "subtitles_and_frames", "asr_and_frames", "visual_only"}:
         raise ValueError("Unknown content_basis")
     limitations = meta.get("limitations", [])
@@ -234,8 +232,9 @@ def publish(manifest: Path, draft: Path, run_dir: Path, *, allow_partial: bool =
         if limitations:
             body += "\n\n## 材料边界\n\n" + "\n".join(f"- {line}" for line in limitations)
         origin = "抖音" if source["platform"] == "douyin" else "小红书"
-        source_label = "抖音原视频" if source["platform"] == "douyin" else "小红书原笔记"
-        category = ("抖音视频笔记" if source["platform"] == "douyin" else
+        source_label = "抖音原视频" if (source["platform"] == "douyin" and meta["media_type"] == "video") else "抖音原图文" if source["platform"] == "douyin" else "小红书原笔记"
+        category = ("抖音图文笔记" if (source["platform"] == "douyin" and meta["media_type"] == "gallery") else
+                    "抖音视频笔记" if source["platform"] == "douyin" else
                     "小红书图文笔记" if meta["media_type"] == "gallery" else
                     "小红书视频笔记" if meta["media_type"] == "video" else "小红书混合笔记")
         body += f"\n\n## 来源\n\n[{source_label}]({source['canonical_url']})\n"

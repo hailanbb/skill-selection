@@ -17,10 +17,10 @@
 
 ## 2. 结合内容筛关键画面
 
-确认实际时长，先均匀抽取约 12–24 张候选，或根据字幕段落直接定位关键时刻。以下 `PYTHON`、`SKILL`、`RUN` 均替换为实际启动器/绝对路径，不是需要展开的环境变量：
+确认实际时长，使用 `--mode auto`（优先基于 FFmpeg 场景突变检测 scene change detection，自动捕捉 PPT 翻页、界面切换或步骤跳转，并在变动较少时安全回退至均分采样）抽取约 12–24 张候选，或根据字幕段落直接定位关键时刻。以下 `PYTHON`、`SKILL`、`RUN` 均替换为实际启动器/绝对路径，不是需要展开的环境变量：
 
 ```text
-PYTHON -X utf8 "SKILL/scripts/extract_keyframes.py" --run-dir "RUN" --video "RUN/source.mp4" --out-dir "RUN/candidates" --auto-count 16
+PYTHON -X utf8 "SKILL/scripts/extract_keyframes.py" --run-dir "RUN" --video "RUN/source.mp4" --out-dir "RUN/candidates" --mode auto --auto-count 16
 PYTHON -X utf8 "SKILL/scripts/extract_keyframes.py" --run-dir "RUN" --video "RUN/source.mp4" --out-dir "RUN/selected" --at 00:03.5 --at 00:27 --at 01:12
 ```
 

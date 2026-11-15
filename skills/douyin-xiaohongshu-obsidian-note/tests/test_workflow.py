@@ -50,6 +50,8 @@ class SourceTests(unittest.TestCase):
         self.assertEqual(result["platform"], "douyin")
         self.assertEqual(result["canonical_url"], "https://www.douyin.com/video/7531234567890123456")
         self.assertEqual(classify("https://www.douyin.com/user/MS4wLjABAAAAexample")["kind"], "profile")
+        modal_source = "https://www.douyin.com/user/self?from_tab_name=main&modal_id=7531234567890123456&showTab=favorite_collection"
+        self.assertEqual(classify(modal_source)["canonical_url"], result["canonical_url"])
         shared = classify("https://www.iesdouyin.com/share/video/7531234567890123456/?region=CN")
         self.assertEqual(shared["canonical_url"], result["canonical_url"])
 
@@ -209,10 +211,13 @@ class WorkflowTests(unittest.TestCase):
         self.assertEqual(attrs["url"], "https://www.douyin.com/video/7531234567890123456")
         self.assertIn("抖音原视频", text)
 
-    def test_douyin_rejects_gallery_type(self):
-        self.meta["source_url"] = "https://www.douyin.com/video/7531234567890123456"
-        with self.assertRaisesRegex(ValueError, "Douyin video"):
-            self.save()
+    def test_douyin_accepts_gallery_type(self):
+        self.meta["source_url"] = "https://www.douyin.com/note/7531234567890123456"
+        result = self.save()
+        text = Path(result["note"]).read_text(encoding="utf-8")
+        attrs, _ = split_frontmatter(text)
+        self.assertEqual(attrs["category"], "抖音图文笔记")
+        self.assertIn("抖音原图文", text)
 
     def test_incomplete_video_cannot_claim_complete(self):
         self.meta.update(media_type="video", content_basis="asr_and_frames", video_reviewed_to_end=False, video_duration_seconds=60)
@@ -498,6 +503,31 @@ class WorkflowTests(unittest.TestCase):
         result = subprocess.run([sys.executable, "-X", "utf8", str(SCRIPTS / "validate_note.py"),
                                  "--note", note], cwd=self.root, capture_output=True, encoding="utf-8", check=True)
         self.assertTrue(json.loads(result.stdout)["valid"])
+
+    def test_source_lookup_resolve_short_link(self):
+        from sources import main as sources_main
+        resolved_url = "https://www.douyin.com/video/7531234567890123456"
+        mock_response = io.BytesIO(b"")
+        mock_response.geturl = lambda: resolved_url
+        argv = ["sources.py", "--text", "http://v.douyin.com/Example", "--resolve"]
+        with patch("urllib.request.urlopen", return_value=mock_response), \
+             patch.object(sys, "argv", argv), \
+             contextlib.redirect_stdout(io.StringIO()) as output:
+            code = sources_main()
+            self.assertEqual(code, 0)
+            payload = json.loads(output.getvalue())
+            self.assertEqual(payload["items"][0]["kind"], "note")
+            self.assertEqual(payload["items"][0]["canonical_url"], resolved_url)
+
+    def test_source_lookup_from_file(self):
+        batch_file = self.root / "links.txt"
+        batch_file.write_text(f"第一条 {SOURCE}\n第二条 https://www.douyin.com/video/7531234567890123456", encoding="utf-8")
+        command = [sys.executable, "-X", "utf8", str(SCRIPTS / "sources.py"),
+                   "--file", str(batch_file)]
+        result = subprocess.run(command, cwd=self.root, capture_output=True, encoding="utf-8", check=True)
+        payload = json.loads(result.stdout)
+        self.assertEqual(payload["count"], 2)
+        self.assertEqual({item["platform"] for item in payload["items"]}, {"xiaohongshu", "douyin"})
 
 
 if __name__ == "__main__":
