@@ -105,21 +105,23 @@ python -m pip install -r requirements.txt
 
 ## 本地 Cookie 管理（绝不同步至 GitHub）
 
-为了在无内置浏览器模式下稳定获取元数据，抖音 Cookie 保存在本地 `<skill-root>/cookies/douyin.txt`。该目录受 `.gitignore` 严密屏蔽，绝不会提交或同步至 GitHub。
+为了在无内置浏览器模式下稳定获取双平台元数据，本地 Cookie 保存在 `<skill-root>/cookies/douyin.txt` 与 `<skill-root>/cookies/xiaohongshu.txt`。该目录受 `.gitignore` 严密屏蔽，绝不会提交或同步至 GitHub。
 
 - **检查本地 Cookie 状态**：
   ```bash
   python -X utf8 scripts/manage_cookies.py --status
+  python -X utf8 scripts/manage_cookies.py --platform xiaohongshu --status
   ```
 - **从本机浏览器一键更新（需先短暂关闭浏览器解除文件锁）**：
   ```bash
-  python -X utf8 scripts/manage_cookies.py --from-browser edge   # 或 chrome
+  python -X utf8 scripts/manage_cookies.py --from-browser edge   # 或 --platform xiaohongshu --from-browser edge
   ```
 - **直接粘贴 Cookie 标头文本更新**：
   ```bash
   python -X utf8 scripts/manage_cookies.py --set "粘贴你的Cookie文本"
+  python -X utf8 scripts/manage_cookies.py --platform xiaohongshu --set "粘贴你的小红书Cookie文本"
   ```
-- **自动失效感知**：在提取过程中若检测到 Cookie 失效（403 或 Fresh cookies needed），系统会自动通过移动端 SSR 回退；若彻底受阻，将主动输出更新引导指令。
+- **自动失效感知与媒体直下**：在提取过程中若检测到 Cookie 失效（403 或 Fresh cookies needed），系统会自动通过 SSR/OG 回退；配合 `extract_metadata.py --download-media` 可在提取元数据的同时将公开 CDN 视频或图集一键下载至临时工作区。
 
 ## 链接识别与去重
 

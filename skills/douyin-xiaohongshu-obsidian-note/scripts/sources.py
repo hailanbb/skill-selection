@@ -7,6 +7,7 @@ from pathlib import Path
 import re
 import sys
 from urllib.parse import parse_qs, urlsplit
+import urllib.error
 import urllib.request
 
 XHS_ID = r"[0-9a-fA-F]{24}"
@@ -91,7 +92,16 @@ def resolve_redirect_http(url: str, timeout: float = 8.0) -> dict[str, str]:
             classified = classify(final_url)
             if classified.get("kind") == "note":
                 classified["resolved_from"] = url
+                classified["_access_url"] = final_url
                 return classified
+    except urllib.error.HTTPError as exc:
+        for candidate in (getattr(exc, "url", ""), exc.headers.get("Location", "") if exc.headers else ""):
+            if candidate:
+                classified = classify(candidate)
+                if classified.get("kind") == "note":
+                    classified["resolved_from"] = url
+                    classified["_access_url"] = candidate
+                    return classified
     except Exception:
         pass
     return classify(url)
@@ -99,6 +109,14 @@ def resolve_redirect_http(url: str, timeout: float = 8.0) -> dict[str, str]:
 
 def extract(text: str) -> list[dict[str, str]]:
     return [classify(match.group(0).rstrip(").,;!？；")) for match in URL_RE.finditer(text)]
+
+
+def extract_with_raw(text: str) -> list[tuple[str, dict[str, str]]]:
+    items: list[tuple[str, dict[str, str]]] = []
+    for match in URL_RE.finditer(text):
+        raw = match.group(0).rstrip(").,;!？；")
+        items.append((raw, classify(raw)))
+    return items
 
 
 def main() -> int:
@@ -110,6 +128,8 @@ def main() -> int:
                         help="Resolve short URLs via lightweight HTTP redirects locally without opening a browser")
     parser.add_argument("--check-existing", action="store_true",
                         help="Check the configured vault by platform and source ID")
+    parser.add_argument("--run-dir", type=Path,
+                        help="Optional marked workspace to persist signed access URLs (e.g. xsec_token) without stdout leakage")
     args = parser.parse_args()
 
     input_modes = [bool(args.text is not None), bool(args.stdin), bool(args.file is not None)]
@@ -126,16 +146,33 @@ def main() -> int:
     else:
         text = args.text
 
-    results = extract(text)
+    raw_pairs = extract_with_raw(text)
+    results: list[dict[str, str]] = []
+    access_records: list[dict[str, str]] = []
 
-    if args.resolve:
-        resolved_results: list[dict[str, str]] = []
-        for item in results:
-            if item.get("kind") == "short":
-                resolved_results.append(resolve_redirect_http(item.get("short_url", "")))
-            else:
-                resolved_results.append(item)
-        results = resolved_results
+    for raw_url, item in raw_pairs:
+        resolved_item = dict(item)
+        access_url = raw_url
+        if args.resolve and resolved_item.get("kind") == "short":
+            resolved_item = resolve_redirect_http(resolved_item.get("short_url", ""))
+            access_url = resolved_item.pop("_access_url", resolved_item.get("canonical_url", raw_url))
+        else:
+            resolved_item.pop("_access_url", None)
+        results.append(resolved_item)
+        if resolved_item.get("kind") == "note":
+            access_records.append({
+                "platform": resolved_item["platform"],
+                "note_id": resolved_item["note_id"],
+                "canonical_url": resolved_item["canonical_url"],
+                "access_url": access_url,
+            })
+
+    if args.run_dir:
+        from common import write_json
+        from run_workspace import validate_workspace
+        run_dir = args.run_dir.expanduser().resolve()
+        validate_workspace(run_dir)
+        write_json(run_dir / "resolved_sources.json", {"items": access_records})
 
     if args.check_existing:
         from common import load_config

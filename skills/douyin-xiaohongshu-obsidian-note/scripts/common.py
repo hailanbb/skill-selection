@@ -128,6 +128,24 @@ def split_frontmatter(text: str) -> tuple[dict[str, str], str]:
     return attributes, normalized[end + 5 :]
 
 
+def read_frontmatter_fast(path: Path, max_bytes: int = 8192) -> dict[str, str]:
+    """Read only the leading bytes of a Markdown file to parse YAML frontmatter quickly."""
+    with path.open("rb") as handle:
+        raw = handle.read(max_bytes)
+    text = raw.decode("utf-8-sig", errors="strict")
+    normalized = text.replace("\r\n", "\n")
+    if not normalized.startswith("---\n"):
+        return {}
+    end = normalized.find("\n---\n", 4)
+    if end < 0:
+        # Fallback to full read if frontmatter exceeds max_bytes
+        full_text = path.read_text(encoding="utf-8-sig")
+        attrs, _ = split_frontmatter(full_text)
+        return attrs
+    attrs, _ = split_frontmatter(normalized[: end + 5])
+    return attrs
+
+
 def validation_issues(text: str, note_path: Path, vault_root: Path) -> list[str]:
     issues: list[str] = []
     attributes, body = split_frontmatter(text)

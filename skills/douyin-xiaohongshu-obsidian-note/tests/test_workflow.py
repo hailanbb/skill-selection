@@ -529,6 +529,63 @@ class WorkflowTests(unittest.TestCase):
         self.assertEqual(payload["count"], 2)
         self.assertEqual({item["platform"] for item in payload["items"]}, {"xiaohongshu", "douyin"})
 
+    def test_source_lookup_persists_signed_access_url_only_in_workspace(self):
+        signed_url = f"{SOURCE}?xsec_token=SECRET_TOKEN&xsec_source=pc_share"
+        command = [sys.executable, "-X", "utf8", str(SCRIPTS / "sources.py"),
+                   "--text", signed_url, "--run-dir", str(self.run)]
+        result = subprocess.run(command, cwd=self.root, capture_output=True, encoding="utf-8", check=True)
+        self.assertNotIn("SECRET_TOKEN", result.stdout + result.stderr)
+        resolved_file = self.run / "resolved_sources.json"
+        self.assertTrue(resolved_file.is_file())
+        saved = json.loads(resolved_file.read_text(encoding="utf-8"))
+        self.assertEqual(saved["items"][0]["access_url"], signed_url)
+        self.assertEqual(saved["items"][0]["canonical_url"], SOURCE)
+
+    def test_batch_asset_download_manifest(self):
+        from email.message import Message
+        from unittest.mock import MagicMock
+        request = self.run / "batch-request.json"
+        write_json(request, {
+            "platform": "xiaohongshu",
+            "assets": [
+                {"url": "https://img.xhscdn.com/1", "kind": "image", "filename": "page-01.jpg"},
+                {"url": "https://img.xhscdn.com/2", "kind": "image", "filename": "page-02.jpg"},
+            ],
+        })
+
+        def make_resp(*_args, **_kwargs):
+            resp = MagicMock()
+            resp.headers = Message()
+            resp.headers["Content-Type"] = "image/jpeg"
+            resp.read.side_effect = [b"img-bytes", b""]
+            resp.__enter__.return_value = resp
+            return resp
+
+        opener = MagicMock()
+        opener.open.side_effect = make_resp
+        with patch("fetch_asset.validate_url", side_effect=lambda value, platform=None: value), \
+             patch("fetch_asset.build_opener", return_value=opener):
+            result = fetch(request, self.run)
+            self.assertTrue(result["downloaded"])
+            self.assertEqual(result["count"], 2)
+            self.assertTrue((self.run / "page-01.jpg").is_file())
+            self.assertTrue((self.run / "page-02.jpg").is_file())
+
+    def test_stale_dead_pid_lock_is_recovered_automatically(self):
+        lock = self.vault / ".douyin-xiaohongshu-obsidian-note.publish.lock"
+        lock.write_text(json.dumps({"pid": 99999999, "created_at": "2026-01-01 00:00:00"}), encoding="utf-8")
+        with patch("publish_note._is_pid_running", return_value=False):
+            result = self.save()
+        self.assertEqual(result["status"], "published")
+        self.assertFalse(lock.exists())
+
+    def test_unresized_video_frame_is_encoded_as_jpeg_not_png(self):
+        self.meta.update(media_type="video", content_basis="asr_and_frames",
+                         video_reviewed_to_end=True, video_duration_seconds=60)
+        self.meta["assets"][0].update(role="frame", timestamp_seconds=5.0)
+        result = self.save(frame_width=0)
+        self.assertTrue(result["images"][0].endswith("_0.jpg"))
+
 
 if __name__ == "__main__":
     unittest.main()

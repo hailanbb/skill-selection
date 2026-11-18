@@ -8,10 +8,25 @@
 python -X utf8 scripts/run_workspace.py create
 ```
 
-读取 JSON 中 `run_dir`，以下 `RUN` 均指该实际绝对路径，不是 shell 环境变量。Agent 把已观察的 CDN 地址写入工作区 `asset-request.json`：
+读取 JSON 中 `run_dir`，以下 `RUN` 均指该实际绝对路径，不是 shell 环境变量。
+
+可通过 `extract_metadata.py --download-media` 一键提取双平台（抖音视频/图文、小红书图文/视频）元数据并将公开 CDN 媒体下载至 `RUN`：
+
+```text
+python -X utf8 scripts/extract_metadata.py --run-dir "RUN" --url "具体作品URL" --output "RUN/metadata.json" --download-media
+python -X utf8 scripts/extract_metadata.py --run-dir "RUN" --url "具体作品URL" --output "RUN/metadata.json" --download-media --background
+```
+
+也可由 Agent 把已观察的 CDN 地址写入工作区 `asset-request.json`（支持单资源对象或含 `"assets"` 数组的批量清单）：
 
 ```json
 {"url":"https://实际已观察的平台CDN主机/实际资源路径","platform":"xiaohongshu","kind":"image","filename":"page-01.jpg"}
+```
+
+或批量清单格式：
+
+```json
+{"platform":"xiaohongshu","assets":[{"url":"https://实际已观察的平台CDN主机/路径1","kind":"image","filename":"page-01.jpg"},{"url":"https://实际已观察的平台CDN主机/路径2","kind":"image","filename":"page-02.jpg"}]}
 ```
 
 ```text
@@ -20,16 +35,9 @@ python -X utf8 scripts/extract_keyframes.py --run-dir "RUN" --video "RUN/source.
 python -X utf8 scripts/extract_keyframes.py --run-dir "RUN" --video "RUN/source.mp4" --out-dir "RUN/selected" --at 00:12 --at 01:05
 ```
 
-抖音确实需要 yt-dlp 白名单元数据时可执行：
+后台模式直接启动 Python worker，不嵌套 PowerShell；轮询返回的状态文件，只有 `succeeded` 才读取元数据。状态、日志和输出仍须位于 RUN 并随最后清理。
 
-```text
-python -X utf8 scripts/extract_metadata.py --run-dir "RUN" --url "抖音具体视频URL" --output "RUN/metadata.json"
-python -X utf8 scripts/extract_metadata.py --run-dir "RUN" --url "抖音具体视频URL" --output "RUN/metadata.json" --background
-```
-
-后台模式直接启动 Python worker，不嵌套 PowerShell；轮询返回的状态文件，只有 `succeeded` 才读取元数据。状态、日志和输出仍须位于 RUN 并随最后清理。小红书不默认使用此助手。
-
-URL 示例是占位结构，不能执行。`platform` 取 `douyin` 或 `xiaohongshu`，并须与已观察地址相符。下载器只做单资源有界下载：图片 50 MiB、视频 512 MiB，上限之外改用获授权的客户端保存；不回显 CDN 签名，不读取 Cookie，遇非平台 CDN 重定向/非公开 IP/登录页/已存在目标就停止。必须核验字节内容与实际画面，不能以下载成功当取证完成。图片只接受真实静态 JPEG/PNG/WebP；动画需要先提取代表性静帧并查看。候选帧不自动进入笔记。
+URL 示例是占位结构，不能执行。`platform` 取 `douyin` 或 `xiaohongshu`，并须与已观察地址相符。下载器做有界下载：单张图片 50 MiB、视频 512 MiB，批量最多 100 项；不回显 CDN 签名，不导出 Cookie，遇非平台 CDN 重定向/非公开 IP/登录页/已存在目标就停止。必须核验字节内容与实际画面，不能以下载成功当取证完成。图片只接受真实静态 JPEG/PNG/WebP；动画需要先提取代表性静帧并查看。候选帧不自动进入笔记。
 
 ## 2. evidence.json
 
@@ -52,7 +60,7 @@ URL 示例是占位结构，不能执行。`platform` 取 `douyin` 或 `xiaohong
 }
 ```
 
-`source_url` 须为已确认的抖音单条视频或小红书具体笔记 URL，最终归档会规范化并去掉签名。不要把账户收藏 URL、主页、短链或图片 CDN URL当来源。抖音只使用 `media_type: "video"`；小红书可用 gallery/video/mixed。
+`source_url` 须为已确认的抖音单条视频/图文或小红书具体笔记 URL，最终归档会规范化并去掉签名。不要把账户收藏 URL、主页、短链或图片 CDN URL当来源。抖音可使用 `media_type: "video"` 或 `"gallery"`；小红书可用 `gallery`/`video`/`mixed`。
 
 视频改为 `media_type: "video"`，添加 `video_reviewed_to_end: true` 和实际核实的 `video_duration_seconds`（例如 `138`）；`content_basis` 选 `subtitles_and_frames`、`asr_and_frames` 或 `visual_only`。帧的 asset 使用 `role: "frame"` 和 `timestamp_seconds: 12.5`，不使用图文页码，且必须小于视频时长。`mixed` 需同时满足图文覆盖和视频查看，入选素材同时包含 image 与 frame。时间戳必须真实对应本次视频，不能填估计值。
 

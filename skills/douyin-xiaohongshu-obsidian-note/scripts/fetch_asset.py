@@ -10,7 +10,7 @@ import sys
 import tempfile
 from pathlib import Path
 from urllib.parse import urlsplit
-from urllib.request import HTTPRedirectHandler, Request, build_opener
+from urllib.request import HTTPRedirectHandler, ProxyHandler, Request, build_opener
 from urllib.error import URLError
 
 from common import is_within, read_json
@@ -19,7 +19,7 @@ from run_workspace import validate_workspace
 
 CDN_SUFFIXES = {
     "xiaohongshu": (".xhscdn.com",),
-    "douyin": (".douyinvod.com", ".douyinpic.com", ".byteimg.com", ".zjcdn.com"),
+    "douyin": (".douyinvod.com", ".douyinpic.com", ".byteimg.com", ".zjcdn.com", ".snssdk.com", ".amemv.com"),
 }
 
 
@@ -50,15 +50,10 @@ class SafeRedirects(HTTPRedirectHandler):
         return super().redirect_request(req, fp, code, msg, headers, newurl)
 
 
-def fetch(request_path: Path, run_dir: Path) -> dict:
-    validate_workspace(run_dir)
-    run_dir = run_dir.resolve()
-    if not is_within(request_path, run_dir):
-        raise ValueError("Asset request must be inside the temporary workspace")
-    settings = read_json(request_path)
+def download_single_asset(settings: dict, run_dir: Path, default_platform: str | None = None) -> dict:
     kind = settings.get("kind")
     filename = settings.get("filename", "")
-    platform = settings.get("platform")
+    platform = settings.get("platform") or default_platform
     if kind not in {"image", "video"} or platform not in CDN_SUFFIXES or not isinstance(filename, str) or not filename:
         raise ValueError("Request requires platform douyin/xiaohongshu, kind image/video, and a local filename")
     if Path(filename).name != filename or any(c in filename for c in '/\\:*?"<>|') or filename in {".", ".."}:
@@ -77,7 +72,7 @@ def fetch(request_path: Path, run_dir: Path) -> dict:
     temp_path = Path(temp_name)
     size = 0
     try:
-        with os.fdopen(fd, "wb") as output, build_opener(SafeRedirects(platform)).open(request, timeout=30) as response:
+        with os.fdopen(fd, "wb") as output, build_opener(SafeRedirects(platform), ProxyHandler({})).open(request, timeout=30) as response:
             content_type = response.headers.get_content_type()
             if not content_type.startswith(kind + "/") and content_type != "application/octet-stream":
                 raise ValueError("Resource is not the requested media type (possibly an error/login page)")
@@ -89,10 +84,31 @@ def fetch(request_path: Path, run_dir: Path) -> dict:
         if not size:
             raise ValueError("Empty asset response")
         os.link(temp_path, target)
-        return {"downloaded": True, "path": str(target), "bytes": size,
+        return {"downloaded": True, "path": str(target), "filename": filename, "kind": kind, "bytes": size,
                 "next": "visually inspect image / probe video; a downloaded file is not verified evidence"}
     finally:
         temp_path.unlink(missing_ok=True)
+
+
+def fetch(request_path: Path, run_dir: Path) -> dict:
+    validate_workspace(run_dir)
+    run_dir = run_dir.resolve()
+    if not is_within(request_path, run_dir):
+        raise ValueError("Asset request must be inside the temporary workspace")
+    settings = read_json(request_path)
+    if isinstance(settings.get("assets"), list):
+        batch_items = settings["assets"]
+        if not batch_items or len(batch_items) > 100:
+            raise ValueError("Batch assets list must contain 1 to 100 items")
+        default_platform = settings.get("platform")
+        results = [download_single_asset(item, run_dir, default_platform=default_platform) for item in batch_items]
+        return {
+            "downloaded": True,
+            "count": len(results),
+            "items": results,
+            "next": "visually inspect all downloaded images / probe video; downloaded files are not verified evidence",
+        }
+    return download_single_asset(settings, run_dir)
 
 
 def main() -> int:

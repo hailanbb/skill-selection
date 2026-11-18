@@ -15,27 +15,85 @@ from pathlib import Path
 from typing import Any
 
 from common import (FORBIDDEN_HEADINGS, is_within, load_config, local_timestamp,
-                    read_json, sanitize_title, split_frontmatter, validation_issues, yaml_string)
+                    read_frontmatter_fast, read_json, sanitize_title, split_frontmatter,
+                    validation_issues, yaml_string)
 from run_workspace import validate_workspace
 from sources import canonical_source, classify
 
 PLACEHOLDER = re.compile(r"\{\{image:([1-9][0-9]*)\}\}")
 PRIVATE_LINK = re.compile(r"(?i)xsec_token|xsec_source|[?&](?:auth_token|access_token|signature)=")
+SKIP_DIRS = {".obsidian", ".trash", ".git", "node_modules", "__pycache__"}
+
+
+def _is_pid_running(pid: int) -> bool:
+    if pid <= 0:
+        return False
+    if os.name == "nt":
+        import ctypes
+        PROCESS_QUERY_LIMITED_INFORMATION = 0x1000
+        STILL_ACTIVE = 259
+        handle = ctypes.windll.kernel32.OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, False, pid)
+        if not handle:
+            return False
+        try:
+            exit_code = ctypes.c_ulong()
+            if ctypes.windll.kernel32.GetExitCodeProcess(handle, ctypes.byref(exit_code)):
+                return exit_code.value == STILL_ACTIVE
+            return True
+        finally:
+            ctypes.windll.kernel32.CloseHandle(handle)
+    try:
+        os.kill(pid, 0)
+        return True
+    except ProcessLookupError:
+        return False
+    except PermissionError:
+        return True
+    except OSError:
+        return False
+
+
+def _acquire_publish_lock(lock_path: Path) -> None:
+    payload = json.dumps({"pid": os.getpid(), "created_at": local_timestamp()})
+    try:
+        with lock_path.open("x", encoding="utf-8", newline="\n") as lock:
+            lock.write(payload)
+        return
+    except FileExistsError:
+        try:
+            existing_raw = lock_path.read_text(encoding="utf-8")
+            existing_data = json.loads(existing_raw)
+        except Exception:
+            raise FileExistsError(f"Lock file exists and is active or non-JSON: {lock_path}")
+        if not isinstance(existing_data, dict) or type(existing_data.get("pid")) is not int:
+            raise FileExistsError(f"Lock file exists without valid PID metadata: {lock_path}")
+        stale_pid = existing_data["pid"]
+        if stale_pid == os.getpid() or _is_pid_running(stale_pid):
+            raise FileExistsError(f"Another publish process (PID {stale_pid}) is currently holding the lock")
+        lock_path.unlink(missing_ok=True)
+        with lock_path.open("x", encoding="utf-8", newline="\n") as lock:
+            lock.write(payload)
 
 
 def existing_notes(note_dir: Path) -> dict[tuple[str, str], Path]:
     note_dir = note_dir.resolve()
     result: dict[tuple[str, str], Path] = {}
-    for path in sorted(note_dir.rglob("*.md")):
-        if not is_within(path, note_dir):
-            continue
-        try:
-            attributes, _ = split_frontmatter(path.read_text(encoding="utf-8-sig"))
-        except (UnicodeError, ValueError):
-            continue
-        source = classify(attributes.get("url", ""))
-        if source["kind"] == "note":
-            result.setdefault((source["platform"], source["note_id"]), path)
+    for root, dirs, files in os.walk(note_dir):
+        dirs[:] = sorted(d for d in dirs if d not in SKIP_DIRS and not d.startswith(".social-note-publish"))
+        root_path = Path(root)
+        for fname in sorted(files):
+            if not fname.lower().endswith(".md"):
+                continue
+            path = (root_path / fname).resolve()
+            if not is_within(path, note_dir):
+                continue
+            try:
+                attributes = read_frontmatter_fast(path)
+            except (OSError, UnicodeError, ValueError):
+                continue
+            source = classify(attributes.get("url", ""))
+            if source["kind"] == "note":
+                result.setdefault((source["platform"], source["note_id"]), path)
     return result
 
 
@@ -138,17 +196,18 @@ def image_payload(path: Path, role: str, frame_width: int) -> tuple[str, bytes]:
             probe.verify()
         with Image.open(path) as original:
             max_width = frame_width if role == "frame" else 0
+            use_jpeg = bool(max_width or role == "frame")
             oriented = ImageOps.exif_transpose(original)
             has_alpha = "A" in oriented.getbands() or "transparency" in oriented.info
-            frame = oriented.convert("RGBA" if has_alpha and not max_width else "RGB")
+            frame = oriented.convert("RGBA" if has_alpha and not use_jpeg else "RGB")
             if max_width and frame.width > max_width:
                 frame = frame.resize((max_width, max(1, round(frame.height * max_width / frame.width))), Image.Resampling.LANCZOS)
-            # PNG retains fine text; JPEG is used for resized video frames.
+            # PNG retains fine text for gallery cards; JPEG is used for video frames to avoid multi-MB PNG bloat.
             # Re-encoding strips EXIF/GPS and comments, while _0 preserves pixel dimensions.
-            extension = "jpg" if max_width else "png"
+            extension = "jpg" if use_jpeg else "png"
             buffer = io.BytesIO()
             frame.info.clear()
-            frame.save(buffer, format="JPEG" if max_width else "PNG", **({"quality": 95} if max_width else {}))
+            frame.save(buffer, format="JPEG" if use_jpeg else "PNG", **({"quality": 95} if use_jpeg else {}))
     payload = buffer.getvalue()
     digest = hashlib.md5(payload, usedforsecurity=False).hexdigest()
     return f"{digest}_{max_width}.{extension}", payload
@@ -197,8 +256,7 @@ def publish(manifest: Path, draft: Path, run_dir: Path, *, allow_partial: bool =
     committed = False
     # A vault-level exclusive lock protects shared content-addressed images as well as notes.
     lock_path = vault / ".douyin-xiaohongshu-obsidian-note.publish.lock"
-    with lock_path.open("x", encoding="utf-8", newline="\n") as lock:
-        lock.write(json.dumps({"pid": os.getpid(), "created_at": local_timestamp()}))
+    _acquire_publish_lock(lock_path)
     try:
         existing = existing_notes(vault).get((source["platform"], source["note_id"]))
         if existing:

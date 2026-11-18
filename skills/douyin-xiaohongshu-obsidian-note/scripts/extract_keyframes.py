@@ -43,8 +43,8 @@ def probe_duration(video: Path, ffprobe: str) -> float:
 
 def detect_scene_changes(video: Path, ffmpeg: str, threshold: float = 0.3) -> list[float]:
     cmd = [
-        ffmpeg, "-hide_banner", "-loglevel", "error", "-i", str(video),
-        "-vf", f"select='gt(scene\\,{threshold:.2f})',showinfo",
+        ffmpeg, "-hide_banner", "-loglevel", "error", "-threads", "0", "-i", str(video),
+        "-vf", f"scale=320:-2,select='gt(scene\\,{threshold:.2f})',showinfo",
         "-f", "null", "-",
     ]
     try:

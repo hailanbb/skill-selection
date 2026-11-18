@@ -1,15 +1,22 @@
-"""Manage local Douyin cookies for headless metadata extraction without syncing to git."""
+"""Manage local Douyin/Xiaohongshu cookies for headless metadata extraction without syncing to git."""
 from __future__ import annotations
 
 import argparse
 from datetime import datetime
 import json
-import os
 from pathlib import Path
 import sys
 from typing import Any
 
 DEFAULT_COOKIE_NAME = "douyin.txt"
+PLATFORM_FILES = {
+    "douyin": "douyin.txt",
+    "xiaohongshu": "xiaohongshu.txt",
+}
+PLATFORM_DOMAINS = {
+    "douyin": ".douyin.com",
+    "xiaohongshu": ".xiaohongshu.com",
+}
 
 
 def skill_cookie_dir() -> Path:
@@ -19,8 +26,31 @@ def skill_cookie_dir() -> Path:
     return cookie_dir
 
 
-def cookie_file_path() -> Path:
-    return skill_cookie_dir() / DEFAULT_COOKIE_NAME
+def cookie_file_path(platform: str = "douyin") -> Path:
+    filename = PLATFORM_FILES.get(platform, DEFAULT_COOKIE_NAME)
+    return skill_cookie_dir() / filename
+
+
+def load_cookie_header(platform: str = "douyin", explicit_file: Path | None = None) -> str:
+    """Read a Netscape or raw cookie file and return a Cookie HTTP header string."""
+    c_path = explicit_file if explicit_file is not None else cookie_file_path(platform)
+    if not c_path.is_file() or c_path.stat().st_size == 0:
+        return ""
+    text = c_path.read_text(encoding="utf-8", errors="ignore")
+    lines = [line.strip() for line in text.splitlines() if line.strip() and not line.startswith("#")]
+    cookies_list: list[str] = []
+    for line in lines:
+        if "\t" in line:
+            parts = line.split("\t")
+            if len(parts) >= 7:
+                cookies_list.append(f"{parts[5]}={parts[6]}")
+        elif "=" in line:
+            for item in line.split(";"):
+                if "=" in item:
+                    k, v = item.strip().split("=", 1)
+                    if k.strip():
+                        cookies_list.append(f"{k.strip()}={v.strip()}")
+    return "; ".join(cookies_list)
 
 
 def cookie_string_to_netscape(cookie_str: str, domain: str = ".douyin.com") -> str:
@@ -40,13 +70,14 @@ def cookie_string_to_netscape(cookie_str: str, domain: str = ".douyin.com") -> s
     return "\n".join(lines) + "\n"
 
 
-def inspect_cookies() -> dict[str, Any]:
-    path = cookie_file_path()
+def inspect_cookies(platform: str = "douyin") -> dict[str, Any]:
+    path = cookie_file_path(platform)
     if not path.is_file():
         return {
+            "platform": platform,
             "exists": False,
             "path": str(path),
-            "message": "未发现本地 Cookie 文件。若遇 403 阻断，请使用 --from-browser 或 --set 更新。"
+            "message": f"未发现本地 {platform} Cookie 文件。若遇 403 阻断，请使用 --from-browser 或 --set 更新。"
         }
     size = path.stat().st_size
     mtime = datetime.fromtimestamp(path.stat().st_mtime).strftime("%Y-%m-%d %H:%M:%S")
@@ -58,6 +89,7 @@ def inspect_cookies() -> dict[str, Any]:
         if len(parts) >= 6:
             keys_found.append(parts[5])
     return {
+        "platform": platform,
         "exists": True,
         "path": str(path),
         "size_bytes": size,
@@ -67,27 +99,29 @@ def inspect_cookies() -> dict[str, Any]:
     }
 
 
-def save_cookie_text(content: str) -> dict[str, Any]:
-    path = cookie_file_path()
+def save_cookie_text(content: str, platform: str = "douyin") -> dict[str, Any]:
+    path = cookie_file_path(platform)
     raw = content.strip()
     if not raw:
         raise ValueError("Cookie 内容不能为空")
+    domain = PLATFORM_DOMAINS.get(platform, ".douyin.com")
     if "# Netscape HTTP Cookie File" not in raw and "\t" not in raw:
-        formatted = cookie_string_to_netscape(raw)
+        formatted = cookie_string_to_netscape(raw, domain=domain)
     else:
         formatted = raw + "\n"
     path.write_text(formatted, encoding="utf-8", newline="\n")
-    return {"saved": True, "path": str(path), "bytes": len(formatted.encode("utf-8"))}
+    return {"saved": True, "platform": platform, "path": str(path), "bytes": len(formatted.encode("utf-8"))}
 
 
-def import_from_browser(browser_name: str) -> dict[str, Any]:
+def import_from_browser(browser_name: str, platform: str = "douyin") -> dict[str, Any]:
     try:
         from yt_dlp.cookies import extract_cookies_from_browser
         jar = extract_cookies_from_browser(browser_name)
-        path = cookie_file_path()
+        path = cookie_file_path(platform)
         jar.save(str(path), ignore_discard=True, ignore_expires=True)
         return {
             "imported": True,
+            "platform": platform,
             "browser": browser_name,
             "path": str(path),
             "cookie_count": len(jar),
@@ -100,49 +134,53 @@ def import_from_browser(browser_name: str) -> dict[str, Any]:
         ) from exc
 
 
-def clear_cookies() -> dict[str, Any]:
-    path = cookie_file_path()
+def clear_cookies(platform: str = "douyin") -> dict[str, Any]:
+    path = cookie_file_path(platform)
     existed = path.is_file()
     path.unlink(missing_ok=True)
-    return {"cleared": existed, "path": str(path)}
+    return {"cleared": existed, "platform": platform, "path": str(path)}
 
 
-def cookie_guidance_message() -> str:
+def cookie_guidance_message(platform: str = "douyin") -> str:
+    label = "抖音" if platform == "douyin" else "小红书"
+    flag = "" if platform == "douyin" else f" --platform {platform}"
     return (
-        "【抖音 Cookie 刷新引导】\n"
-        "检测到本地保存的抖音 Cookie 已失效或已过期（平台返回 HTTP 403 / Fresh cookies needed）。\n"
+        f"【{label} Cookie 刷新引导】\n"
+        f"检测到本地保存的{label} Cookie 已失效或受平台风控拦截（HTTP 403 / 需登录验证）。\n"
         "请选择以下任一方式在本地更新 Cookie（此文件保存在本地，绝不同步到 GitHub）：\n"
         "  1. 浏览器一键更新（请先短暂关闭浏览器避免文件锁）：\n"
-        "     python scripts/manage_cookies.py --from-browser edge\n"
+        f"     python scripts/manage_cookies.py{flag} --from-browser edge\n"
         "  2. 直接粘贴 Cookie 标头（在浏览器 F12 中复制 Cookie 文本）：\n"
-        "     python scripts/manage_cookies.py --set \"粘贴你的Cookie字符串\"\n"
+        f"     python scripts/manage_cookies.py{flag} --set \"粘贴你的Cookie字符串\"\n"
         "  3. 导入已有 cookies.txt 文件：\n"
-        "     python scripts/manage_cookies.py --from-file \"D:\\path\\to\\cookies.txt\""
+        f"     python scripts/manage_cookies.py{flag} --from-file \"D:\\path\\to\\cookies.txt\""
     )
 
 
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--platform", choices=["douyin", "xiaohongshu"], default="douyin",
+                        help="Target platform cookie file (default: douyin)")
     parser.add_argument("--status", action="store_true", help="Inspect status of local cookie file")
     parser.add_argument("--set", dest="cookie_string", help="Save a raw cookie string (name1=val1; name2=val2)")
     parser.add_argument("--from-file", type=Path, help="Import a local Netscape or text cookie file")
     parser.add_argument("--from-browser", choices=["edge", "chrome", "firefox", "brave", "opera", "vivaldi"],
-                        help="Extract and save cookies from a desktop browser into local cookies/douyin.txt")
+                        help="Extract and save cookies from a desktop browser into local cookies/<platform>.txt")
     parser.add_argument("--clear", action="store_true", help="Delete the local cookie file")
     parser.add_argument("--guidance", action="store_true", help="Print user guidance message for expired cookies")
     args = parser.parse_args()
 
     if args.guidance:
-        print(cookie_guidance_message())
+        print(cookie_guidance_message(args.platform))
         return 0
 
     if args.clear:
-        result = clear_cookies()
+        result = clear_cookies(args.platform)
         print(json.dumps(result, ensure_ascii=False, indent=2))
         return 0
 
     if args.cookie_string:
-        result = save_cookie_text(args.cookie_string)
+        result = save_cookie_text(args.cookie_string, args.platform)
         print(json.dumps(result, ensure_ascii=False, indent=2))
         return 0
 
@@ -151,20 +189,20 @@ def main() -> int:
         if not file_path.is_file():
             raise FileNotFoundError(f"Cookie 文件未找到: {file_path}")
         content = file_path.read_text(encoding="utf-8-sig")
-        result = save_cookie_text(content)
+        result = save_cookie_text(content, args.platform)
         print(json.dumps(result, ensure_ascii=False, indent=2))
         return 0
 
     if args.from_browser:
         try:
-            result = import_from_browser(args.from_browser)
+            result = import_from_browser(args.from_browser, args.platform)
             print(json.dumps(result, ensure_ascii=False, indent=2))
             return 0
         except RuntimeError as exc:
             print(str(exc), file=sys.stderr)
             return 2
 
-    result = inspect_cookies()
+    result = inspect_cookies(args.platform)
     print(json.dumps(result, ensure_ascii=False, indent=2))
     return 0
 

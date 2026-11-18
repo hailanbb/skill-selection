@@ -165,6 +165,64 @@ class ExtractMetadataTests(unittest.TestCase):
                 self.assertTrue(clear_res["cleared"])
                 self.assertFalse(manage_cookies.inspect_cookies()["exists"])
 
+    def test_manage_cookies_xiaohongshu_platform(self) -> None:
+        import manage_cookies
+        with tempfile.TemporaryDirectory() as temp_dir:
+            xhs_cookie = Path(temp_dir) / "xiaohongshu.txt"
+            with patch("manage_cookies.cookie_file_path", return_value=xhs_cookie):
+                res = manage_cookies.save_cookie_text("a1=xyz; web_session=def", platform="xiaohongshu")
+                self.assertTrue(res["saved"])
+                self.assertEqual(res["platform"], "xiaohongshu")
+                self.assertIn(".xiaohongshu.com", xhs_cookie.read_text(encoding="utf-8"))
+                header = manage_cookies.load_cookie_header("xiaohongshu", explicit_file=xhs_cookie)
+                self.assertIn("a1=xyz", header)
+                self.assertIn("web_session=def", header)
+
+    def test_xiaohongshu_ssr_gallery_and_download_media(self) -> None:
+        import io
+        source_url = "https://www.xiaohongshu.com/explore/0123456789abcdef01234567?xsec_token=SECRET"
+        fake_state = {
+            "note": {
+                "noteDetailMap": {
+                    "0123456789abcdef01234567": {
+                        "note": {
+                            "noteId": "0123456789abcdef01234567",
+                            "title": "小红书无浏览器测试",
+                            "desc": "第一段正文",
+                            "type": "normal",
+                            "time": 1700000000000,
+                            "user": {"nickname": "小红书作者", "userId": "u123"},
+                            "imageList": [
+                                {"urlDefault": "https://sns-webpic-qc.xhscdn.com/test1.jpg"},
+                                {"urlDefault": "https://sns-webpic-qc.xhscdn.com/test2.jpg"},
+                            ],
+                        }
+                    }
+                }
+            }
+        }
+        fake_html = (
+            f"<html><script>window.__INITIAL_STATE__ = {json.dumps(fake_state)};</script></html>"
+        ).encode("utf-8")
+        mock_response = io.BytesIO(fake_html)
+        with tempfile.TemporaryDirectory() as temp_dir:
+            run_dir = Path(temp_dir)
+            output = run_dir / "metadata.json"
+            with patch("urllib.request.urlopen", return_value=mock_response), \
+                 patch("extract_metadata.download_single_asset", side_effect=lambda asset, rd, default_platform=None: {"filename": asset["filename"]}) as dl:
+                result = extract_metadata.extract_metadata(
+                    source_url, output, run_dir=run_dir, download_media=True
+                )
+
+            self.assertEqual(result["title"], "小红书无浏览器测试")
+            self.assertEqual(result["uploader"], "小红书作者")
+            self.assertEqual(result["media_type"], "gallery")
+            self.assertEqual(result["image_count"], 2)
+            self.assertEqual(result["downloaded_assets"], ["page-01.jpg", "page-02.jpg"])
+            self.assertEqual(dl.call_count, 2)
+            self.assertNotIn("SECRET", output.read_text(encoding="utf-8"))
+            self.assertTrue((run_dir / "metadata.assets.json").is_file())
+
 
 if __name__ == "__main__":
     unittest.main()
