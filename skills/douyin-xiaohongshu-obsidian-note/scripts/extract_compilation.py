@@ -138,6 +138,34 @@ def _clean_text(raw_val: str) -> str:
     return raw_val
 
 
+def get_compilation_cache_path(mix_id: str, cookies_file: Path | None = None) -> Path:
+    base = cookies_file.parent if cookies_file else cookie_file_path("douyin").parent
+    return base / "compilations" / f"{mix_id}.json"
+
+
+def load_cached_compilation(mix_id: str, cookies_file: Path | None = None) -> dict[str, Any] | None:
+    cache_file = get_compilation_cache_path(mix_id, cookies_file)
+    if cache_file.is_file():
+        try:
+            data = json.loads(cache_file.read_text(encoding="utf-8"))
+            if isinstance(data, dict) and data.get("episodes"):
+                return data
+        except Exception:
+            pass
+    return None
+
+
+def save_cached_compilation(data: dict[str, Any], mix_id: str, cookies_file: Path | None = None) -> None:
+    if not data or not data.get("episodes"):
+        return
+    cache_file = get_compilation_cache_path(mix_id, cookies_file)
+    try:
+        cache_file.parent.mkdir(parents=True, exist_ok=True)
+        cache_file.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
+    except Exception:
+        pass
+
+
 def fetch_compilation_episodes(
     mix_id: str,
     cookies_file: Path | None = None,
@@ -188,6 +216,22 @@ def fetch_compilation_episodes(
         vids = list(dict.fromkeys(re.findall(r"/video/(\d+)", html)))
         new_vids = [v for v in vids if v not in seen_vids]
         if not new_vids:
+            if "验证码" in html or "sec.douyin.com" in html or "_$jsvmprt" in html or "verify_center" in html:
+                cached = load_cached_compilation(mix_id, cookies_file=cookies_file)
+                if cached:
+                    if not quiet:
+                        print(
+                            f"[Douyin Compilation] 提示: 访问合集触发了抖音真人验证码拦截，但成功命中本地合集快照缓存（共 {len(cached.get('episodes', []))} 集）！",
+                            file=sys.stderr,
+                        )
+                    if limit is not None:
+                        cached["episodes"] = cached["episodes"][:limit]
+                        cached["total_episodes"] = len(cached["episodes"])
+                    return cached
+                raise RuntimeError(
+                    "Douyin CAPTCHA triggered: 抖音合集访问触发滑块验证码拦截（验证码中间页）。"
+                    "请在浏览器中打开合集页面并完成滑块验证后使用 Cookie-Editor 重新导出 Cookie。"
+                )
             if not quiet:
                 print(f"[Douyin Compilation] No further videos found at ep {ep}. Completed.", file=sys.stderr)
             break
@@ -216,13 +260,16 @@ def fetch_compilation_episodes(
         ep += len(new_vids)
         time.sleep(0.2)
 
-    return {
+    res = {
         "platform": "douyin",
         "mix_id": mix_id,
         "mix_name": resolved_mix_name or "compilation",
         "total_episodes": len(all_episodes),
         "episodes": all_episodes,
     }
+    if len(all_episodes) > 0:
+        save_cached_compilation(res, mix_id, cookies_file=cookies_file)
+    return res
 
 
 def main() -> int:
