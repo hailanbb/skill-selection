@@ -64,7 +64,26 @@ def classify(url: str) -> dict[str, str]:
                 prefix = "note" if "note" in path else "video"
                 return {"kind": "note", "platform": "douyin", "note_id": note_id,
                         "canonical_url": f"https://www.douyin.com/{prefix}/{note_id}"}
+            if path.startswith("/collection/") or path.startswith("/mix/"):
+                mix_match = re.fullmatch(rf"/(?:collection|mix)/({DOUYIN_ID})", path)
+                if mix_match:
+                    mix_id = mix_match.group(1)
+                    return {"kind": "compilation", "platform": "douyin", "mix_id": mix_id,
+                            "canonical_url": f"https://www.douyin.com/collection/{mix_id}"}
             if path.startswith("/user/"):
+                if query.get("showSubTab") == ["compilation"]:
+                    vid = query.get("vid", [""])[0]
+                    if vid and re.fullmatch(DOUYIN_ID, vid):
+                        return {
+                            "kind": "note",
+                            "platform": "douyin",
+                            "note_id": vid,
+                            "canonical_url": f"https://www.douyin.com/video/{vid}",
+                            "compilation_context": "douyin_user_compilation",
+                        }
+                    return {"kind": "compilation", "platform": "douyin",
+                            "user_path": path,
+                            "action": "provide_compilation_videos_or_vid"}
                 return {"kind": "profile", "platform": "douyin",
                         "action": "request_a_specific_video_link_do_not_collect_profile"}
         return {"kind": "unsupported"}
@@ -128,6 +147,8 @@ def main() -> int:
                         help="Resolve short URLs via lightweight HTTP redirects locally without opening a browser")
     parser.add_argument("--check-existing", action="store_true",
                         help="Check the configured vault by platform and source ID")
+    parser.add_argument("--allow-partial-batch", action="store_true",
+                        help="In batch mode, continue with unsaved items instead of stopping if duplicates exist")
     parser.add_argument("--run-dir", type=Path,
                         help="Optional marked workspace to persist signed access URLs (e.g. xsec_token) without stdout leakage")
     args = parser.parse_args()
@@ -189,7 +210,8 @@ def main() -> int:
     code = 0 if results and all(r["kind"] != "unsupported" for r in results) else 2
     if args.check_existing:
         duplicates = [r for r in results if r.get("status") == "already_saved"]
-        if duplicates:
+        pending = [r for r in results if r.get("status") == "not_saved"]
+        if duplicates and not args.allow_partial_batch:
             code = 3
             output.update(status="duplicate", stop_task=True,
                           message="检测到重复链接：该内容之前已处理，重复存在，已停止本次任务。",
@@ -199,8 +221,18 @@ def main() -> int:
             output.update(status="needs_resolution", stop_task=True,
                           message="短链接尚未完成解析；请添加 --resolve 自动解析或提供展开后的地址，暂不处理内容。")
         else:
-            code = 0 if results and all(r["kind"] == "note" for r in results) else 2
-            output.update(status="ready" if code == 0 else "invalid", stop_task=code != 0)
+            if args.allow_partial_batch and duplicates:
+                code = 0 if pending else 3
+                output.update(
+                    status="partial_ready" if pending else "all_duplicates",
+                    stop_task=not bool(pending),
+                    message=f"检测到批量链接中 {len(duplicates)} 个已归档，{len(pending)} 个待处理。",
+                    existing_notes=[r["note"] for r in duplicates],
+                    pending_count=len(pending),
+                )
+            else:
+                code = 0 if results and all(r["kind"] == "note" for r in results) else 2
+                output.update(status="ready" if code == 0 else "invalid", stop_task=code != 0)
     print(json.dumps(output, ensure_ascii=False))
     return code
 
