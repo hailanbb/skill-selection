@@ -534,13 +534,15 @@ def extract_metadata(
     if metadata is None:
         try:
             metadata = extract_metadata_via_html_ssr(source_url, cookies_file=resolved_cookies_file)
+            # Mobile SSR fallback succeeded with current cookies, so cookies are functional
+            metadata["cookie_status"] = "valid"
+        except Exception as ssr_exc:
             if cookie_issue:
-                metadata["cookie_status"] = "expired"
                 print(
-                    f"[提示] 本地抖音 Cookie 可能已失效，本次已自动通过移动端 SSR 回退成功。\n{cookie_guidance_message()}",
+                    f"[错误] 本地抖音 Cookie 已失效或受限，yt-dlp 与 SSR 均无法提取。\n{cookie_guidance_message()}",
                     file=sys.stderr,
                 )
-        except Exception as ssr_exc:
+            raise RuntimeError(f"All Douyin extractors failed. yt-dlp: {yt_err}; SSR: {ssr_exc}") from ssr_exc
             guidance = f"\n\n{cookie_guidance_message()}" if (cookie_issue or resolved_cookies_file) else ""
             detail = f"yt-dlp extraction failed ({yt_err}); mobile SSR fallback failed ({ssr_exc}){guidance}"
             raise RuntimeError(detail) from ssr_exc
