@@ -61,7 +61,7 @@ class PackageTests(unittest.TestCase):
 
     def test_cli_entrypoints_from_arbitrary_cwd(self):
         for script in ("sources.py", "configure.py", "run_workspace.py", "extract_metadata.py", "fetch_asset.py",
-                       "extract_keyframes.py", "publish_note.py", "validate_note.py", "manage_cookies.py"):
+                       "extract_keyframes.py", "transcribe_video.py", "publish_note.py", "validate_note.py", "manage_cookies.py"):
             with self.subTest(script=script):
                 result = subprocess.run([sys.executable, "-X", "utf8", str(ROOT / "scripts" / script), "--help"],
                                         cwd=ROOT.parent, encoding="utf-8", capture_output=True)

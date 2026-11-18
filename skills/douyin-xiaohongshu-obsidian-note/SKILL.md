@@ -1,6 +1,6 @@
 ---
 name: douyin-xiaohongshu-obsidian-note
-description: 将用户发送的单条抖音视频或小红书图文/视频链接与分享文本，提炼为带本地真实图片的 Obsidian Markdown 学习笔记。用于抖音或小红书转图文笔记、保存到 Obsidian、提炼视频知识；首次询问笔记和图片目录，按平台分流、处理前查重、发现已处理链接立即提示并停止任务，并清理视频、音频、转写和候选帧等临时材料。不采集主页、收藏夹、评论区或推荐流。
+description: 【抖音/小红书转 Obsidian 笔记首选技能 · 严禁调用 browser 子代理或打开内置浏览器】将用户发送的单条抖音视频/图文（含 douyin.com/video、v.douyin.com、user/self?modal_id= 收藏夹弹窗链接）或小红书图文/视频链接与分享文本，提炼为带本地真实图片的 Obsidian Markdown 学习笔记。用于抖音或小红书转图文笔记、保存到 Obsidian、提炼视频核心知识点（优先于 dy-note）；全流程仅通过本技能 scripts/ 下的无头 Python 脚本（sources.py、extract_metadata.py --download-media、transcribe_video.py、extract_keyframes.py、publish_note.py）闭环执行，任何阶段严禁调用 browser subagent。首次询问笔记和图片目录，处理前整库查重，当检测到 cookie_status 为 expired 或未配置 Cookie 时必须在回复中显式提示用户更新 Cookie，并在收尾清理临时材料。不采集主页、收藏夹列表、评论区或推荐流。
 ---
 
 # 抖音/小红书转 Obsidian 笔记
@@ -42,7 +42,8 @@ description: 将用户发送的单条抖音视频或小红书图文/视频链接
 - **处理前强制查重**：以 `(平台, 来源 ID)` 流式扫描当前配置的整个 Obsidian 库内 Markdown 的 `url` 属性（仅读取文件头部 Frontmatter，包括移出笔记输出目录的旧文）。不同分享参数、标题、路径形式只要来源 ID 相同，就算重复；不同平台相同 ID 不算重复。
 - **命中即停止任务**：返回 `status: duplicate` / `already_saved` 或发布兜底返回 `skipped_existing` 时，明确提示“检测到重复链接，该内容之前已处理，重复存在，已停止本次任务”，并给出现有笔记路径。不得继续下载、转写、分析、创建笔记或覆盖原文；不得把重复当普通故障重试。
 - **短链接自动轻量解析与临时令牌保留**：使用 `sources.py --resolve` 自动发起本地轻量 HTTP 302 重定向嗅探（即使目标落地页返回 403 也可从重定向响应头提取规范 ID 与访问参数）并完成整库查重。传入 `--run-dir` 时可将含 `xsec_token` 的临时 `access_url` 安全存入工作区 `resolved_sources.json` 供后续 `extract_metadata.py` 使用，绝不泄漏至终端标准输出或最终笔记。若轻量解析彻底受阻（仍返回 `needs_resolution`），直接要求用户提供解析后的具体作品链接。
-- **双平台 Cookie 本地存储与失效引导**：抖音与小红书 Cookie 分别保存在本地 `<skill-root>/cookies/douyin.txt` 与 `<skill-root>/cookies/xiaohongshu.txt`（受 `.gitignore` 保护，绝不同步到 GitHub）。执行中若检测到 Cookie 失效或风控阻断，脚本会自动回退 SSR/OG 解析；若仍受阻则由 Agent 主动引导通过 `manage_cookies.py --platform <douyin|xiaohongshu> --from-browser edge` 或 `--set "<Cookie文本>"` 完成本地更新。
+- **双平台 Cookie 本地存储与强制失效提醒**：抖音与小红书 Cookie 分别保存在本地 `<skill-root>/cookies/douyin.txt` 与 `<skill-root>/cookies/xiaohongshu.txt`（受 `.gitignore` 保护，绝不同步到 GitHub）。**硬性规定**：只要 `doctor.py` 显示对应平台 `local_cookies` 为 `false`，或 `extract_metadata.py` 输出了 `"cookie_status": "expired"`（**哪怕本次已通过免 Cookie 的移动端 SSR 回退成功下载了视频并完成了笔记发布**），Agent 在回复用户时**必须显式提醒用户本地 Cookie 已过期或未配置**，并原样给出如下一键更新命令：
+  `python -X utf8 "<skill-root>/scripts/manage_cookies.py" --from-browser edge`（或 `--set "<Cookie文本>"`）。绝不能因 SSR 回退成功就静默吞掉 Cookie 过期提示！
 - **历史范围**：现有笔记的 `url` 是处理记录；已删除、移到其他库或不含可识别 `url` 的历史笔记无法据此识别，不能声称已检查这些记录。
 
 一次输入明确包含多条链接时，先完成整批查重；任意一条已处理就提示重复并停止整次任务，不继续其他链接。整批无历史重复后，按平台和来源 ID 合并本次输入内的重复项，再逐条创建独立工作区；范围不明则确认具体哪条。抖音与小红书相同数字/ID不会互相误判为重复。
@@ -50,9 +51,9 @@ description: 将用户发送的单条抖音视频或小红书图文/视频链接
 ## 单条处理流程
 
 1. 运行 `run_workspace.py create`。所有本次下载、视频副本、音频、字幕、ASR、候选帧、草稿、证据、状态与日志都放入返回的目录。用户原始本地文件只复制，不移动。
-2. 运行 `extract_metadata.py --run-dir "<运行目录>" --url "<作品URL或含xsec_token的访问URL>" --output "<运行目录>/metadata.json" --download-media`，核对原帖身份、标题、作者、可确认日期（`publish_date`）、正文（`description`）和媒体类型（`media_type`），并将公开 CDN 图集（`page-01.jpg`...）或视频（`source.mp4`）下载至运行目录。日期证据不足时留空，不凭当前年份补齐。
+2. 运行 `extract_metadata.py --run-dir "<运行目录>" --url "<作品URL或含xsec_token的访问URL>" --output "<运行目录>/metadata.json" --download-media`，核对原帖身份、标题、作者、可确认日期（`publish_date`）、正文（`description`）、`cookie_status` 和媒体类型（`media_type`），并将公开 CDN 图集（`page-01.jpg`...）或视频（`source.mp4`）下载至运行目录。日期证据不足时留空，不凭当前年份补齐。
 3. 图文/LIVE：按 `image_count` 逐张查看已下载至工作区的图片，记录覆盖页码；文字卡片保留可读分辨率，有独立知识的图片可全部保留。
-4. 视频：沿用抖音技能的证据链，优先复用已有字幕/本地 ASR（若已安装 `dy-note` 可调用其本地音频转写脚本将输出指向本次运行目录）；利用 `extract_keyframes.py --mode auto` 基于快速低清场景突变检测智能抽取高信息量候选帧，完整查看并结合口播筛选通常 3–8 张有解释作用的关键帧；无口播证据只能标记 `visual_only`，不只看封面就概括视频。
+4. 视频：直接调用本技能内置离线 ASR 脚本 `<python> -X utf8 "<skill-root>/scripts/transcribe_video.py" --run-dir "<运行目录>" --video "<运行目录>/source.mp4" --output "<运行目录>/transcript.json"` 获取带精确时间戳的口播转写（`asr_and_frames`）；再利用 `extract_keyframes.py --mode auto`（或根据 `transcript.json` 中的关键时间戳 `--at`）抽取高信息量候选帧，完整查看并结合口播筛选通常 3–8 张有解释作用的关键帧；仅当视频确无语音时标记 `visual_only`。
 5. 完整读取 [笔记规范](references/note-format.md) 与 [脚本输入约定](references/input-contract.md)。写 UTF-8 `evidence.json` 和只含正文的 `draft.md`，用 `{{image:1}}` 把每张入选图放在相邻解释处。
 6. 运行 `publish_note.py --manifest ... --draft ... --run-dir ...`。默认拒绝图文漏页、视频未看完、无效图片、未查看素材、签名泄漏、同名覆盖和未引用图片。只有用户明确接受局部笔记并记录原因时才使用 `--allow-partial`。
 7. 运行 `validate_note.py --note <最终笔记>`，再实际打开最终图片确认文字清晰、图注对应；可用时在 Obsidian 查看排版。脚本通过不代表语义正确。

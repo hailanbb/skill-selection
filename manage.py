@@ -319,54 +319,12 @@ def cmd_sync_to_runtime(args: argparse.Namespace) -> int:
 
 
 def cmd_link(args: argparse.Namespace) -> int:
-    if os.name != "nt":
-        print("错误: link (Junction) 命令目前仅支持 Windows 系统。", file=sys.stderr)
-        return 2
-    skill_name = args.skill
-    repo_skill = (SKILLS_DIR / skill_name).resolve()
-    if not repo_skill.is_dir():
-        print(f"错误: 仓库中不存在该技能: {skill_name}", file=sys.stderr)
-        return 2
-
-    runtime_dir = Path(args.runtime_dir).expanduser().resolve()
-    rt_skill = runtime_dir / skill_name
-
-    if is_junction(rt_skill):
-        print(f"技能 {skill_name} 已经是 Junction 链接状态: {rt_skill} -> {rt_skill.resolve()}")
-        return 0
-
-    # 1. 迁移运行时中的私有文件 (如 cookies) 到 repo 目录 (确保由 .gitignore 忽略)
-    if rt_skill.is_dir():
-        print(f"正在迁移 {skill_name} 运行时私有凭据与配置到 Repo 目录...")
-        for p_name in PRIVATE_FILES:
-            for p_file in rt_skill.rglob(p_name):
-                rel = p_file.relative_to(rt_skill)
-                target = repo_skill / rel
-                target.parent.mkdir(parents=True, exist_ok=True)
-                if not target.exists():
-                    shutil.copy2(p_file, target)
-        cookies_dir = rt_skill / "cookies"
-        if cookies_dir.is_dir():
-            repo_cookies = repo_skill / "cookies"
-            repo_cookies.mkdir(parents=True, exist_ok=True)
-            for c_file in cookies_dir.iterdir():
-                if c_file.is_file():
-                    shutil.copy2(c_file, repo_cookies / c_file.name)
-
-        # 备份并删除原目录
-        shutil.rmtree(rt_skill)
-
-    # 2. 创建 Junction
-    cmd = ["cmd", "/c", "mklink", "/J", str(rt_skill), str(repo_skill)]
-    res = subprocess.run(cmd, capture_output=True, text=True)
-    if res.returncode == 0:
-        print(f"✅ 成功建立软链 (Junction):")
-        print(f"   {rt_skill} <===> {repo_skill}")
-        print("   现在任何在 Antigravity 中的修改均实时映射至 Git 仓库，实现零版本漂移！")
-        return 0
-    else:
-        print(f"❌ 建立 Junction 失败: {res.stderr or res.stdout}", file=sys.stderr)
-        return 2
+    print(
+        "⚠️  [重要提示] Antigravity 底层的 Go 语言服务器 (os.ReadDir) 在 Windows 下会跳过带有 ReparsePoint 属性的 Junction 软链目录，\n"
+        "   导致软链后的技能从可用技能列表中隐身！\n"
+        "   因此已禁用 Junction 软链模式，自动为您切换为实体目录双向同步 (sync-to-runtime)。"
+    )
+    return cmd_sync_to_runtime(args)
 
 
 def cmd_unlink(args: argparse.Namespace) -> int:

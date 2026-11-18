@@ -7,9 +7,11 @@
 先完成首次配置，再创建 `run_workspace.py create` 返回的运行目录。按以下顺序取材，已有合法材料不重复下载或转写：
 
 1. 用户提供、能确认属于该原帖的本地视频、SRT/VTT/TXT 或 ASR 结果；复制到运行目录，不移动原件。
-2. 当前小红书原帖的作者、标题、可确认发布时间、简介和可用独立字幕轨。
-3. 本机已有的中文 ASR 或客户端音视频理解能力。若已装 `dy-note` 且其本地转写接口适用，可只复用本地文件转写能力；先查该接口文档，把输出目录指向本次运行目录。小红书链接不能传给抖音提取器；抖音链接也需确认接口版本实际支持。
-4. 视频画面、烧录字幕和必要的图像文字识别。网页简介不是口播逐字稿；ASR不能证明画面上的数字、价格、菜单和动作。
+2. 运行 `extract_metadata.py --run-dir "RUN" --url "<视频URL>" --output "RUN/metadata.json" --download-media`，自动将无水印视频下载为 `RUN/source.mp4`（即使本地 Cookie 过期也会自动回退移动端 SSR 下载视频并输出 `cookie_status: "expired"`，此时必须在最终回复中提醒用户刷新 Cookie）。
+3. 直接调用本技能内置离线转写脚本提取带精确时间戳的口播内容：
+   `PYTHON -X utf8 "SKILL/scripts/transcribe_video.py" --run-dir "RUN" --video "RUN/source.mp4" --output "RUN/transcript.json"`
+   该脚本自动使用本机已缓存的 `faster_whisper`（`small`/`base`/`tiny`）离线转写，无需联网下载模型，也无需调用 `dy-note`。
+4. 视频画面、烧录字幕和必要的图像文字识别。网页简介不是口播逐字稿；ASR不能证明画面上的数字、价格、菜单和动作，需结合 `transcript.json` 的分段时间戳用 `extract_keyframes.py` 抽帧看图核实。
 
 缺少可靠口播证据时，明确使用 `visual_only`，只写已核实的画面及原帖正文，不补写没听到的内容。云端转写会上传视频/音频，使用前须取得相应授权；不默认安装新模型或购买服务。
 
