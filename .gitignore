@@ -6,12 +6,17 @@ cookies/
 *.cookie
 *.cookies.txt
 douyin.txt
+xiaohongshu.txt
 
-# Python caching
+# Python caching & test artifacts
 __pycache__/
 *.pyc
 *.pyo
 *.pyd
+.pytest_cache/
+*.part
+*.tmp
+*.log
 
 # OS metadata
 .DS_Store
