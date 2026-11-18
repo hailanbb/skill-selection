@@ -65,11 +65,18 @@ def classify(url: str) -> dict[str, str]:
                 return {"kind": "note", "platform": "douyin", "note_id": note_id,
                         "canonical_url": f"https://www.douyin.com/{prefix}/{note_id}"}
             if path.startswith("/collection/") or path.startswith("/mix/"):
-                mix_match = re.fullmatch(rf"/(?:collection|mix)/({DOUYIN_ID})", path)
+                mix_match = re.fullmatch(rf"/(?:collection|mix)/({DOUYIN_ID})(?:/([0-9]+))?", path)
                 if mix_match:
                     mix_id = mix_match.group(1)
-                    return {"kind": "compilation", "platform": "douyin", "mix_id": mix_id,
-                            "canonical_url": f"https://www.douyin.com/collection/{mix_id}"}
+                    res = {
+                        "kind": "compilation",
+                        "platform": "douyin",
+                        "mix_id": mix_id,
+                        "canonical_url": f"https://www.douyin.com/collection/{mix_id}",
+                    }
+                    if mix_match.group(2):
+                        res["episode"] = mix_match.group(2)
+                    return res
             if path.startswith("/user/"):
                 if query.get("showSubTab") == ["compilation"]:
                     vid = query.get("vid", [""])[0]

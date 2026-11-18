@@ -14,6 +14,7 @@ if str(SCRIPTS_DIR) not in sys.path:
 
 from manage_cookies import normalize_cookie_to_netscape, save_cookie_text, inspect_cookies, cookie_file_path
 from sources import classify, extract
+from extract_compilation import parse_mix_id_from_url, _clean_text
 
 
 class CookieAndCompilationTests(unittest.TestCase):
@@ -90,6 +91,25 @@ class CookieAndCompilationTests(unittest.TestCase):
         url = "https://www.douyin.com/user/MS4wLjABAAAArrcjvD5kKlYsUGAlSO8QGrbtMTQA-n9Ts_-tQUJht5rp-zc_szHoITuNi1n3ZhJ_"
         result = classify(url)
         self.assertEqual(result["kind"], "profile")
+
+
+    def test_douyin_collection_with_episode_suffix(self):
+        url = "https://www.douyin.com/collection/7616347127274276900/1"
+        result = classify(url)
+        self.assertEqual(result["kind"], "compilation")
+        self.assertEqual(result["platform"], "douyin")
+        self.assertEqual(result["mix_id"], "7616347127274276900")
+        self.assertEqual(result["episode"], "1")
+        self.assertEqual(result["canonical_url"], "https://www.douyin.com/collection/7616347127274276900")
+
+    def test_parse_mix_id_from_url_helper(self):
+        self.assertEqual(parse_mix_id_from_url("https://www.douyin.com/collection/7616347127274276900/1"), "7616347127274276900")
+        self.assertEqual(parse_mix_id_from_url("https://www.douyin.com/collection/7616347127274276900"), "7616347127274276900")
+        self.assertIsNone(parse_mix_id_from_url("https://www.douyin.com/video/7709104772577627455"))
+
+    def test_clean_text_unicode_handling(self):
+        self.assertEqual(_clean_text(r"\u8425\u9500"), "营销")
+        self.assertEqual(_clean_text("直接中文文本"), "直接中文文本")
 
 
 if __name__ == "__main__":

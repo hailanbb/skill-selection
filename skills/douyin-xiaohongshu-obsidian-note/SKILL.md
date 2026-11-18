@@ -1,6 +1,6 @@
 ---
 name: douyin-xiaohongshu-obsidian-note
-description: 【抖音/小红书转 Obsidian 笔记首选技能 · 严禁调用 browser 子代理或打开内置浏览器】将用户发送的单条抖音视频/图文（含 douyin.com/video、v.douyin.com、user/self?modal_id= 收藏夹弹窗链接、showSubTab=compilation 合集链接）或小红书图文/视频链接与分享文本，提炼为带本地真实图片的 Obsidian Markdown 学习笔记。原生支持 Cookie-Editor 导出的 JSON/Header/Netscape 全格式 Cookie 并主动引导用户配置；用于抖音或小红书转图文笔记、保存到 Obsidian、提炼视频核心知识点（优先于 dy-note）；全流程仅通过本技能 scripts/ 下的无头 Python 脚本（sources.py、extract_metadata.py --download-media、transcribe_video.py、extract_keyframes.py、publish_note.py）闭环执行，任何阶段严禁调用 browser subagent。首次询问笔记和图片目录，处理前整库查重，当检测到 cookie_status 为 expired 或未配置 Cookie 时必须在回复中显式提示用户更新 Cookie，并在收尾清理临时材料。不采集主页、收藏夹列表、评论区或推荐流。
+description: 【抖音/小红书转 Obsidian 笔记首选技能 · 严禁调用 browser 子代理或打开内置浏览器】将用户发送的单条抖音视频/图文（含 douyin.com/video、v.douyin.com、user/self?modal_id= 收藏夹弹窗链接、showSubTab=compilation 合集链接）或小红书图文/视频链接与分享文本，提炼为带本地真实图片的 Obsidian Markdown 学习笔记。原生支持 Cookie-Editor 导出的 JSON/Header/Netscape 全格式 Cookie 并主动引导用户配置；原生支持抖音合集一键自动提取与批量流水线处理；用于抖音或小红书转图文笔记、保存到 Obsidian、提炼视频核心知识点（优先于 dy-note）；全流程仅通过本技能 scripts/ 下的无头 Python 脚本（sources.py、extract_compilation.py、extract_metadata.py --download-media、transcribe_video.py、extract_keyframes.py、publish_note.py）闭环执行，任何阶段严禁调用 browser subagent。首次询问笔记和图片目录，处理前整库查重，当检测到 cookie_status 为 expired 或未配置 Cookie 时必须在回复中显式提示用户更新 Cookie，并在收尾清理临时材料。不采集主页、收藏夹列表、评论区或推荐流。
 ---
 
 # 抖音/小红书转 Obsidian 笔记
@@ -38,9 +38,9 @@ description: 【抖音/小红书转 Obsidian 笔记首选技能 · 严禁调用 
 
 - **抖音 `douyin.com/video/<id>` 或 `douyin.com/note/<id>`**：处理单条视频或图文，读取 [视频取证与清理](references/video-workflow.md) 及 [平台访问与媒体判断](references/browser-workflow.md)。使用 `extract_metadata.py --download-media` 自动提取公开元数据并落盘无水印视频/图集至临时工作区。
 - **抖音合集（Compilation / Mix）**：
-  - 若输入包含 `showSubTab=compilation&vid=<vid>`，自动将指定单集规范化提取为具体作品 URL 推进提炼；
-  - 若输入为合集主页（`/collection/<mix_id>` 或无 `vid` 的合集参数），提取合集 ID，支持用户直接提供合集作品清单；
-  - 针对多条批量作品，使用 `sources.py --allow-partial-batch` 执行整库查重，自动过滤已归档单集，汇报“已归档 M 篇，待处理 K 篇”，无需因部分重复而中断整批工作，对未归档视频逐篇执行流水线。
+  - 支持全自动一键批量解析：直接运行 `<python> -X utf8 "<skill-root>/scripts/extract_compilation.py" --url "<合集或用户主页链接>" [--name "<合集名>"] --urls-file "<运行目录>/urls.txt"`，脚本自动识别合集 ID（若为包含合集的用户主页则无头定位目标合集）并通过纯 HTTP 分页块高速抓取全量剧集 URL 列表；
+  - 针对提取出的批量作品清单，直接传入 `<python> -X utf8 "<skill-root>/scripts/sources.py" --file "<运行目录>/urls.txt" --check-existing --allow-partial-batch` 执行整库查重，自动过滤已归档单集，明确汇报“已归档 M 篇，待处理 K 篇”，无需因部分重复而中断整批工作，对未归档视频逐篇执行流水线；
+  - 若输入为带具体 `vid` 的单集参数（如 `showSubTab=compilation&vid=<vid>`），且用户明确只需单篇，则直接提取对应单集推进提炼。
 - **小红书具体笔记**：读取 [平台访问与媒体判断](references/browser-workflow.md)。使用 `extract_metadata.py --download-media` 解析 SSR 状态与公开 CDN 媒体并批量下载至工作区；图文逐页核实，视频同时读取视频流程，LIVE 图文优先按静态图卡核实，动态片段承载核心知识时补充查看动态流。
 - **主页、收藏夹、推荐流**：要求用户提供具体笔记/视频链接，不扫描、不记忆、不监控。
 - **处理前强制查重**：以 `(平台, 来源 ID)` 流式扫描当前配置的整个 Obsidian 库内 Markdown 的 `url` 属性（仅读取文件头部 Frontmatter，包括移出笔记输出目录的旧文）。不同分享参数、标题、路径形式只要来源 ID 相同，就算重复；不同平台相同 ID 不算重复。
