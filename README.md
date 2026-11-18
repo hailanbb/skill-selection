@@ -98,6 +98,7 @@ skill-selection/
 | **GitHub 工具收藏（通用 Agent）** | 将普通软件与实用工具收藏到用户指定仓库，生成中文指南、分类索引和可追溯快照；自带规范与校验脚本，不绑定账号或客户端。 | 收藏 GitHub 软件、更新工具快照、检查收藏库；支持 CLI、API 或连接器。 | [👉 安装与使用指南](skills/github-tools-collect/README.md) |
 | **转存至github** | 将网络上第三方工具、Skill 或 MCP 的源码及说明，一键克隆、重构并整合保存到个人的 GitHub 统一工具库中。支持源链接中文自识别与智能翻译分流。 | 用户发送需要克隆、备份或收藏的第三方 AI 工具链接并要求保存到 GitHub 时。 | [👉 详细配置与使用指南](skills/转存至github/README.md) |
 | **视频下载与智能字幕压制** | 全自动视频嗅探下载（含 HLS/m3u8 逆向），调度剪映/必剪/Whisper 智能 ASR 识别，方言口语转标准简体书面语精修，并按影视工业级自适应比例（720p 42px / 1080p 60px）压制高清硬/软字幕。 | 视频下载、视频配中文字幕、粤语/方言转字幕、字幕压制或调整字幕大小。 | [👉 详细配置与使用指南](skills/video-download-captioner/README.md) |
+| **PikPak 影视极速整理** | 基于 PikPak 官方 API 的 15 并发极速影视整理与广告清理。支持番号智能识别、女优中文化、防覆盖保全、博彩广告强拦截与无损回收站清理。 | PikPak整理、整理网盘、清理网盘广告、按演员归档、PikPak一键整理。 | [👉 详细配置与使用指南](skills/pikpak-video-organizer/README.md) |
 
 *(未来新增的 Skill 或 MCP 服务将持续罗列于上表中，并对应放置于 `skills/` 子目录下。)*
 

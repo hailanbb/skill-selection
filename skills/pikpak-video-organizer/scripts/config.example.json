@@ -1,0 +1,9 @@
+{
+  "access_token": "",
+  "source_folder": "My Pack",
+  "target_folder": "女优",
+  "concurrency_limit": 15,
+  "min_video_size_mb": 50,
+  "clean_ads": true,
+  "delete_empty_subdirs": true
+}
