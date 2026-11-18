@@ -473,7 +473,7 @@ async def main():
     await asyncio.gather(*rename_jobs)
     print("[+] 批量重命名完成！")
 
-    # 8. 按演员原子批量移动
+    # 8. 按演员原子批量移动（平滑限流防并发超限）
     print(f"\n[*] ⚡ 按演员分组极速批量移动至 【{target_path}】 下专属文件夹...")
     folder_batches = {}
     for item in plan_items:
@@ -488,8 +488,14 @@ async def main():
             if fid:
                 folder_batches.setdefault(fid, []).append(sub_f["id"])
 
-    move_tasks = [client.file_batch_move(ids, to_parent_id=fid) for fid, ids in folder_batches.items()]
-    await asyncio.gather(*move_tasks, return_exceptions=True)
+    for fid, ids in folder_batches.items():
+        try:
+            await client.file_batch_move(ids, to_parent_id=fid)
+            await asyncio.sleep(0.3)
+        except Exception as e:
+            print(f"  [-] 批量移动异常: {e}")
+
+    await asyncio.sleep(2)
     print(f"[+] 影片与字幕已全部归集入库至 【{target_path}】！")
 
     # 9. 垃圾与广告文件清理
