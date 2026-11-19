@@ -823,6 +823,45 @@ def config_manage_actors(cfg: dict):
             pause_prompt()
 
 
+def config_reset_history_checkpoint(cfg: dict):
+    print("\n--- 重设历史回溯起点（补扫新增女优） ---")
+    print("【运行保障说明】")
+    print("  1. 已下载历史去重库 (data/downloaded_hashes.txt) 会被严密保留！")
+    print("  2. 从指定时间开始正向补扫时：")
+    print("     - 之前已推送过的资源：毫秒级秒跳过，绝不重复占用 115 空间与配额；")
+    print("     - 新收录女优的历史资源：自动识别并推送到 115，自动按演员建子目录！")
+    print("  3. 若扫描期间达到 90% 配额，会自动轮转下一盘，全满后自动归并休眠，次日自动续扫。")
+    print("-" * 62)
+
+    cur_start = cfg.get("telegram", {}).get("history_start_time", "2025-01-01 00:00:00")
+    new_start = input(f"请输入回溯起始时间 (格式 YYYY-MM-DD HH:MM:SS) [{cur_start}]: ").strip()
+    if not new_start:
+        new_start = cur_start
+
+    confirm = input(f"确认重置断点并从 [{new_start}] 重新补扫？(y/N): ").strip().lower()
+    if confirm != "y":
+        print("已取消重置。")
+        return
+
+    # 1. 更新 config.json
+    cfg.setdefault("telegram", {})["history_start_time"] = new_start
+    save_config(cfg)
+
+    # 2. 安全重置 checkpoint
+    write_json_atomic(CHECKPOINT_FILE, {
+        "last_scanned_id": 0,
+        "reset_at": datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+        "note": f"Reset to scan from {new_start} for new actors",
+    })
+
+    state = get_runtime_state()
+    print(f"\n[成功] 断点已成功重置！起始时间: {new_start}")
+    if state["running"]:
+        print("[提示] 任务当前正在运行中。请选择主菜单 [3 停止] 然后 [1 启动]，立即启动全新回溯补扫！")
+    else:
+        print("[提示] 随时选择主菜单 [1 启动] 即可开始历史补扫。")
+
+
 def action_config():
     while True:
         cfg = load_config()
@@ -832,12 +871,13 @@ def action_config():
         print_targets_table(cfg)
         print("-" * 62)
         print("  1. 新增 115 目标")
-        print("  2. 修改 115 目标（路径名 / 保存目录 / 限额 / 启停）")
+        print("  2. 修改 115 目标（路径名 / 保存目录 / 启停）")
         print("  3. 删除 115 目标")
         print("  4. 调整 115 轮转顺序（首位即主盘）")
         print("  5. 修改基础设置（CD2 地址 / Token / 频道 / 按演员分类）")
-        print("  6. 管理官方配额暂停阈值与跨云归并设置")
+        print("  6. 管理官方配额停止阈值与跨云归并设置")
         print("  7. 管理出演者白名单")
+        print("  8. 重设历史回溯起点（补扫新增女优，保留已下载去重）")
         print("  0. 返回主菜单")
         print("=" * 62)
         choice = input("请输入数字选项: ").strip()
@@ -857,6 +897,9 @@ def action_config():
             config_manage_merge_and_quota(cfg)
         elif choice == "7":
             config_manage_actors(cfg)
+        elif choice == "8":
+            config_reset_history_checkpoint(cfg)
+            pause_prompt()
         else:
             print("[提示] 无效选项，请重新输入。")
 
