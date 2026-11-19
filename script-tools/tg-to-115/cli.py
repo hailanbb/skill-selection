@@ -35,6 +35,7 @@ ACTORS_FILE = os.path.join(BASE_DIR, "actors.json")
 ACTORS_TXT_FILE = os.path.join(BASE_DIR, "actors.txt")
 ACTORS_EXAMPLE = os.path.join(BASE_DIR, "actors.example.json")
 MONITOR_SCRIPT = os.path.join(BASE_DIR, "monitor.py")
+TEST_CHANNEL_SCRIPT = os.path.join(BASE_DIR, "test_channel.py")
 DATA_DIR = os.path.join(BASE_DIR, "data")
 RECORD_DIR = os.path.join(BASE_DIR, "records")
 LOG_DIR = os.path.join(BASE_DIR, "logs")
@@ -909,41 +910,74 @@ def config_manage_channels(cfg: dict):
             up_time = ch_data.get("updated_at", "未开始")
             print(f"  {idx:<4} @{ch:<21} {last_id:<14} {up_time}")
         print("-" * 62)
-        print("  1. 添加新监听频道")
-        print("  2. 删除监听频道")
-        print("  3. 重设单个频道历史断点（独立回溯补扫，不影响其它频道）")
+        print("  1. 探测/测试新频道真实消息结构（抽样最新消息诊断格式，并可直接添加）")
+        print("  2. 探测测试已有频道的最新发帖形态")
+        print("  3. 删除监听频道")
+        print("  4. 重设单个频道历史断点（独立回溯补扫，不影响其它频道）")
         print("  0. 返回配置管理中心")
         print("=" * 62)
         choice = input("请选择: ").strip()
         if choice == "0":
             return
         elif choice == "1":
-            new_name = input("\n请输入要监听的 Telegram 频道用户名 (如 new_channel 或 @new_channel): ").strip().lstrip("@")
+            new_name = input("\n请输入要探测测试的 Telegram 频道用户名 (如 new_channel 或 @new_channel): ").strip().lstrip("@")
             if not new_name:
                 print("[提示] 频道名称不能为空。")
                 pause_prompt()
                 continue
-            if new_name in channels:
-                print(f"[提示] 频道 @{new_name} 已经在监听列表中，无需重复添加。")
+            if not os.path.exists(SESSION_FILE):
+                print("\n[错误] 尚未完成 Telegram 登录认证，无法调用 API 读取真实消息。请先返回主菜单 [1 启动] 完成认证。")
                 pause_prompt()
                 continue
-            channels.append(new_name)
-            cfg.setdefault("telegram", {})["target_channels"] = channels
-            cfg["telegram"]["target_channel"] = channels[0]
-            save_config(cfg)
-            channels_cp[new_name] = {
-                "last_scanned_id": 0,
-                "updated_at": datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-            }
-            cp["channels"] = channels_cp
-            write_json_atomic(CHECKPOINT_FILE, cp)
-            print(f"\n[成功] 已成功添加监听频道 @{new_name}！")
-            print("[说明] 新增频道断点初始为 0，启动后将自动从起始时间进行正向历史补扫。")
-            state = get_runtime_state()
-            if state["running"]:
-                print("[提示] 任务当前正在运行中。请在主菜单选择 [6 守护进程 -> 3 重启] 使新频道监听生效。")
+
+            print(f"\n[*] 正在启动真实消息结构探测引擎，实地拉取 @{new_name} 最新消息，请稍候...\n")
+            if os.path.exists(TEST_CHANNEL_SCRIPT):
+                subprocess.run([get_python_bin(), TEST_CHANNEL_SCRIPT, new_name, "8"])
+            else:
+                print(f"[错误] 未找到探测脚本: {TEST_CHANNEL_SCRIPT}")
+
+            if new_name in channels:
+                print(f"\n[提示] 频道 @{new_name} 已经在现有监听列表中。")
+                pause_prompt()
+                continue
+
+            confirm = input(f"\n根据以上消息结构探测结果，是否确认将 @{new_name} 加入正式监听列表？(y/N): ").strip().lower()
+            if confirm in ("y", "yes"):
+                channels.append(new_name)
+                cfg.setdefault("telegram", {})["target_channels"] = channels
+                cfg["telegram"]["target_channel"] = channels[0]
+                save_config(cfg)
+                channels_cp[new_name] = {
+                    "last_scanned_id": 0,
+                    "updated_at": datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+                }
+                cp["channels"] = channels_cp
+                write_json_atomic(CHECKPOINT_FILE, cp)
+                print(f"\n[成功] 已成功添加监听频道 @{new_name}！")
+                print("[说明] 新增频道断点初始为 0，启动后将自动从起始时间进行正向历史补扫。")
+                state = get_runtime_state()
+                if state["running"]:
+                    print("[提示] 任务当前正在运行中。请在主菜单选择 [6 守护进程 -> 3 重启] 使新频道监听生效。")
+            else:
+                print("已取消添加。")
             pause_prompt()
         elif choice == "2":
+            idx_str = input(f"\n请输入要探测测试的已有频道序号 (1-{len(channels)}): ").strip()
+            try:
+                idx = int(idx_str)
+                if not (1 <= idx <= len(channels)):
+                    raise ValueError
+            except ValueError:
+                print("[错误] 无效序号。")
+                pause_prompt()
+                continue
+            target_ch = channels[idx - 1]
+            if os.path.exists(TEST_CHANNEL_SCRIPT):
+                subprocess.run([get_python_bin(), TEST_CHANNEL_SCRIPT, target_ch, "8"])
+            else:
+                print(f"[错误] 未找到探测脚本: {TEST_CHANNEL_SCRIPT}")
+            pause_prompt()
+        elif choice == "3":
             if len(channels) <= 1:
                 print("\n[错误] 当前仅剩 1 个频道，至少需保留 1 个监听频道！")
                 pause_prompt()
@@ -966,7 +1000,7 @@ def config_manage_channels(cfg: dict):
             if state["running"]:
                 print("[提示] 任务当前正在运行中。重启后新配置生效。")
             pause_prompt()
-        elif choice == "3":
+        elif choice == "4":
             idx_str = input(f"\n请输入要重设断点的频道序号 (1-{len(channels)}): ").strip()
             try:
                 idx = int(idx_str)
@@ -1390,6 +1424,22 @@ def print_main_menu():
 
 
 def main():
+    if len(sys.argv) > 1:
+        cmd = sys.argv[1].strip().lower()
+        if cmd in ("test", "probe", "check"):
+            target_ch = sys.argv[2].strip() if len(sys.argv) > 2 else "jp_ziyuan"
+            limit = 8
+            if len(sys.argv) > 3:
+                try:
+                    limit = int(sys.argv[3])
+                except ValueError:
+                    pass
+            if os.path.exists(TEST_CHANNEL_SCRIPT):
+                subprocess.run([get_python_bin(), TEST_CHANNEL_SCRIPT, target_ch, str(limit)])
+            else:
+                print(f"[错误] 未找到测试脚本: {TEST_CHANNEL_SCRIPT}")
+            sys.exit(0)
+
     while True:
         try:
             print_main_menu()
