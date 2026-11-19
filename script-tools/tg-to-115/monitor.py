@@ -206,7 +206,7 @@ def load_config(initial: bool = False):
 
 
 def reload_config_if_changed():
-    global _config_mtime, _actors_mtime, TARGET_ACTORS
+    global _config_mtime, _actors_mtime, _actors_file_used, TARGET_ACTORS
     changed = False
     try:
         # 1. 检测 config.json 变化
