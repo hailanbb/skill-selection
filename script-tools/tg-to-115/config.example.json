@@ -28,9 +28,5 @@
         "enabled": true
       }
     ]
-  },
-  "target_actors": {
-    "示例出演者A": ["示例出演者A", "Example Actor A"],
-    "示例出演者B": ["示例出演者B", "Example Actor B"]
   }
 }

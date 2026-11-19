@@ -70,11 +70,25 @@ chmod +x install.sh
         "enabled": true
       }
     ]
-  },
-  "target_actors": {
-    "示例出演者A": ["示例出演者A", "Example Actor A"]
   }
 }
+```
+
+#### 出演者白名单独立文件 (`actors.json` 或 `actors.txt`)
+
+出演者配置已与核心凭据完全分离，支持独立维护修改（修改后后台服务 2 秒内**自动热重载**生效，无需重启）：
+- **`actors.json`**（标准 JSON 映射格式）：
+  ```json
+  {
+    "三上悠亚": ["三上悠亚", "三上悠亞", "三上悠亜", "Yua Mikami"],
+    "河北彩花": ["河北彩花", "河北彩伽", "Saika Kawakita"]
+  }
+  ```
+- **`actors.txt`**（可选纯文本格式，每行一个，冒号隔开别名）：
+  ```text
+  三上悠亚: 三上悠亚, 三上悠亞, 三上悠亜, Yua Mikami
+  河北彩花: 河北彩花, 河北彩伽, Saika Kawakita
+  ```
 ```
 
 ### 3. 启动交互式管理面板

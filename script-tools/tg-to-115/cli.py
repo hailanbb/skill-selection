@@ -25,6 +25,9 @@ except ImportError:
 
 CONFIG_FILE = os.path.join(BASE_DIR, "config.json")
 CONFIG_EXAMPLE = os.path.join(BASE_DIR, "config.example.json")
+ACTORS_FILE = os.path.join(BASE_DIR, "actors.json")
+ACTORS_TXT_FILE = os.path.join(BASE_DIR, "actors.txt")
+ACTORS_EXAMPLE = os.path.join(BASE_DIR, "actors.example.json")
 MONITOR_SCRIPT = os.path.join(BASE_DIR, "monitor.py")
 DATA_DIR = os.path.join(BASE_DIR, "data")
 RECORD_DIR = os.path.join(BASE_DIR, "records")
@@ -689,10 +692,79 @@ def config_manage_merge_and_quota(cfg: dict):
     print("[成功] 配额阈值与跨云归并配置已保存！后台服务会自动热重载。")
 
 
+def load_target_actors() -> tuple:
+    if os.path.exists(ACTORS_TXT_FILE):
+        actors = {}
+        try:
+            with open(ACTORS_TXT_FILE, "r", encoding="utf-8") as f:
+                for line in f:
+                    line = line.strip()
+                    if not line or line.startswith("#"):
+                        continue
+                    if ":" in line or "：" in line:
+                        sep = ":" if ":" in line else "："
+                        parts = line.split(sep, 1)
+                        main_name = parts[0].strip()
+                        aliases = [a.strip() for a in parts[1].replace("，", ",").split(",") if a.strip()]
+                    else:
+                        main_name = line
+                        aliases = [line]
+                    if main_name:
+                        if main_name not in aliases:
+                            aliases.insert(0, main_name)
+                        actors[main_name] = aliases
+            if actors:
+                return actors, ACTORS_TXT_FILE
+        except Exception:
+            pass
+
+    if os.path.exists(ACTORS_FILE):
+        try:
+            with open(ACTORS_FILE, "r", encoding="utf-8") as f:
+                actors = json.load(f)
+            if isinstance(actors, dict) and actors:
+                return actors, ACTORS_FILE
+        except Exception:
+            pass
+
+    if os.path.exists(CONFIG_FILE):
+        try:
+            with open(CONFIG_FILE, "r", encoding="utf-8") as f:
+                cfg = json.load(f)
+            actors = cfg.get("target_actors")
+            if isinstance(actors, dict) and actors:
+                return actors, CONFIG_FILE
+        except Exception:
+            pass
+
+    if os.path.exists(ACTORS_EXAMPLE):
+        try:
+            shutil.copyfile(ACTORS_EXAMPLE, ACTORS_FILE)
+            with open(ACTORS_FILE, "r", encoding="utf-8") as f:
+                return json.load(f), ACTORS_FILE
+        except Exception:
+            pass
+
+    return {}, ACTORS_FILE
+
+
+def save_target_actors(actors: dict, target_path: str = None):
+    out_path = target_path or ACTORS_FILE
+    if out_path.endswith(".txt"):
+        with open(out_path, "w", encoding="utf-8") as f:
+            f.write("# 出演者白名单配置 (每行格式: 主名称: 别名1, 别名2, ...)\n\n")
+            for name, aliases in actors.items():
+                f.write(f"{name}: {', '.join(aliases)}\n")
+    else:
+        write_json_atomic(ACTORS_FILE, actors)
+
+
 def config_manage_actors(cfg: dict):
-    actors = cfg.setdefault("target_actors", {})
     while True:
-        print(f"\n--- 出演者白名单管理（当前共 {len(actors)} 位） ---")
+        actors, file_used = load_target_actors()
+        file_name = os.path.basename(file_used)
+        print(f"\n--- 出演者白名单管理（当前共 {len(actors)} 位，存储于: {file_name}） ---")
+        print(f"[提示] 你也可以随时用文本编辑器直接打开 {file_name} 编辑，保存后后台 2 秒内热重载！")
         print("1. 查看全部出演者")
         print("2. 新增出演者（含多别名）")
         print("3. 删除出演者")
@@ -712,8 +784,8 @@ def config_manage_actors(cfg: dict):
             if main_name not in aliases:
                 aliases.insert(0, main_name)
             actors[main_name] = aliases
-            save_config(cfg)
-            print(f"[成功] 已添加出演者 [{main_name}]（{len(aliases)} 个匹配别名）！")
+            save_target_actors(actors, file_used)
+            print(f"[成功] 已添加出演者 [{main_name}] 并保存至 {file_name}！后台服务将自动热重载。")
         elif choice == "3":
             names = list(actors.keys())
             for i, name in enumerate(names, 1):
@@ -730,8 +802,8 @@ def config_manage_actors(cfg: dict):
                 target_key = raw
             if target_key:
                 actors.pop(target_key, None)
-                save_config(cfg)
-                print(f"[成功] 已删除出演者 [{target_key}]。")
+                save_target_actors(actors, file_used)
+                print(f"[成功] 已删除出演者 [{target_key}] 并保存至 {file_name}！")
             else:
                 print("[错误] 未找到对应出演者。")
 

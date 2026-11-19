@@ -54,6 +54,10 @@ if [ ! -f "$APP_DIR/config.json" ] && [ -f "$APP_DIR/config.example.json" ]; the
     cp "$APP_DIR/config.example.json" "$APP_DIR/config.json"
     echo "[*] 已从模板生成 config.json，请通过菜单 [4 配置] 或手动编辑填入凭据。"
 fi
+if [ ! -f "$APP_DIR/actors.json" ] && [ ! -f "$APP_DIR/actors.txt" ] && [ -f "$APP_DIR/actors.example.json" ]; then
+    cp "$APP_DIR/actors.example.json" "$APP_DIR/actors.json"
+    echo "[*] 已从模板生成 actors.json 出演者白名单。"
+fi
 
 # 6. 设置可执行权限并注册全局快捷命令 tg115
 chmod +x "$APP_DIR/install.sh" "$APP_DIR/tg115.sh" "$APP_DIR/cli.py" "$APP_DIR/monitor.py" "$APP_DIR/cd2_ops.py"

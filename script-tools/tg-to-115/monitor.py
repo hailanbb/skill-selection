@@ -98,7 +98,11 @@ TARGET_ACTORS = {}
 TARGETS = []
 MERGE_CONF = {}
 QUOTA_PAUSE_PERCENT = 90
+ACTORS_FILE = os.path.join(BASE_DIR, "actors.json")
+ACTORS_TXT_FILE = os.path.join(BASE_DIR, "actors.txt")
 _config_mtime = 0.0
+_actors_mtime = 0.0
+_actors_file_used = ""
 
 cd2_client = None
 _cd2_server_connected = ""
@@ -109,18 +113,75 @@ _needs_catchup = False
 _catchup_lock = asyncio.Lock()
 
 
+def load_target_actors() -> tuple:
+    """加载出演者配置，优先 actors.txt 与 actors.json，向下兼容 config.json"""
+    # 1. 优先检查纯文本 actors.txt (每行 主名: 别名1, 别名2)
+    if os.path.exists(ACTORS_TXT_FILE):
+        actors = {}
+        try:
+            with open(ACTORS_TXT_FILE, "r", encoding="utf-8") as f:
+                for line in f:
+                    line = line.strip()
+                    if not line or line.startswith("#"):
+                        continue
+                    if ":" in line or "：" in line:
+                        sep = ":" if ":" in line else "："
+                        parts = line.split(sep, 1)
+                        main_name = parts[0].strip()
+                        alias_str = parts[1].strip()
+                        aliases = [a.strip() for a in alias_str.replace("，", ",").split(",") if a.strip()]
+                    else:
+                        main_name = line
+                        aliases = [line]
+                    if main_name:
+                        if main_name not in aliases:
+                            aliases.insert(0, main_name)
+                        actors[main_name] = aliases
+            if actors:
+                return actors, ACTORS_TXT_FILE
+        except Exception as e:
+            log(f"-> [警告] 读取 actors.txt 失败: {e}")
+
+    # 2. 检查独立的 actors.json
+    if os.path.exists(ACTORS_FILE):
+        try:
+            with open(ACTORS_FILE, "r", encoding="utf-8") as f:
+                actors = json.load(f)
+            if isinstance(actors, dict) and actors:
+                return actors, ACTORS_FILE
+        except Exception as e:
+            log(f"-> [警告] 读取 actors.json 失败: {e}")
+
+    # 3. 回退兼容 config.json 内部的 target_actors
+    if os.path.exists(CONFIG_FILE):
+        try:
+            with open(CONFIG_FILE, "r", encoding="utf-8") as f:
+                cfg = json.load(f)
+            actors = cfg.get("target_actors")
+            if isinstance(actors, dict) and actors:
+                return actors, CONFIG_FILE
+        except Exception:
+            pass
+
+    return {}, ACTORS_FILE
+
+
 def load_config(initial: bool = False):
-    global config, TG_CONF, CD2_CONF, TARGET_ACTORS, TARGETS, MERGE_CONF, QUOTA_PAUSE_PERCENT, _config_mtime
+    global config, TG_CONF, CD2_CONF, TARGET_ACTORS, TARGETS, MERGE_CONF, QUOTA_PAUSE_PERCENT
+    global _config_mtime, _actors_mtime, _actors_file_used
     if not os.path.exists(CONFIG_FILE):
         raise FileNotFoundError(f"未找到配置文件: {CONFIG_FILE}")
-    mtime = os.path.getmtime(CONFIG_FILE)
+    cfg_mtime = os.path.getmtime(CONFIG_FILE)
     with open(CONFIG_FILE, "r", encoding="utf-8") as f:
         new_cfg = json.load(f)
+
+    actors, actors_path = load_target_actors()
+    act_mtime = os.path.getmtime(actors_path) if os.path.exists(actors_path) else 0.0
 
     config = new_cfg
     TG_CONF = config.get("telegram", {})
     CD2_CONF = config.get("clouddrive2", {})
-    TARGET_ACTORS = config.get("target_actors", {})
+    TARGET_ACTORS = actors
     TARGETS = normalize_targets(config)
     MERGE_CONF = CD2_CONF.get("merge", {"enabled": True, "wait_offline_max_minutes": 120})
     try:
@@ -128,12 +189,15 @@ def load_config(initial: bool = False):
     except (TypeError, ValueError):
         QUOTA_PAUSE_PERCENT = 90
 
-    _config_mtime = mtime
+    _config_mtime = cfg_mtime
+    _actors_mtime = act_mtime
+    _actors_file_used = actors_path
 
     if not initial:
-        log(f"[配置热重载] 已加载最新配置，共 {len(TARGETS)} 个 115 目标 "
+        log(f"[配置热重载] 已加载最新配置，115 目标 {len(TARGETS)} 个 "
             f"({sum(1 for t in TARGETS if t['enabled'])} 个启用)，"
-            f"官方配额停止阈值: {QUOTA_PAUSE_PERCENT}%，跨云归并: {'开启' if MERGE_CONF.get('enabled', True) else '关闭'}")
+            f"出演者白名单共 {len(TARGET_ACTORS)} 位 (源: {os.path.basename(actors_path)})，"
+            f"官方配额停止阈值: {QUOTA_PAUSE_PERCENT}%")
         if (
             CD2_CONF.get("server") != _cd2_server_connected
             or CD2_CONF.get("api_token") != _cd2_token_connected
@@ -142,15 +206,32 @@ def load_config(initial: bool = False):
 
 
 def reload_config_if_changed():
+    global _config_mtime, _actors_mtime, TARGET_ACTORS
+    changed = False
     try:
+        # 1. 检测 config.json 变化
         if os.path.exists(CONFIG_FILE):
             mtime = os.path.getmtime(CONFIG_FILE)
             if mtime != _config_mtime:
                 load_config(initial=False)
                 return True
+
+        # 2. 检测出演者独立文件变化
+        check_path = _actors_file_used or ACTORS_FILE
+        if not os.path.exists(check_path) and os.path.exists(ACTORS_TXT_FILE):
+            check_path = ACTORS_TXT_FILE
+        if os.path.exists(check_path):
+            act_mtime = os.path.getmtime(check_path)
+            if act_mtime != _actors_mtime:
+                new_actors, used_file = load_target_actors()
+                TARGET_ACTORS = new_actors
+                _actors_mtime = act_mtime
+                _actors_file_used = used_file
+                log(f"[出演者热重载] 检测到 {os.path.basename(used_file)} 更新，已重载 {len(TARGET_ACTORS)} 位出演者白名单！")
+                changed = True
     except Exception as e:
-        log(f"[配置热重载失败] {e}")
-    return False
+        log(f"[热重载异常] {e}")
+    return changed
 
 
 def init_cd2():
