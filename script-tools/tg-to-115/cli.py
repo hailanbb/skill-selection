@@ -23,6 +23,11 @@ except ImportError:
     run_merge = None
     cd2_norm_path = None
 
+try:
+    from update_top_actors import update_actors_file
+except ImportError:
+    update_actors_file = None
+
 CONFIG_FILE = os.path.join(BASE_DIR, "config.json")
 CONFIG_EXAMPLE = os.path.join(BASE_DIR, "config.example.json")
 ACTORS_FILE = os.path.join(BASE_DIR, "actors.json")
@@ -768,6 +773,7 @@ def config_manage_actors(cfg: dict):
         print("1. 查看全部出演者")
         print("2. 新增出演者（含多别名）")
         print("3. 删除出演者")
+        print("4. 一键智能导入/更新 Top 100+ 热门女优（自动补齐中/日/繁/英多语言别名）")
         print("0. 返回上一级")
         choice = input("请选择: ").strip()
         if choice == "0":
@@ -806,6 +812,15 @@ def config_manage_actors(cfg: dict):
                 print(f"[成功] 已删除出演者 [{target_key}] 并保存至 {file_name}！")
             else:
                 print("[错误] 未找到对应出演者。")
+        elif choice == "4":
+            if update_actors_file is not None:
+                print("\n[*] 正在执行智能更新并合并最新权威榜单...")
+                res = update_actors_file(backup=True)
+                print(f"[成功] 智能更新完成！当前总收录: {res['total']} 位（本次新增: {res['added']} 位，扩充别名: {res['updated_aliases']} 个）。")
+                print(f"[*] 配置文件: {ACTORS_FILE}，后台监控引擎将在 2 秒内自动热重载生效！")
+            else:
+                print("[错误] 未找到 update_top_actors 模块。")
+            pause_prompt()
 
 
 def action_config():
