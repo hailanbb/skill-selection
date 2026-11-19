@@ -1,0 +1,18 @@
+# 私有配置与登录凭证（严禁提交）
+config.json
+*.session
+*.session-journal
+
+# 运行数据、日志与报表
+data/
+records/
+logs/
+*.torrent
+
+# 虚拟环境与自动生成的 gRPC 文件
+venv/
+__pycache__/
+*.pyc
+clouddrive.proto
+clouddrive_pb2.py
+clouddrive_pb2_grpc.py

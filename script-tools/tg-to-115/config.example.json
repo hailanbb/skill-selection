@@ -1,0 +1,33 @@
+{
+  "telegram": {
+    "api_id": 12345678,
+    "api_hash": "YOUR_TELEGRAM_API_HASH",
+    "target_channel": "your_target_channel",
+    "history_start_time": "2025-01-01 00:00:00"
+  },
+  "clouddrive2": {
+    "server": "127.0.0.1:19798",
+    "api_token": "YOUR_CLOUDDRIVE2_API_TOKEN",
+    "split_by_actor": true,
+    "targets": [
+      {
+        "name": "115-主盘",
+        "mount_path": "/115-1",
+        "save_folder": "/115-1/云下载/tg",
+        "daily_limit": 500,
+        "enabled": true
+      },
+      {
+        "name": "115-备盘",
+        "mount_path": "/115-2",
+        "save_folder": "/115-2/云下载/tg",
+        "daily_limit": 500,
+        "enabled": true
+      }
+    ]
+  },
+  "target_actors": {
+    "示例出演者A": ["示例出演者A", "Example Actor A"],
+    "示例出演者B": ["示例出演者B", "Example Actor B"]
+  }
+}

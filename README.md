@@ -16,7 +16,8 @@ skill-selection/
 │       ├── README.md           # 安装、适用范围、验证与回滚说明
 │       └── codex-quota-mode/    # Astra medium + Luna medium 全局省额度开关
 ├── script-tools/               # 通用脚本工具索引
-│   └── README.md
+│   ├── README.md
+│   └── tg-to-115/              # Telegram -> CloudDrive2 多 115 定向云下载与交互管理面板
 └── skills/                     # 技能集合目录
     ├── octopus-statement/      # 八达通详单：截图裁剪、消费提取与 Excel
     ├── task-memory-to-obsdian/ # Task Memory To Obsdian：智能全自动任务归档

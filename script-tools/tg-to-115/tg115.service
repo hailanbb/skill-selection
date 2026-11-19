@@ -1,0 +1,19 @@
+[Unit]
+Description=Telegram to 115 CloudDrive2 Auto Offline Downloader
+After=network.target
+
+[Service]
+Type=simple
+# 注意：部署时请将下面的 USERNAME 替换为你的 Ubuntu 实际用户名（例如 ubuntu 或 root）
+User=USERNAME
+WorkingDirectory=/home/USERNAME/tg_to_115
+ExecStart=/home/USERNAME/tg_to_115/venv/bin/python3 monitor.py
+Restart=always
+RestartSec=10
+
+# 保证中文日志输出不乱码
+Environment=PYTHONUNBUFFERED=1
+Environment=LANG=C.UTF-8
+
+[Install]
+WantedBy=multi-user.target
