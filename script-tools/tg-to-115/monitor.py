@@ -184,6 +184,17 @@ def get_today_str() -> str:
     return datetime.datetime.now().strftime("%Y-%m-%d")
 
 
+def format_msg_date(dt) -> str:
+    """将 Telegram 消息的 UTC datetime 转为系统本地时间字符串"""
+    if not dt:
+        return ""
+    try:
+        local_dt = dt.astimezone()
+        return local_dt.strftime("%Y-%m-%d %H:%M:%S")
+    except Exception:
+        return dt.strftime("%Y-%m-%d %H:%M:%S")
+
+
 def load_quota_status() -> dict:
     today = get_today_str()
     default_status = {"date": today, "counts": {}, "targets": {}, "updated_at": ""}
@@ -328,20 +339,21 @@ def save_hash(info_hash: str):
         f.write(f"{info_hash.lower()}\n")
 
 
-def append_daily_record(account_name: str, actor: str, title: str, save_path: str, magnet_link: str):
+def append_daily_record(account_name: str, actor: str, title: str, save_path: str, magnet_link: str, post_time: str = ""):
     today = get_today_str()
     record_file = os.path.join(RECORD_DIR, f"{today}.md")
     time_str = datetime.datetime.now().strftime("%H:%M:%S")
+    clean_post_time = post_time or "-"
 
     if not os.path.exists(record_file):
         with open(record_file, "w", encoding="utf-8") as f:
             f.write(f"# 115 云下载记录 - {today}\n\n")
-            f.write("| 时间 | 115账号 | 出演者 | 资源标题 | 目标目录 | 磁力链接 |\n")
-            f.write("| :--- | :--- | :--- | :--- | :--- | :--- |\n")
+            f.write("| 下载时间 | 消息发布时间 | 115账号 | 出演者 | 资源标题 | 目标目录 | 磁力链接 |\n")
+            f.write("| :--- | :--- | :--- | :--- | :--- | :--- | :--- |\n")
 
     clean_title = (title or "unknown").replace("\n", " ").replace("|", "-")[:50]
     with open(record_file, "a", encoding="utf-8") as f:
-        f.write(f"| {time_str} | {account_name} | {actor} | {clean_title} | `{save_path}` | [Magnet]({magnet_link}) |\n")
+        f.write(f"| {time_str} | {clean_post_time} | {account_name} | {actor} | {clean_title} | `{save_path}` | [Magnet]({magnet_link}) |\n")
 
 
 def load_checkpoint() -> dict:
@@ -535,7 +547,7 @@ def push_to_single_target(magnet_link: str, target: dict, primary_actor: str):
     return "FAILED", "", err_msg
 
 
-async def execute_push(actors: list, magnet_link: str, info_hash: str, torrent_name: str, is_history: bool = False):
+async def execute_push(actors: list, magnet_link: str, info_hash: str, torrent_name: str, post_time: str = "", is_history: bool = False):
     """去重 -> 顺序选择有配额的 115 账号 -> 推送 -> 达到限额自动切换下一个账号"""
     reload_config_if_changed()
 
@@ -559,7 +571,7 @@ async def execute_push(actors: list, magnet_link: str, info_hash: str, torrent_n
             q_mode = "官方" if q_info["official"] else "本地"
             log(
                 f"-> [{label}][115 推送成功!] 账号: {target['name']} ({q_mode}已用: {q_info['percent']}%) | "
-                f"演员: {', '.join(actors)} | 目录: {actual_folder} | 种子: {torrent_name}"
+                f"发布时间: {post_time or '-'} | 演员: {', '.join(actors)} | 目录: {actual_folder} | 种子: {torrent_name}"
             )
 
             # 推送后更新配额状态，若该账号用尽且存在下一个账号，提示轮转
@@ -581,6 +593,7 @@ async def execute_push(actors: list, magnet_link: str, info_hash: str, torrent_n
                 torrent_name or "unknown",
                 actual_folder,
                 magnet_link,
+                post_time=post_time,
             )
             return True
 
@@ -612,6 +625,7 @@ async def handler_new_message(event):
         return
 
     msg = event.message
+    post_time_str = format_msg_date(msg.date)
     text_content = msg.text or msg.message or ""
     matched = match_actors(text_content)
 
@@ -627,7 +641,9 @@ async def handler_new_message(event):
             if msg.id - recent_actor_context["msg_id"] <= 3:
                 target_actors = recent_actor_context["actors"]
         if target_actors:
-            res = await execute_push(target_actors, magnet_link, info_hash, torrent_name, is_history=False)
+            # 资源发布时间：严格取下载资源对应消息（含种子/磁链的本条消息）的发布时间
+            resource_post_time = format_msg_date(msg.date)
+            res = await execute_push(target_actors, magnet_link, info_hash, torrent_name, post_time=resource_post_time, is_history=False)
             if res == "QUOTA_REACHED":
                 log(f"[配额熔断] 所有 115 账号配额均已满，实时新资源 [{torrent_name}] 已暂缓（断点保留，待配额恢复后自动补推）。")
                 _needs_catchup = True
@@ -706,8 +722,10 @@ async def catchup_and_scan_messages():
                             if msg.id - pending_actor_msg_id <= 3:
                                 active_actors = pending_actor
                         if active_actors:
+                            # 资源发布时间：严格取下载资源对应消息（含种子/磁链的本条消息）的发布时间
+                            resource_post_time = format_msg_date(msg.date)
                             res = await execute_push(
-                                active_actors, magnet_link, info_hash, torrent_name, is_history=True
+                                active_actors, magnet_link, info_hash, torrent_name, post_time=resource_post_time, is_history=True
                             )
                             if res == "QUOTA_REACHED":
                                 quota_hit = True

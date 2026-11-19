@@ -875,7 +875,7 @@ def print_live_dashboard():
     record_file = os.path.join(RECORD_DIR, f"{today}.md")
     if os.path.exists(record_file):
         with open(record_file, "r", encoding="utf-8", errors="ignore") as f:
-            rows = [line.strip() for line in f if line.startswith("| ") and not line.startswith("| 时间") and not line.startswith("| :---")]
+            rows = [line.strip() for line in f if line.startswith("| ") and not line.startswith("| 时间") and not line.startswith("| 下载时间") and not line.startswith("| :---")]
         print(f"  今日已归档记录 ({len(rows)} 条)，最近 5 条：")
         for row in rows[-5:]:
             print(f"    {row[:98]}")
