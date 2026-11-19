@@ -11,6 +11,7 @@ import signal
 import getpass
 import datetime
 import subprocess
+import re
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 if BASE_DIR not in sys.path:
@@ -157,6 +158,27 @@ def save_config(cfg: dict):
     cfg.get("clouddrive2", {}).pop("base_folder", None)
     cfg.pop("limits", None)
     write_json_atomic(CONFIG_FILE, cfg)
+
+
+def get_configured_channels(cfg: dict = None) -> list:
+    """获取所有配置的目标频道列表，兼容 target_channel (str/list), target_channels (list), 逗号/空格分隔"""
+    if cfg is None:
+        cfg = load_config()
+    tg = cfg.get("telegram", {})
+    raw = tg.get("target_channels") or tg.get("target_channel") or "jp_ziyuan"
+    if isinstance(raw, str):
+        parts = [p.strip().lstrip("@") for p in re.split(r"[,;\s]+", raw) if p.strip()]
+    elif isinstance(raw, (list, tuple)):
+        parts = [str(p).strip().lstrip("@") for p in raw if str(p).strip()]
+    else:
+        parts = ["jp_ziyuan"]
+    seen = set()
+    result = []
+    for p in parts:
+        if p and p not in seen:
+            seen.add(p)
+            result.append(p)
+    return result or ["jp_ziyuan"]
 
 
 # ==================== 进程与 Systemd 状态检测 ====================
@@ -848,11 +870,19 @@ def config_reset_history_checkpoint(cfg: dict):
     save_config(cfg)
 
     # 2. 安全重置 checkpoint
-    write_json_atomic(CHECKPOINT_FILE, {
-        "last_scanned_id": 0,
-        "reset_at": datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-        "note": f"Reset to scan from {new_start} for new actors",
-    })
+    cp = load_checkpoint()
+    channels_dict = cp.get("channels", {})
+    now_str = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    for ch in channels_dict:
+        channels_dict[ch] = {
+            "last_scanned_id": 0,
+            "updated_at": now_str,
+        }
+    cp["channels"] = channels_dict
+    cp["last_scanned_id"] = 0
+    cp["reset_at"] = now_str
+    cp["note"] = f"Reset to scan from {new_start} for new actors"
+    write_json_atomic(CHECKPOINT_FILE, cp)
 
     state = get_runtime_state()
     print(f"\n[成功] 断点已成功重置！起始时间: {new_start}")
@@ -860,6 +890,108 @@ def config_reset_history_checkpoint(cfg: dict):
         print("[提示] 任务当前正在运行中。请选择主菜单 [3 停止] 然后 [1 启动]，立即启动全新回溯补扫！")
     else:
         print("[提示] 随时选择主菜单 [1 启动] 即可开始历史补扫。")
+
+
+def config_manage_channels(cfg: dict):
+    while True:
+        channels = get_configured_channels(cfg)
+        cp = load_checkpoint()
+        channels_cp = cp.get("channels", {})
+        print("\n" + "=" * 62)
+        print("                Telegram 监听频道管理")
+        print("=" * 62)
+        print(f"当前共监听 {len(channels)} 个 Telegram 频道：\n")
+        print(f"  {'序号':<4} {'频道名称':<22} {'当前断点 ID':<14} {'最近更新时间'}")
+        print("  " + "-" * 58)
+        for idx, ch in enumerate(channels, 1):
+            ch_data = channels_cp.get(ch, {})
+            last_id = ch_data.get("last_scanned_id", cp.get("last_scanned_id", 0) if idx == 1 else 0)
+            up_time = ch_data.get("updated_at", "未开始")
+            print(f"  {idx:<4} @{ch:<21} {last_id:<14} {up_time}")
+        print("-" * 62)
+        print("  1. 添加新监听频道")
+        print("  2. 删除监听频道")
+        print("  3. 重设单个频道历史断点（独立回溯补扫，不影响其它频道）")
+        print("  0. 返回配置管理中心")
+        print("=" * 62)
+        choice = input("请选择: ").strip()
+        if choice == "0":
+            return
+        elif choice == "1":
+            new_name = input("\n请输入要监听的 Telegram 频道用户名 (如 new_channel 或 @new_channel): ").strip().lstrip("@")
+            if not new_name:
+                print("[提示] 频道名称不能为空。")
+                pause_prompt()
+                continue
+            if new_name in channels:
+                print(f"[提示] 频道 @{new_name} 已经在监听列表中，无需重复添加。")
+                pause_prompt()
+                continue
+            channels.append(new_name)
+            cfg.setdefault("telegram", {})["target_channels"] = channels
+            cfg["telegram"]["target_channel"] = channels[0]
+            save_config(cfg)
+            channels_cp[new_name] = {
+                "last_scanned_id": 0,
+                "updated_at": datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+            }
+            cp["channels"] = channels_cp
+            write_json_atomic(CHECKPOINT_FILE, cp)
+            print(f"\n[成功] 已成功添加监听频道 @{new_name}！")
+            print("[说明] 新增频道断点初始为 0，启动后将自动从起始时间进行正向历史补扫。")
+            state = get_runtime_state()
+            if state["running"]:
+                print("[提示] 任务当前正在运行中。请在主菜单选择 [6 守护进程 -> 3 重启] 使新频道监听生效。")
+            pause_prompt()
+        elif choice == "2":
+            if len(channels) <= 1:
+                print("\n[错误] 当前仅剩 1 个频道，至少需保留 1 个监听频道！")
+                pause_prompt()
+                continue
+            idx_str = input(f"\n请输入要删除的频道序号 (1-{len(channels)}): ").strip()
+            try:
+                idx = int(idx_str)
+                if not (1 <= idx <= len(channels)):
+                    raise ValueError
+            except ValueError:
+                print("[错误] 无效序号。")
+                pause_prompt()
+                continue
+            removed = channels.pop(idx - 1)
+            cfg.setdefault("telegram", {})["target_channels"] = channels
+            cfg["telegram"]["target_channel"] = channels[0]
+            save_config(cfg)
+            print(f"\n[成功] 已从监听列表中移除频道 @{removed}。")
+            state = get_runtime_state()
+            if state["running"]:
+                print("[提示] 任务当前正在运行中。重启后新配置生效。")
+            pause_prompt()
+        elif choice == "3":
+            idx_str = input(f"\n请输入要重设断点的频道序号 (1-{len(channels)}): ").strip()
+            try:
+                idx = int(idx_str)
+                if not (1 <= idx <= len(channels)):
+                    raise ValueError
+            except ValueError:
+                print("[错误] 无效序号。")
+                pause_prompt()
+                continue
+            target_ch = channels[idx - 1]
+            confirm = input(f"确认将频道 @{target_ch} 的断点重置为 0（已下载记录仍将去重不重复下载）？(y/N): ").strip().lower()
+            if confirm in ("y", "yes"):
+                channels_cp[target_ch] = {
+                    "last_scanned_id": 0,
+                    "updated_at": datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+                }
+                cp["channels"] = channels_cp
+                if target_ch == channels[0]:
+                    cp["last_scanned_id"] = 0
+                write_json_atomic(CHECKPOINT_FILE, cp)
+                print(f"\n[成功] 频道 @{target_ch} 的断点已重置为 0！")
+                print("下次扫描时将仅对该频道从起点正向补扫，不影响其它频道的现有进度。")
+            else:
+                print("已取消重设。")
+            pause_prompt()
 
 
 def action_config():
@@ -878,6 +1010,7 @@ def action_config():
         print("  6. 管理官方配额停止阈值与跨云归并设置")
         print("  7. 管理出演者白名单")
         print("  8. 重设历史回溯起点（补扫新增女优，保留已下载去重）")
+        print("  9. 管理监听 Telegram 频道（查看 / 新增 / 删除 / 独立重设断点）")
         print("  0. 返回主菜单")
         print("=" * 62)
         choice = input("请输入数字选项: ").strip()
@@ -900,6 +1033,8 @@ def action_config():
         elif choice == "8":
             config_reset_history_checkpoint(cfg)
             pause_prompt()
+        elif choice == "9":
+            config_manage_channels(cfg)
         else:
             print("[提示] 无效选项，请重新输入。")
 
@@ -1220,13 +1355,28 @@ def print_main_menu():
 
     quota_str = " | ".join(quota_parts) if quota_parts else "未配置启用目标"
 
+    chans = get_configured_channels(cfg)
+    chans_str = ", ".join(f"@{c}" for c in chans)
+
+    channels_cp = cp.get("channels", {})
+    if len(chans) > 1 or channels_cp:
+        cp_parts = []
+        for ch in chans:
+            ch_data = channels_cp.get(ch, {})
+            ch_id = ch_data.get("last_scanned_id", cp.get("last_scanned_id", 0) if ch == chans[0] else 0)
+            cp_parts.append(f"@{ch}: ID {ch_id}")
+        cp_str = " | ".join(cp_parts)
+    else:
+        cp_str = f"消息 ID {cp.get('last_scanned_id', 0)}"
+
     print("\n" + "=" * 64)
     print("       TG -> 115 智能云下载管理面板 (Ubuntu CLI)")
     print("=" * 64)
     print(f"  当前状态 : {status_str}")
     print(f"  守护进程 : {'已开启' if state['systemd_enabled'] else '未开启'}")
+    print(f"  监听频道 : {chans_str}")
     print(f"  今日配额 : {quota_str} ({today})")
-    print(f"  最新断点 : 消息 ID {cp.get('last_scanned_id', 0)}")
+    print(f"  最新断点 : {cp_str}")
     print("-" * 64)
     print("  1. 启动（启动或恢复任务）")
     print("  2. 暂停（挂起推送，保留断点）")

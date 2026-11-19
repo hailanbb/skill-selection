@@ -3,6 +3,9 @@
     "api_id": 12345678,
     "api_hash": "YOUR_TELEGRAM_API_HASH",
     "target_channel": "your_target_channel",
+    "target_channels": [
+      "your_target_channel"
+    ],
     "history_start_time": "2025-01-01 00:00:00"
   },
   "clouddrive2": {

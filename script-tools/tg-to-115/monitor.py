@@ -48,6 +48,24 @@ def write_json_atomic(path: str, data: dict):
     os.replace(tmp_path, path)
 
 
+def get_configured_channels() -> list:
+    """获取所有配置的目标频道列表，兼容 target_channel (str/list), target_channels (list), 逗号/空格分隔"""
+    raw = TG_CONF.get("target_channels") or TG_CONF.get("target_channel") or "jp_ziyuan"
+    if isinstance(raw, str):
+        parts = [p.strip().lstrip("@") for p in re.split(r"[,;\s]+", raw) if p.strip()]
+    elif isinstance(raw, (list, tuple)):
+        parts = [str(p).strip().lstrip("@") for p in raw if str(p).strip()]
+    else:
+        parts = ["jp_ziyuan"]
+    seen = set()
+    result = []
+    for p in parts:
+        if p and p not in seen:
+            seen.add(p)
+            result.append(p)
+    return result or ["jp_ziyuan"]
+
+
 def normalize_targets(cfg: dict) -> list:
     """兼容多 targets 结构，全面以官方配额自动感知驱动"""
     cd2 = cfg.get("clouddrive2", {})
@@ -109,6 +127,16 @@ _cd2_server_connected = ""
 _cd2_token_connected = ""
 
 recent_actor_context = {"actors": [], "msg_id": 0}
+recent_actor_contexts = {}  # channel -> {"actors": list, "msg_id": int}
+
+
+def get_channel_actor_ctx(ch: str) -> dict:
+    ch = (ch or "default").strip().lstrip("@")
+    if ch not in recent_actor_contexts:
+        recent_actor_contexts[ch] = {"actors": [], "msg_id": 0}
+    return recent_actor_contexts[ch]
+
+
 _needs_catchup = False
 _catchup_lock = asyncio.Lock()
 
@@ -415,43 +443,84 @@ def save_hash(info_hash: str):
         f.write(f"{info_hash.lower()}\n")
 
 
-def append_daily_record(account_name: str, actor: str, title: str, save_path: str, magnet_link: str, post_time: str = ""):
+def append_daily_record(account_name: str, actor: str, title: str, save_path: str, magnet_link: str, post_time: str = "", channel: str = ""):
     today = get_today_str()
     record_file = os.path.join(RECORD_DIR, f"{today}.md")
     time_str = datetime.datetime.now().strftime("%H:%M:%S")
     clean_post_time = post_time or "-"
+    clean_ch = f"@{channel.lstrip('@')}" if channel else "-"
 
     if not os.path.exists(record_file):
         with open(record_file, "w", encoding="utf-8") as f:
             f.write(f"# 115 云下载记录 - {today}\n\n")
-            f.write("| 下载时间 | 消息发布时间 | 115账号 | 出演者 | 资源标题 | 目标目录 | 磁力链接 |\n")
-            f.write("| :--- | :--- | :--- | :--- | :--- | :--- | :--- |\n")
+            f.write("| 下载时间 | 消息发布时间 | 来源频道 | 115账号 | 出演者 | 资源标题 | 目标目录 | 磁力链接 |\n")
+            f.write("| :--- | :--- | :--- | :--- | :--- | :--- | :--- | :--- |\n")
+
+    has_ch_header = True
+    try:
+        with open(record_file, "r", encoding="utf-8") as f:
+            head_lines = [f.readline() for _ in range(5)]
+            has_ch_header = any("来源频道" in line for line in head_lines)
+    except Exception:
+        pass
 
     clean_title = (title or "unknown").replace("\n", " ").replace("|", "-")[:50]
     with open(record_file, "a", encoding="utf-8") as f:
-        f.write(f"| {time_str} | {clean_post_time} | {account_name} | {actor} | {clean_title} | `{save_path}` | [Magnet]({magnet_link}) |\n")
+        if has_ch_header:
+            f.write(f"| {time_str} | {clean_post_time} | {clean_ch} | {account_name} | {actor} | {clean_title} | `{save_path}` | [Magnet]({magnet_link}) |\n")
+        else:
+            f.write(f"| {time_str} | {clean_post_time} | {account_name} | {actor} | {clean_title} | `{save_path}` | [Magnet]({magnet_link}) |\n")
 
 
 def load_checkpoint() -> dict:
     if os.path.exists(CHECKPOINT_FILE):
         try:
             with open(CHECKPOINT_FILE, "r", encoding="utf-8") as f:
-                return json.load(f)
+                data = json.load(f)
+                if isinstance(data, dict):
+                    return data
         except Exception:
             pass
-    return {"last_scanned_id": 0}
+    return {"last_scanned_id": 0, "channels": {}}
 
 
-def save_checkpoint(last_id: int):
+def get_channel_checkpoint(channel: str = "") -> int:
+    channel = (channel or "").strip().lstrip("@")
+    cp = load_checkpoint()
+    channels_dict = cp.get("channels", {})
+    if channel and channel in channels_dict:
+        ch_data = channels_dict[channel]
+        if isinstance(ch_data, dict):
+            return int(ch_data.get("last_scanned_id", 0))
+        elif isinstance(ch_data, (int, float)):
+            return int(ch_data)
+    configured = get_configured_channels()
+    if not channel or (configured and channel == configured[0]):
+        return int(cp.get("last_scanned_id", 0))
+    return 0
+
+
+def save_checkpoint(last_id: int, channel: str = ""):
     if last_id < 0:
         last_id = 0
-    write_json_atomic(
-        CHECKPOINT_FILE,
-        {
-            "last_scanned_id": last_id,
-            "updated_at": datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-        },
-    )
+    cp = load_checkpoint()
+    channels_dict = cp.setdefault("channels", {})
+    now_str = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+
+    configured = get_configured_channels()
+    ch_key = (channel or (configured[0] if configured else "jp_ziyuan")).strip().lstrip("@")
+
+    channels_dict[ch_key] = {
+        "last_scanned_id": last_id,
+        "updated_at": now_str,
+    }
+    if configured and ch_key == configured[0]:
+        cp["last_scanned_id"] = last_id
+    elif "last_scanned_id" not in cp:
+        cp["last_scanned_id"] = last_id
+    cp["updated_at"] = now_str
+
+    write_json_atomic(CHECKPOINT_FILE, cp)
 
 
 def is_paused() -> bool:
@@ -623,7 +692,7 @@ def push_to_single_target(magnet_link: str, target: dict, primary_actor: str):
     return "FAILED", "", err_msg
 
 
-async def execute_push(actors: list, magnet_link: str, info_hash: str, torrent_name: str, post_time: str = "", is_history: bool = False):
+async def execute_push(actors: list, magnet_link: str, info_hash: str, torrent_name: str, post_time: str = "", is_history: bool = False, channel: str = ""):
     """去重 -> 顺序选择有配额的 115 账号 -> 推送 -> 达到限额自动切换下一个账号"""
     reload_config_if_changed()
 
@@ -639,6 +708,7 @@ async def execute_push(actors: list, magnet_link: str, info_hash: str, torrent_n
 
     primary_actor = actors[0]
     label = "离线补课" if is_history else "实时新帖"
+    ch_tag = f"[@{channel}]" if channel else ""
 
     for idx, (target, q_info) in enumerate(available):
         status, actual_folder, err_msg = push_to_single_target(magnet_link, target, primary_actor)
@@ -646,7 +716,7 @@ async def execute_push(actors: list, magnet_link: str, info_hash: str, torrent_n
             increment_local_target_count(target)
             q_mode = "官方" if q_info["official"] else "本地"
             log(
-                f"-> [{label}][115 推送成功!] 账号: {target['name']} ({q_mode}已用: {q_info['percent']}%) | "
+                f"-> {ch_tag}[{label}][115 推送成功!] 账号: {target['name']} ({q_mode}已用: {q_info['percent']}%) | "
                 f"发布时间: {post_time or '-'} | 演员: {', '.join(actors)} | 目录: {actual_folder} | 种子: {torrent_name}"
             )
 
@@ -670,6 +740,7 @@ async def execute_push(actors: list, magnet_link: str, info_hash: str, torrent_n
                 actual_folder,
                 magnet_link,
                 post_time=post_time,
+                channel=channel,
             )
             return True
 
@@ -701,73 +772,95 @@ async def handler_new_message(event):
         return
 
     msg = event.message
+    channel_key = ""
+    try:
+        chat = await event.get_chat()
+        channel_key = getattr(chat, 'username', '') or str(getattr(chat, 'id', ''))
+    except Exception:
+        pass
+    if not channel_key:
+        configured = get_configured_channels()
+        channel_key = configured[0] if configured else "jp_ziyuan"
+    channel_key = channel_key.lstrip("@")
+    ctx = get_channel_actor_ctx(channel_key)
+
     post_time_str = format_msg_date(msg.date)
     text_content = msg.text or msg.message or ""
     matched = match_actors(text_content)
 
     if matched:
+        ctx["actors"] = matched
+        ctx["msg_id"] = msg.id
         recent_actor_context["actors"] = matched
         recent_actor_context["msg_id"] = msg.id
-        log(f"[实时新帖] 命中出演者: {', '.join(matched)} (消息 ID: {msg.id})")
+        log(f"[@{channel_key} 实时新帖] 命中出演者: {', '.join(matched)} (消息 ID: {msg.id})")
 
     magnet_link, info_hash, torrent_name = await extract_torrent_info(msg)
     if magnet_link:
         target_actors = matched
-        if not target_actors and recent_actor_context["actors"]:
-            if msg.id - recent_actor_context["msg_id"] <= 3:
-                target_actors = recent_actor_context["actors"]
+        if not target_actors and ctx["actors"]:
+            if msg.id - ctx["msg_id"] <= 3:
+                target_actors = ctx["actors"]
         if target_actors:
-            # 资源发布时间：严格取下载资源对应消息（含种子/磁链的本条消息）的发布时间
             resource_post_time = format_msg_date(msg.date)
-            res = await execute_push(target_actors, magnet_link, info_hash, torrent_name, post_time=resource_post_time, is_history=False)
+            res = await execute_push(
+                target_actors,
+                magnet_link,
+                info_hash,
+                torrent_name,
+                post_time=resource_post_time,
+                is_history=False,
+                channel=channel_key,
+            )
             if res == "QUOTA_REACHED":
                 log(f"[配额熔断] 所有 115 账号配额均已满，实时新资源 [{torrent_name}] 已暂缓（断点保留，待配额恢复后自动补推）。")
                 _needs_catchup = True
-                rollback_id = min(msg.id, recent_actor_context["msg_id"] or msg.id) - 1
-                cur_cp = load_checkpoint().get("last_scanned_id", 0)
+                rollback_id = min(msg.id, ctx["msg_id"] or msg.id) - 1
+                cur_cp = get_channel_checkpoint(channel_key)
                 if rollback_id > cur_cp:
-                    save_checkpoint(rollback_id)
-                # 触发归并与休眠
+                    save_checkpoint(rollback_id, channel=channel_key)
                 await wait_until_quota_available()
                 return
 
     if not _needs_catchup:
-        save_checkpoint(msg.id)
+        save_checkpoint(msg.id, channel=channel_key)
 
 
 async def catchup_and_scan_messages():
-    """断点续传与历史追赶引擎（支持官方配额轮转、满额自动归并、跨天自动唤醒）"""
+    """断点续传与历史追赶引擎（支持多频道独立断点、官方配额轮转、满额自动归并、跨天自动唤醒）"""
     global _needs_catchup
     async with _catchup_lock:
         reload_config_if_changed()
-        channel_name = TG_CONF["target_channel"]
-        try:
-            entity = await client.get_entity(channel_name)
-        except Exception as e:
-            log(f"[错误] 无法获取频道 @{channel_name}: {e}")
-            return
+        channels = get_configured_channels()
+        log(f"[断点追赶] 开始检查 {len(channels)} 个频道: {', '.join('@' + c for c in channels)}")
 
         start_time_str = TG_CONF.get("history_start_time", "2025-01-01 00:00:00")
-        start_dt = datetime.datetime.strptime(start_time_str, "%Y-%m-%d %H:%M:%S").replace(
-            tzinfo=datetime.timezone.utc
-        )
+        try:
+            start_dt = datetime.datetime.strptime(start_time_str, "%Y-%m-%d %H:%M:%S").replace(
+                tzinfo=datetime.timezone.utc
+            )
+        except Exception:
+            start_dt = datetime.datetime(2025, 1, 1, tzinfo=datetime.timezone.utc)
 
-        while True:
-            await wait_if_paused("历史补扫")
+        for channel_name in channels:
+            await wait_if_paused(f"频道 @{channel_name} 补扫")
             reload_config_if_changed()
 
             if not get_available_targets():
                 await wait_until_quota_available()
+
+            try:
+                entity = await client.get_entity(channel_name)
+            except Exception as e:
+                log(f"[警告] 无法获取频道 @{channel_name}: {e}，跳过此频道。")
                 continue
 
-            checkpoint = load_checkpoint()
-            last_id = checkpoint.get("last_scanned_id", 0)
-
+            last_id = get_channel_checkpoint(channel_name)
             if last_id > 0:
-                log(f"[断点续传] 从消息断点 ID: {last_id} 之后开始补扫漏掉的消息...")
+                log(f"[@{channel_name} 断点续传] 从消息断点 ID: {last_id} 之后开始补扫...")
                 msg_iterator = client.iter_messages(entity, min_id=last_id, reverse=True)
             else:
-                log(f"[首次扫描] 未检测到断点，从 {start_dt} 开始正向扫描...")
+                log(f"[@{channel_name} 首次扫描] 从 {start_dt} 开始正向扫描...")
                 msg_iterator = client.iter_messages(entity, offset_date=start_dt, reverse=True)
 
             scanned_count = 0
@@ -780,8 +873,8 @@ async def catchup_and_scan_messages():
             try:
                 async for msg in msg_iterator:
                     if is_paused():
-                        save_checkpoint(safe_checkpoint_id)
-                        await wait_if_paused("历史补扫")
+                        save_checkpoint(safe_checkpoint_id, channel=channel_name)
+                        await wait_if_paused(f"频道 @{channel_name} 补扫")
 
                     has_new_messages = True
                     text_content = msg.text or msg.message or ""
@@ -798,16 +891,21 @@ async def catchup_and_scan_messages():
                             if msg.id - pending_actor_msg_id <= 3:
                                 active_actors = pending_actor
                         if active_actors:
-                            # 资源发布时间：严格取下载资源对应消息（含种子/磁链的本条消息）的发布时间
                             resource_post_time = format_msg_date(msg.date)
                             res = await execute_push(
-                                active_actors, magnet_link, info_hash, torrent_name, post_time=resource_post_time, is_history=True
+                                active_actors,
+                                magnet_link,
+                                info_hash,
+                                torrent_name,
+                                post_time=resource_post_time,
+                                is_history=True,
+                                channel=channel_name,
                             )
                             if res == "QUOTA_REACHED":
                                 quota_hit = True
                                 pair_start = pending_actor_msg_id if (pending_actor and msg.id - pending_actor_msg_id <= 3) else msg.id
                                 rollback_id = max(last_id, pair_start - 1)
-                                save_checkpoint(rollback_id)
+                                save_checkpoint(rollback_id, channel=channel_name)
                                 break
                             pending_actor = []
                             pending_actor_msg_id = 0
@@ -817,33 +915,32 @@ async def catchup_and_scan_messages():
 
                     scanned_count += 1
                     if scanned_count % 20 == 0:
-                        save_checkpoint(safe_checkpoint_id)
+                        save_checkpoint(safe_checkpoint_id, channel=channel_name)
                     if scanned_count % 15 == 0:
                         await asyncio.sleep(0.3)
 
                 if quota_hit:
                     await wait_until_quota_available()
-                    continue
+                    return
 
                 if has_new_messages:
-                    save_checkpoint(max(safe_checkpoint_id, msg.id))
-                    log(f"[扫描完成] 已追齐 {scanned_count} 条消息，当前与频道最新动态完全同步！")
+                    save_checkpoint(max(safe_checkpoint_id, msg.id), channel=channel_name)
+                    log(f"[@{channel_name} 扫描完成] 已追齐 {scanned_count} 条消息！")
                 else:
-                    log("[扫描完成] 检查完毕，当前已处于最新状态！")
-                _needs_catchup = False
-                break
+                    log(f"[@{channel_name} 扫描完成] 当前已处于最新状态！")
 
             except FloodWaitError as e:
-                save_checkpoint(safe_checkpoint_id)
+                save_checkpoint(safe_checkpoint_id, channel=channel_name)
                 log(f"[TG 限流] 需等待 {e.seconds} 秒，已保存断点，稍后自动续扫。")
                 await asyncio.sleep(e.seconds + 2)
             except asyncio.CancelledError:
-                save_checkpoint(safe_checkpoint_id)
+                save_checkpoint(safe_checkpoint_id, channel=channel_name)
                 raise
             except Exception as e:
-                save_checkpoint(safe_checkpoint_id)
-                log(f"[扫描异常] {type(e).__name__}: {e}")
-                break
+                save_checkpoint(safe_checkpoint_id, channel=channel_name)
+                log(f"[@{channel_name} 扫描异常] {type(e).__name__}: {e}")
+
+        _needs_catchup = False
 
 
 async def state_watcher():
@@ -882,13 +979,25 @@ async def main():
     init_cd2()
 
     client = TelegramClient(SESSION_PATH, TG_CONF["api_id"], TG_CONF["api_hash"])
-    client.add_event_handler(
-        handler_new_message,
-        events.NewMessage(chats=[TG_CONF["target_channel"]]),
-    )
-
     await client.start()
     log("[Telegram] 登录认证成功！")
+
+    channels = get_configured_channels()
+    log(f"[Telegram] 正在连接频道并准备监听: {', '.join('@' + c for c in channels)}...")
+    channel_entities = []
+    for ch in channels:
+        try:
+            ent = await client.get_entity(ch)
+            channel_entities.append(ent)
+            log(f"[Telegram] 成功连接频道: @{ch}")
+        except Exception as e:
+            log(f"[警告] 无法直接解析频道 @{ch}: {e}，将尝试以原始名称监听。")
+            channel_entities.append(ch)
+
+    client.add_event_handler(
+        handler_new_message,
+        events.NewMessage(chats=channel_entities),
+    )
 
     loop = asyncio.get_running_loop()
     main_task = asyncio.current_task()
@@ -913,7 +1022,7 @@ async def main():
 
                 # 每次连接或重连后，自动补扫期间遗漏的消息
                 await catchup_and_scan_messages()
-                log(f"[实时监控中] 正在持续监听 @{TG_CONF['target_channel']} 的最新资源...")
+                log(f"[实时监控中] 正在持续监听 {len(channels)} 个频道 ({', '.join('@' + c for c in channels)}) 的最新资源...")
 
                 await client.run_until_disconnected()
                 log("[Telegram] 长连接已断开，3 秒后自动重连...")
@@ -926,7 +1035,7 @@ async def main():
                 await asyncio.sleep(5)
     except (asyncio.CancelledError, KeyboardInterrupt):
         cp = load_checkpoint()
-        log(f"[安全退出] 任务已停止，当前断点消息 ID: {cp.get('last_scanned_id', 0)} 已保存，下次启动将从此处无缝继续。")
+        log(f"[安全退出] 任务已停止，各频道断点已安全保存，下次启动将无缝继续。")
     finally:
         watcher_task.cancel()
         try:
