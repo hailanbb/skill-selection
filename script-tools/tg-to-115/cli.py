@@ -1235,6 +1235,7 @@ def print_main_menu():
     print("  5. 实时任务查看（配额进度 / 实时日志 / 今日记录 / 手动归并）")
     print("  6. 守护进程（开启和关闭 systemd 开机自启）")
     print("  7. 退出")
+    print("  (快捷直达: 输入 m 立即手动触发 [副盘全部移动到主盘] 归并任务)")
     print("=" * 64)
 
 
@@ -1242,7 +1243,7 @@ def main():
     while True:
         try:
             print_main_menu()
-            choice = input("请输入数字选项 (1-7): ").strip()
+            choice = input("请输入数字选项 (1-7，或输入 m 执行归并): ").strip().lower()
             if choice == "1":
                 action_start()
             elif choice == "2":
@@ -1255,6 +1256,8 @@ def main():
                 action_live_view()
             elif choice == "6":
                 action_daemon()
+            elif choice in ("m", "merge"):
+                action_manual_merge()
             elif choice == "7":
                 state = get_runtime_state()
                 if state["running"]:
@@ -1263,7 +1266,7 @@ def main():
                     print("\n[再见] 已退出管理面板。")
                 sys.exit(0)
             else:
-                print("[提示] 请输入 1~7 之间的数字。")
+                print("[提示] 请输入 1~7 之间的数字，或输入 m 触发跨云归并。")
         except KeyboardInterrupt:
             print("\n[提示] 检测到 Ctrl+C，请选择 7 退出面板。")
 
