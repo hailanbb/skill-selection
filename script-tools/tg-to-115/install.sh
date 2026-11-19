@@ -56,7 +56,7 @@ if [ ! -f "$APP_DIR/config.json" ] && [ -f "$APP_DIR/config.example.json" ]; the
 fi
 
 # 6. 设置可执行权限并注册全局快捷命令 tg115
-chmod +x "$APP_DIR/install.sh" "$APP_DIR/tg115.sh" "$APP_DIR/cli.py" "$APP_DIR/monitor.py"
+chmod +x "$APP_DIR/install.sh" "$APP_DIR/tg115.sh" "$APP_DIR/cli.py" "$APP_DIR/monitor.py" "$APP_DIR/cd2_ops.py"
 
 if [ "$(id -u)" -eq 0 ]; then
     ln -sf "$APP_DIR/tg115.sh" /usr/local/bin/tg115

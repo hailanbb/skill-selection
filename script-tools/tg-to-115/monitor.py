@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-"""Telegram 频道 -> CloudDrive2 多 115 网盘定向云下载监控引擎"""
+"""Telegram 频道 -> CloudDrive2 多 115 网盘定向云下载监控引擎 (v5 官方配额 + 自动跨云归并 + 断点续传)"""
 
 import os
 import re
@@ -9,7 +9,6 @@ import json
 import signal
 import asyncio
 import datetime
-import grpc
 from torrentool.api import Torrent
 from telethon import TelegramClient, events
 from telethon.errors import FloodWaitError
@@ -18,8 +17,7 @@ BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 if BASE_DIR not in sys.path:
     sys.path.insert(0, BASE_DIR)
 
-import clouddrive_pb2
-import clouddrive_pb2_grpc
+from cd2_ops import CD2Client, run_merge, normalize_path
 
 CONFIG_FILE = os.path.join(BASE_DIR, "config.json")
 DATA_DIR = os.path.join(BASE_DIR, "data")
@@ -31,6 +29,7 @@ CHECKPOINT_FILE = os.path.join(DATA_DIR, "checkpoint.json")
 QUOTA_FILE = os.path.join(DATA_DIR, "quota_status.json")
 HISTORY_HASH_FILE = os.path.join(DATA_DIR, "downloaded_hashes.txt")
 PAUSED_FLAG = os.path.join(DATA_DIR, "paused.flag")
+MERGE_STATUS_FILE = os.path.join(DATA_DIR, "merge_status.json")
 
 os.makedirs(DATA_DIR, exist_ok=True)
 os.makedirs(RECORD_DIR, exist_ok=True)
@@ -49,17 +48,8 @@ def write_json_atomic(path: str, data: dict):
     os.replace(tmp_path, path)
 
 
-def normalize_path(path: str) -> str:
-    p = (path or "").strip().replace("\\", "/")
-    if not p:
-        return ""
-    if not p.startswith("/"):
-        p = "/" + p
-    return p.rstrip("/") or "/"
-
-
 def normalize_targets(cfg: dict) -> list:
-    """兼容新版多 targets 与旧版 base_folder 单目标配置"""
+    """兼容多 targets 与旧版 base_folder 单目标配置"""
     cd2 = cfg.get("clouddrive2", {})
     raw_targets = cd2.get("targets")
     targets = []
@@ -106,23 +96,20 @@ def normalize_targets(cfg: dict) -> list:
     return targets
 
 
-# ==================== 运行时全局状态 ====================
+# ==================== 全局状态与配置加载 ====================
 
 config = {}
 TG_CONF = {}
 CD2_CONF = {}
 TARGET_ACTORS = {}
 TARGETS = []
+MERGE_CONF = {}
+QUOTA_PAUSE_PERCENT = 95
 _config_mtime = 0.0
 
-_cd2_stub = None
-_cd2_metadata = None
-_cd2_stub_class_name = "unknown"
+cd2_client = None
 _cd2_server_connected = ""
 _cd2_token_connected = ""
-_known_folders = set()
-_create_folder_rpc_name = None
-_create_folder_req_cls = None
 
 recent_actor_context = {"actors": [], "msg_id": 0}
 _needs_catchup = False
@@ -130,7 +117,7 @@ _catchup_lock = asyncio.Lock()
 
 
 def load_config(initial: bool = False):
-    global config, TG_CONF, CD2_CONF, TARGET_ACTORS, TARGETS, _config_mtime
+    global config, TG_CONF, CD2_CONF, TARGET_ACTORS, TARGETS, MERGE_CONF, QUOTA_PAUSE_PERCENT, _config_mtime
     if not os.path.exists(CONFIG_FILE):
         raise FileNotFoundError(f"未找到配置文件: {CONFIG_FILE}")
     mtime = os.path.getmtime(CONFIG_FILE)
@@ -142,11 +129,18 @@ def load_config(initial: bool = False):
     CD2_CONF = config.get("clouddrive2", {})
     TARGET_ACTORS = config.get("target_actors", {})
     TARGETS = normalize_targets(config)
+    MERGE_CONF = CD2_CONF.get("merge", {"enabled": True, "wait_offline_max_minutes": 120})
+    try:
+        QUOTA_PAUSE_PERCENT = max(1, min(100, int(CD2_CONF.get("quota_pause_percent", 95))))
+    except (TypeError, ValueError):
+        QUOTA_PAUSE_PERCENT = 95
+
     _config_mtime = mtime
 
     if not initial:
-        log(f"[配置热重载] 已加载最新配置，共 {len(TARGETS)} 个 115 目标，"
-            f"{sum(1 for t in TARGETS if t['enabled'])} 个启用。")
+        log(f"[配置热重载] 已加载最新配置，共 {len(TARGETS)} 个 115 目标 "
+            f"({sum(1 for t in TARGETS if t['enabled'])} 个启用)，"
+            f"配额暂停阈值: {QUOTA_PAUSE_PERCENT}%，跨云归并: {'开启' if MERGE_CONF.get('enabled', True) else '关闭'}")
         if (
             CD2_CONF.get("server") != _cd2_server_connected
             or CD2_CONF.get("api_token") != _cd2_token_connected
@@ -166,174 +160,25 @@ def reload_config_if_changed():
     return False
 
 
-# ==================== CD2 gRPC 连接与目录管理 ====================
-
 def init_cd2():
-    global _cd2_stub, _cd2_metadata, _cd2_stub_class_name
-    global _create_folder_rpc_name, _create_folder_req_cls
-    global _cd2_server_connected, _cd2_token_connected
-
-    server = CD2_CONF["server"]
-    token = CD2_CONF["api_token"]
+    global cd2_client, _cd2_server_connected, _cd2_token_connected
+    server = CD2_CONF.get("server", "127.0.0.1:19798")
+    token = CD2_CONF.get("api_token", "")
     log(f"[CD2] 正在连接: {server}")
-    channel = grpc.insecure_channel(server)
-    _cd2_metadata = [("authorization", f"Bearer {token}")]
-
-    stub_cls = None
-    for candidate in ["CloudDriveFileSrvStub", "CloudDriveServiceStub"]:
-        stub_cls = getattr(clouddrive_pb2_grpc, candidate, None)
-        if stub_cls is not None:
-            _cd2_stub_class_name = candidate
-            break
-
-    if stub_cls is None:
-        for attr_name in dir(clouddrive_pb2_grpc):
-            if attr_name.endswith("Stub"):
-                stub_cls = getattr(clouddrive_pb2_grpc, attr_name)
-                _cd2_stub_class_name = attr_name
-                break
-
-    if stub_cls is None:
-        raise RuntimeError("[致命错误] 未在 clouddrive_pb2_grpc 中找到 gRPC Stub 类！")
-
-    _cd2_stub = stub_cls(channel)
+    cd2_client = CD2Client(server=server, token=token, logger=log)
     _cd2_server_connected = server
     _cd2_token_connected = token
-    _known_folders.clear()
-
-    log(f"[CD2] Stub 类: {_cd2_stub_class_name}")
-
-    for req_name, rpc_name in [
-        ("CreateFolderRequest", "CreateFolder"),
-        ("CreateDirectoryRequest", "CreateDirectory"),
-        ("MkDirRequest", "MkDir"),
-    ]:
-        req_cls = getattr(clouddrive_pb2, req_name, None)
-        rpc_method = getattr(_cd2_stub, rpc_name, None)
-        if req_cls is not None and rpc_method is not None:
-            _create_folder_req_cls = req_cls
-            _create_folder_rpc_name = rpc_name
-            log(f"[CD2] 文件夹创建接口: {rpc_name}({req_name})")
-            break
 
     for idx, t in enumerate(TARGETS, 1):
         status_str = "启用" if t["enabled"] else "停用"
-        log(f"[CD2] 115 目标 #{idx}: [{t['name']}] 路径名={t['mount_path']} | "
-            f"保存目录={t['save_folder']} | 每日限额={t['daily_limit']} | 状态={status_str}")
-    log("[CD2] 初始化完成。")
+        log(f"[CD2] 115 目标 #{idx}: [{t['name']}] 挂载路径={t['mount_path']} | "
+            f"保存目录={t['save_folder']} | 备用本地限额={t['daily_limit']} | 状态={status_str}")
+        if t["enabled"]:
+            cd2_client.ensure_folder_chain(t["save_folder"], t["mount_path"])
+    log("[CD2] 客户端初始化完成。")
 
 
-def try_create_folder(folder_path: str) -> bool:
-    folder_path = normalize_path(folder_path)
-    if folder_path in _known_folders:
-        return True
-    if _create_folder_rpc_name is None or _create_folder_req_cls is None:
-        return False
-
-    try:
-        rpc_method = getattr(_cd2_stub, _create_folder_rpc_name)
-        parent = folder_path.rsplit("/", 1)[0] if "/" in folder_path else "/"
-        if not parent:
-            parent = "/"
-        name = folder_path.rsplit("/", 1)[-1]
-        request = _create_folder_req_cls(parentPath=parent, folderName=name)
-        rpc_method(request, metadata=_cd2_metadata)
-        _known_folders.add(folder_path)
-        log(f"-> [CD2] 成功创建目录: {folder_path}")
-        return True
-    except grpc.RpcError as e:
-        code = e.code()
-        details = (e.details() or "").lower()
-        if code == grpc.StatusCode.ALREADY_EXISTS or "already exists" in details or "已存在" in details:
-            _known_folders.add(folder_path)
-            return True
-        log(f"-> [CD2] 目录创建返回: {code} - {e.details()}")
-        return False
-    except Exception as e:
-        log(f"-> [CD2] 目录创建异常: {e}")
-        return False
-
-
-def ensure_folder_chain(folder_path: str, mount_path: str):
-    """确保从 mount_path 到 folder_path 的每一级子目录都存在"""
-    folder_path = normalize_path(folder_path)
-    mount_path = normalize_path(mount_path)
-    if folder_path in _known_folders:
-        return
-
-    if mount_path and folder_path.startswith(mount_path + "/"):
-        rel = folder_path[len(mount_path) + 1:]
-        cur = mount_path
-        for part in [p for p in rel.split("/") if p]:
-            cur = f"{cur}/{part}"
-            if cur not in _known_folders:
-                try_create_folder(cur)
-    else:
-        try_create_folder(folder_path)
-
-
-def is_quota_error_details(details: str) -> bool:
-    d = (details or "").lower()
-    keywords = ["配额", "quota", "上限", "limit", "exceeded", "次数", "已满"]
-    return any(k in d for k in keywords)
-
-
-def push_to_single_target(magnet_link: str, target: dict, primary_actor: str):
-    """
-    向单个 115 目标推送离线任务。
-    返回: (status, actual_folder)
-      status: "OK" | "QUOTA_ERROR" | "FAILED"
-    """
-    base_folder = target["save_folder"]
-    mount_path = target["mount_path"]
-    if CD2_CONF.get("split_by_actor", True) and primary_actor:
-        target_folder = f"{base_folder}/{primary_actor}"
-    else:
-        target_folder = base_folder
-
-    if target_folder not in _known_folders:
-        ensure_folder_chain(target_folder, mount_path)
-
-    try:
-        request = clouddrive_pb2.AddOfflineFileRequest(
-            urls=magnet_link,
-            toFolder=target_folder,
-        )
-        _cd2_stub.AddOfflineFiles(request, metadata=_cd2_metadata)
-        _known_folders.add(target_folder)
-        return "OK", target_folder
-    except grpc.RpcError as e:
-        code = e.code()
-        details = e.details() or ""
-        if is_quota_error_details(details):
-            log(f"[CD2 限额提示] 目标 [{target['name']}] 疑似触发 115 离线限额: {code} - {details}")
-            return "QUOTA_ERROR", ""
-        if code == grpc.StatusCode.NOT_FOUND and target_folder != base_folder:
-            log(f"-> 目标 [{target['name']}] 子目录不可用，回退至保存目录: {base_folder}")
-            ensure_folder_chain(base_folder, mount_path)
-            try:
-                request2 = clouddrive_pb2.AddOfflineFileRequest(
-                    urls=magnet_link,
-                    toFolder=base_folder,
-                )
-                _cd2_stub.AddOfflineFiles(request2, metadata=_cd2_metadata)
-                _known_folders.add(base_folder)
-                return "OK", base_folder
-            except grpc.RpcError as e2:
-                details2 = e2.details() or ""
-                if is_quota_error_details(details2):
-                    log(f"[CD2 限额提示] 目标 [{target['name']}] 疑似触发 115 离线限额: {e2.code()} - {details2}")
-                    return "QUOTA_ERROR", ""
-                log(f"[CD2 失败] 目标 [{target['name']}]: {e2.code()} - {details2}")
-                return "FAILED", ""
-        log(f"[CD2 失败] 目标 [{target['name']}]: {code} - {details}")
-        return "FAILED", ""
-    except Exception as e:
-        log(f"[CD2 推送异常] 目标 [{target['name']}]: {e}")
-        return "FAILED", ""
-
-
-# ==================== 多 115 配额轮转与状态管理 ====================
+# ==================== 配额检测与状态管理 ====================
 
 def get_today_str() -> str:
     return datetime.datetime.now().strftime("%Y-%m-%d")
@@ -341,7 +186,7 @@ def get_today_str() -> str:
 
 def load_quota_status() -> dict:
     today = get_today_str()
-    default_status = {"date": today, "counts": {}}
+    default_status = {"date": today, "counts": {}, "targets": {}, "updated_at": ""}
     if not os.path.exists(QUOTA_FILE):
         return default_status
     try:
@@ -352,44 +197,120 @@ def load_quota_status() -> dict:
 
     if raw.get("date") != today:
         return default_status
-
-    # 兼容旧版单 count 结构
-    if "counts" in raw and isinstance(raw["counts"], dict):
-        return {"date": today, "counts": {normalize_path(k): int(v) for k, v in raw["counts"].items()}}
-    if "count" in raw and TARGETS:
-        first_key = TARGETS[0]["save_folder"]
-        return {"date": today, "counts": {first_key: int(raw.get("count", 0))}}
-    return default_status
+    return raw
 
 
-def save_quota_status(status: dict):
-    write_json_atomic(QUOTA_FILE, status)
+def check_target_quota(target: dict, counts: dict) -> dict:
+    """
+    检查单个目标的配额状态。优先读取 115 官方配额；若官方不可用则回退至本地下载计数。
+    返回: {
+        "available": bool,
+        "official": bool,
+        "total": int,
+        "used": int,
+        "left": int,
+        "percent": float,
+        "reason": str
+    }
+    """
+    mount_path = target["mount_path"]
+    save_folder = target["save_folder"]
+
+    # 1. 尝试读取 115 官方离线配额
+    if cd2_client is not None:
+        try:
+            off_q = cd2_client.get_quota(mount_path)
+            if off_q and (off_q["total"] > 0 or off_q["left"] > 0):
+                total = off_q["total"]
+                used = off_q["used"]
+                left = off_q["left"]
+                pct = round((used / total * 100), 1) if total > 0 else 0.0
+                paused = (pct >= QUOTA_PAUSE_PERCENT) or (left <= 0)
+                reason = f"官方使用率 {pct}% >= {QUOTA_PAUSE_PERCENT}%" if (pct >= QUOTA_PAUSE_PERCENT) else ("官方剩余为 0" if left <= 0 else "正常")
+                return {
+                    "available": not paused,
+                    "official": True,
+                    "total": total,
+                    "used": used,
+                    "left": left,
+                    "percent": pct,
+                    "reason": reason,
+                }
+        except Exception as e:
+            log(f"-> [CD2] 读取 {target['name']} 官方配额异常: {e}")
+
+    # 2. 回退到本地计数模式
+    local_used = counts.get(save_folder, 0)
+    limit = target["daily_limit"]
+    pct = round((local_used / limit * 100), 1) if limit > 0 else 100.0
+    paused = local_used >= limit
+    reason = f"本地计数达到限额 ({local_used}/{limit})" if paused else "正常"
+    return {
+        "available": not paused,
+        "official": False,
+        "total": limit,
+        "used": local_used,
+        "left": max(0, limit - local_used),
+        "percent": pct,
+        "reason": reason,
+    }
 
 
 def get_available_targets() -> list:
-    """按配置顺序返回今天还有剩余限额的启用 115 目标列表"""
+    """
+    按顺序检查启用的 115 目标，返回当前有可用配额的目标列表：
+    [(target, quota_info), ...]
+    同时更新 data/quota_status.json
+    """
     status = load_quota_status()
     counts = status.get("counts", {})
     available = []
+    targets_info = {}
+
     for t in TARGETS:
         if not t.get("enabled", True):
             continue
-        used = counts.get(t["save_folder"], 0)
-        if used < t["daily_limit"]:
-            available.append((t, used))
+        q = check_target_quota(t, counts)
+        targets_info[t["mount_path"]] = {
+            "name": t["name"],
+            "save_folder": t["save_folder"],
+            "official": q["official"],
+            "total": q["total"],
+            "used": q["used"],
+            "left": q["left"],
+            "percent": q["percent"],
+            "available": q["available"],
+            "reason": q["reason"],
+        }
+        if q["available"]:
+            available.append((t, q))
+
+    status["date"] = get_today_str()
+    status["updated_at"] = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    status["pause_percent_threshold"] = QUOTA_PAUSE_PERCENT
+    status["targets"] = targets_info
+    write_json_atomic(QUOTA_FILE, status)
+
     return available
 
 
-def increment_target_quota(target: dict, set_full: bool = False) -> int:
+def increment_local_target_count(target: dict):
     status = load_quota_status()
     counts = status.setdefault("counts", {})
     key = target["save_folder"]
-    if set_full:
-        counts[key] = target["daily_limit"]
-    else:
-        counts[key] = counts.get(key, 0) + 1
-    save_quota_status(status)
+    counts[key] = counts.get(key, 0) + 1
+    write_json_atomic(QUOTA_FILE, status)
     return counts[key]
+
+
+def mark_target_quota_full(target: dict):
+    status = load_quota_status()
+    counts = status.setdefault("counts", {})
+    counts[target["save_folder"]] = target["daily_limit"]
+    if "targets" in status and target["mount_path"] in status["targets"]:
+        status["targets"][target["mount_path"]]["available"] = False
+        status["targets"][target["mount_path"]]["reason"] = "推送返回配额耗尽"
+    write_json_atomic(QUOTA_FILE, status)
 
 
 def load_hashes() -> set:
@@ -461,35 +382,72 @@ async def wait_if_paused(context_label: str = "任务"):
     return True
 
 
-async def wait_until_quota_available():
-    """所有 115 达到当日上限后休眠；期间每隔 5 秒检测配置变更或跨天，支持动态唤醒"""
-    status = load_quota_status()
-    counts = status.get("counts", {})
-    summary = ", ".join(
-        f"{t['name']}({counts.get(t['save_folder'], 0)}/{t['daily_limit']})"
-        for t in TARGETS
-        if t.get("enabled", True)
-    )
-    now = datetime.datetime.now()
-    tomorrow = (now + datetime.timedelta(days=1)).replace(hour=0, minute=1, second=0, microsecond=0)
-    sleep_seconds = max(10, int((tomorrow - now).total_seconds()))
-    hours = sleep_seconds // 3600
-    minutes = (sleep_seconds % 3600) // 60
+# ==================== 跨云归并与休眠恢复 ====================
 
-    log(f"[配额守护] 所有启用的 115 今日限额均已用尽: {summary}")
-    log(f"[配额守护] 预计休眠 {hours} 小时 {minutes} 分钟至明日 00:01 自动唤醒（期间若修改配置扩容也会立即唤醒）...")
+async def trigger_auto_merge_if_needed():
+    """
+    当全部 115 账号配额均已用尽时触发跨云归并：
+    将副盘 save_folder 下的全部内容移动至主盘 save_folder（允许覆盖），并刷新两边目录。
+    """
+    reload_config_if_changed()
+    if not MERGE_CONF.get("enabled", True):
+        log("[跨云归并] 当前配置已关闭自动归并，跳过。")
+        return
+
+    enabled_targets = [t for t in TARGETS if t.get("enabled", True)]
+    if len(enabled_targets) < 2:
+        log("[跨云归并] 启用的 115 账号少于 2 个，无需跨云归并。")
+        return
+
+    log("=" * 64)
+    log("[跨云归并] 所有 115 账号配额均已达到上限，自动触发副盘向主盘归并流水线...")
+    log("=" * 64)
+
+    # 在单独线程中运行阻塞的 gRPC 归并调用，不阻塞 asyncio 事件循环
+    loop = asyncio.get_running_loop()
+    try:
+        summary = await loop.run_in_executor(
+            None,
+            run_merge,
+            cd2_client,
+            TARGETS,
+            MERGE_CONF,
+            DATA_DIR,
+            log,
+        )
+        log(f"[跨云归并] 归并流程结束：移动成功 {summary.get('moved', 0)} 项，失败 {summary.get('failed', 0)} 项。")
+    except Exception as e:
+        log(f"[跨云归并异常] {e}")
+
+
+async def wait_until_quota_available():
+    """
+    所有账号无配额时先执行归并，然后休眠等待 115 配额恢复。
+    期间定期轮询官方配额接口（恢复则立即自动唤醒继续下载），并支持配置热扩容与手动解除暂停。
+    """
+    await trigger_auto_merge_if_needed()
+
+    log("[配额守护] 正在进入配额恢复守护模式（每 60 秒轮询官方配额，恢复后立即自动继续）...")
+    check_interval = 60
+    last_poll_ts = 0.0
 
     while True:
         await asyncio.sleep(5)
         if is_paused():
             await wait_if_paused("配额休眠")
         reload_config_if_changed()
-        if get_available_targets():
-            log("[配额守护] 检测到可用 115 配额（已跨天或配置已扩容），立即唤醒恢复！")
-            return
+
+        now = time.time()
+        if now - last_poll_ts >= check_interval:
+            last_poll_ts = now
+            avail = get_available_targets()
+            if avail:
+                target_names = ", ".join(t["name"] for t, _ in avail)
+                log(f"[配额守护] 发现可用 115 账号: {target_names}，立即唤醒继续任务！")
+                return
 
 
-# ==================== 核心匹配与轮转推送 ====================
+# ==================== 核心匹配与推送 ====================
 
 def match_actors(text: str) -> list:
     if not text:
@@ -541,8 +499,44 @@ async def extract_torrent_info(message):
     return magnet_link, info_hash, torrent_name
 
 
+def push_to_single_target(magnet_link: str, target: dict, primary_actor: str):
+    """
+    向单个 115 目标推送离线任务。
+    返回: (status, actual_folder, err_msg)
+      status: "OK" | "QUOTA" | "FAILED"
+    """
+    base_folder = target["save_folder"]
+    mount_path = target["mount_path"]
+    if CD2_CONF.get("split_by_actor", True) and primary_actor:
+        target_folder = f"{base_folder}/{primary_actor}"
+    else:
+        target_folder = base_folder
+
+    cd2_client.ensure_folder_chain(target_folder, mount_path)
+
+    status, err_msg = cd2_client.add_offline(magnet_link, target_folder)
+    if status == "OK":
+        return "OK", target_folder, ""
+
+    if status == "QUOTA":
+        log(f"[CD2 限额提示] 目标 [{target['name']}] 触发 115 离线配额上限: {err_msg}")
+        return "QUOTA", "", err_msg
+
+    if status == "NOT_FOUND" and target_folder != base_folder:
+        log(f"-> 目标 [{target['name']}] 出演者子目录不存在，回退至基础保存目录: {base_folder}")
+        cd2_client.ensure_folder_chain(base_folder, mount_path)
+        status2, err2 = cd2_client.add_offline(magnet_link, base_folder)
+        if status2 == "OK":
+            return "OK", base_folder, ""
+        if status2 == "QUOTA":
+            return "QUOTA", "", err2
+        return "FAILED", "", err2
+
+    return "FAILED", "", err_msg
+
+
 async def execute_push(actors: list, magnet_link: str, info_hash: str, torrent_name: str, is_history: bool = False):
-    """去重 -> 顺序选择有额度的 115 账号 -> 推送 -> 失败自动切下一个账号"""
+    """去重 -> 顺序选择有配额的 115 账号 -> 推送 -> 达到限额自动切换下一个账号"""
     reload_config_if_changed()
 
     if not (magnet_link and info_hash):
@@ -558,22 +552,26 @@ async def execute_push(actors: list, magnet_link: str, info_hash: str, torrent_n
     primary_actor = actors[0]
     label = "离线补课" if is_history else "实时新帖"
 
-    for idx, (target, _used_before) in enumerate(available):
-        status, actual_folder = push_to_single_target(magnet_link, target, primary_actor)
+    for idx, (target, q_info) in enumerate(available):
+        status, actual_folder, err_msg = push_to_single_target(magnet_link, target, primary_actor)
         if status == "OK":
-            new_count = increment_target_quota(target, set_full=False)
+            increment_local_target_count(target)
+            q_mode = "官方" if q_info["official"] else "本地"
             log(
-                f"-> [{label}][115 推送成功!] 账号: {target['name']} ({new_count}/{target['daily_limit']}) | "
+                f"-> [{label}][115 推送成功!] 账号: {target['name']} ({q_mode}已用: {q_info['percent']}%) | "
                 f"演员: {', '.join(actors)} | 目录: {actual_folder} | 种子: {torrent_name}"
             )
-            if new_count >= target["daily_limit"]:
-                remaining = [t["name"] for t, _ in get_available_targets()]
-                if remaining:
-                    log(f"[配额轮转] 115 账号 [{target['name']}] 已达今日上限 {target['daily_limit']}，"
-                        f"下一条任务将自动切换至 [{remaining[0]}]！")
+
+            # 推送后更新配额状态，若该账号用尽且存在下一个账号，提示轮转
+            new_avail = get_available_targets()
+            still_avail = any(t["mount_path"] == target["mount_path"] for t, _ in new_avail)
+            if not still_avail:
+                remaining_names = [t["name"] for t, _ in new_avail]
+                if remaining_names:
+                    log(f"[配额轮转] 115 账号 [{target['name']}] 配额已达暂停阈值 ({QUOTA_PAUSE_PERCENT}%)，"
+                        f"下条任务将自动轮转至 [{remaining_names[0]}]！")
                 else:
-                    log(f"[配额轮转] 115 账号 [{target['name']}] 已达今日上限 {target['daily_limit']}，"
-                        f"全部启用账号今日配额已满。")
+                    log(f"[配额轮转] 115 账号 [{target['name']}] 配额已达阈值，所有启用账号配额均已用尽。")
 
             downloaded_hashes.add(info_hash.lower())
             save_hash(info_hash.lower())
@@ -586,15 +584,15 @@ async def execute_push(actors: list, magnet_link: str, info_hash: str, torrent_n
             )
             return True
 
-        if status == "QUOTA_ERROR":
-            increment_target_quota(target, set_full=True)
+        if status == "QUOTA":
+            mark_target_quota_full(target)
             if idx + 1 < len(available):
                 next_target = available[idx + 1][0]
                 log(f"[配额轮转] 自动切换至下一个 115 账号: [{next_target['name']}] 重试当前种子...")
                 continue
             return "QUOTA_REACHED"
 
-        # 普通网络/接口错误，不误标限额
+        # 普通网络/接口临时错误，不标满额
         return False
 
     return "QUOTA_REACHED"
@@ -631,22 +629,22 @@ async def handler_new_message(event):
         if target_actors:
             res = await execute_push(target_actors, magnet_link, info_hash, torrent_name, is_history=False)
             if res == "QUOTA_REACHED":
-                log(f"[配额熔断] 所有 115 今日限额均已满，实时新资源 [{torrent_name}] 已暂缓推送（断点保留，明日或扩容后自动补推）。")
+                log(f"[配额熔断] 所有 115 账号配额均已满，实时新资源 [{torrent_name}] 已暂缓（断点保留，待配额恢复后自动补推）。")
                 _needs_catchup = True
-                # 不推进断点到当前消息，保留在本次资源之前
                 rollback_id = min(msg.id, recent_actor_context["msg_id"] or msg.id) - 1
                 cur_cp = load_checkpoint().get("last_scanned_id", 0)
                 if rollback_id > cur_cp:
                     save_checkpoint(rollback_id)
+                # 触发归并与休眠
+                await wait_until_quota_available()
                 return
 
-    # 正常处理完毕后推进断点
     if not _needs_catchup:
         save_checkpoint(msg.id)
 
 
 async def catchup_and_scan_messages():
-    """断点续传与历史追赶引擎（支持多 115 轮转、暂停恢复、满额跨天自动唤醒）"""
+    """断点续传与历史追赶引擎（支持官方配额轮转、满额自动归并、跨天自动唤醒）"""
     global _needs_catchup
     async with _catchup_lock:
         reload_config_if_changed()
@@ -713,16 +711,13 @@ async def catchup_and_scan_messages():
                             )
                             if res == "QUOTA_REACHED":
                                 quota_hit = True
-                                # 回退到当前资源组合之前，避免明日重启漏掉本条种子
                                 pair_start = pending_actor_msg_id if (pending_actor and msg.id - pending_actor_msg_id <= 3) else msg.id
                                 rollback_id = max(last_id, pair_start - 1)
                                 save_checkpoint(rollback_id)
                                 break
-                            # 推送处理完成后清理 pending
                             pending_actor = []
                             pending_actor_msg_id = 0
 
-                    # 若当前不处于“刚命中演员等待紧邻种子”的悬空状态，则可安全推进断点
                     if not pending_actor or (msg.id - pending_actor_msg_id >= 3):
                         safe_checkpoint_id = msg.id
 
@@ -758,7 +753,7 @@ async def catchup_and_scan_messages():
 
 
 async def state_watcher():
-    """后台状态监控：处理配置热更新、暂停后恢复补扫、跨天配额恢复补扫"""
+    """后台状态监控：配置热重载、暂停恢复补扫、跨天/恢复配额补扫"""
     global _needs_catchup
     was_paused = is_paused()
     while True:
@@ -783,7 +778,7 @@ async def main():
     load_config(initial=True)
 
     log("=" * 64)
-    log(" TG -> 115 多账号轮转定向云下载服务 (v4 多115 + 断点续传 + 热重载)")
+    log(" TG -> 115 智能云下载服务 (v5 官方配额 + 自动跨云归并 + 断点续传)")
     log("=" * 64)
 
     if not TARGETS:
@@ -801,7 +796,6 @@ async def main():
     await client.start()
     log("[Telegram] 登录认证成功！")
 
-    # 注册 POSIX SIGTERM 优雅退出
     loop = asyncio.get_running_loop()
     main_task = asyncio.current_task()
     for sig_name in ("SIGTERM", "SIGINT"):

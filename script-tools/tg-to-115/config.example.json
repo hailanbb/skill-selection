@@ -9,6 +9,11 @@
     "server": "127.0.0.1:19798",
     "api_token": "YOUR_CLOUDDRIVE2_API_TOKEN",
     "split_by_actor": true,
+    "quota_pause_percent": 95,
+    "merge": {
+      "enabled": true,
+      "wait_offline_max_minutes": 120
+    },
     "targets": [
       {
         "name": "115-主盘",

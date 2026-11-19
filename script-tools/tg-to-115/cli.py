@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-"""TG -> 115 多账号云下载交互式管理面板 (Ubuntu CLI)"""
+"""TG -> 115 多账号云下载交互式管理面板 (Ubuntu CLI v5 官方配额 + 跨云归并)"""
 
 import os
 import sys
@@ -13,6 +13,16 @@ import datetime
 import subprocess
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+if BASE_DIR not in sys.path:
+    sys.path.insert(0, BASE_DIR)
+
+try:
+    from cd2_ops import CD2Client, run_merge, normalize_path as cd2_norm_path
+except ImportError:
+    CD2Client = None
+    run_merge = None
+    cd2_norm_path = None
+
 CONFIG_FILE = os.path.join(BASE_DIR, "config.json")
 CONFIG_EXAMPLE = os.path.join(BASE_DIR, "config.example.json")
 MONITOR_SCRIPT = os.path.join(BASE_DIR, "monitor.py")
@@ -24,6 +34,7 @@ PID_FILE = os.path.join(DATA_DIR, "monitor.pid")
 PAUSED_FLAG = os.path.join(DATA_DIR, "paused.flag")
 QUOTA_FILE = os.path.join(DATA_DIR, "quota_status.json")
 CHECKPOINT_FILE = os.path.join(DATA_DIR, "checkpoint.json")
+MERGE_STATUS_FILE = os.path.join(DATA_DIR, "merge_status.json")
 LOG_FILE = os.path.join(LOG_DIR, "monitor.log")
 SESSION_FILE = os.path.join(BASE_DIR, "user_session.session")
 
@@ -125,11 +136,16 @@ def load_config() -> dict:
                 "enabled": True,
             })
         cd2["targets"] = targets
+
+    if "quota_pause_percent" not in cd2:
+        cd2["quota_pause_percent"] = 95
+    if "merge" not in cd2 or not isinstance(cd2["merge"], dict):
+        cd2["merge"] = {"enabled": True, "wait_offline_max_minutes": 120}
+
     return cfg
 
 
 def save_config(cfg: dict):
-    # 清理旧版冗余字段，保持配置整洁
     cfg.get("clouddrive2", {}).pop("base_folder", None)
     cfg.pop("limits", None)
     write_json_atomic(CONFIG_FILE, cfg)
@@ -236,22 +252,17 @@ def get_runtime_state() -> dict:
     }
 
 
-def load_quota_counts(cfg: dict) -> tuple:
+def load_quota_info() -> dict:
     today = datetime.datetime.now().strftime("%Y-%m-%d")
-    counts = {}
     if os.path.exists(QUOTA_FILE):
         try:
             with open(QUOTA_FILE, "r", encoding="utf-8") as f:
                 raw = json.load(f)
             if raw.get("date") == today:
-                if isinstance(raw.get("counts"), dict):
-                    counts = {normalize_path(k): int(v) for k, v in raw["counts"].items()}
-                elif "count" in raw and cfg.get("clouddrive2", {}).get("targets"):
-                    first_folder = normalize_path(cfg["clouddrive2"]["targets"][0]["save_folder"])
-                    counts = {first_folder: int(raw.get("count", 0))}
+                return raw
         except Exception:
             pass
-    return today, counts
+    return {"date": today, "counts": {}, "targets": {}, "updated_at": ""}
 
 
 def load_checkpoint() -> dict:
@@ -262,6 +273,16 @@ def load_checkpoint() -> dict:
         except Exception:
             pass
     return {"last_scanned_id": 0, "updated_at": "-"}
+
+
+def load_merge_status() -> dict:
+    if os.path.exists(MERGE_STATUS_FILE):
+        try:
+            with open(MERGE_STATUS_FILE, "r", encoding="utf-8") as f:
+                return json.load(f)
+        except Exception:
+            pass
+    return {}
 
 
 def render_progress_bar(used: int, limit: int, width: int = 16) -> str:
@@ -341,7 +362,6 @@ def action_start():
         pause_prompt()
         return
 
-    # 清除残留暂停标记
     if os.path.exists(PAUSED_FLAG):
         try:
             os.remove(PAUSED_FLAG)
@@ -353,7 +373,6 @@ def action_start():
         pause_prompt()
         return
 
-    # 如果已开启 systemd 守护进程，优先通过 systemd 启动以保持单一实例
     if state["systemd_installed"] and state["systemd_enabled"]:
         print("\n[*] 检测到已开启守护进程，正在通过 systemd 启动...")
         res = run_cmd(["systemctl", "start", SERVICE_NAME], use_sudo=True)
@@ -366,7 +385,6 @@ def action_start():
         pause_prompt()
         return
 
-    # 独立后台进程启动（脱离 SSH 会话，关闭终端不会中断）
     print("\n[*] 正在后台启动监控引擎...")
     env = os.environ.copy()
     env["PYTHONUNBUFFERED"] = "1"
@@ -418,7 +436,7 @@ def action_pause():
     with open(PAUSED_FLAG, "w", encoding="utf-8") as f:
         f.write(datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S"))
     print(f"\n[成功] 已发送暂停指令！（模式: {state['mode']}, PID: {state['pid']}）")
-    print("[说明] 任务会保留当前断点并挂起推送；暂停期间产生的新消息将在你选择 [1 启动] 恢复后自动补扫，绝不漏抓。")
+    print("[说明] 任务会保留当前断点并挂起推送；暂停期间产生的新消息将在选择 [1 启动] 恢复后自动补扫。")
     pause_prompt()
 
 
@@ -459,7 +477,7 @@ def print_targets_table(cfg: dict):
         status = "启用" if t.get("enabled", True) else "停用"
         print(
             f"  [{idx}] {t.get('name', '-')} | 路径名: {t.get('mount_path', '-')} | "
-            f"保存目录: {t.get('save_folder', '-')} | 每日限额: {t.get('daily_limit', 500)} | 状态: {status}"
+            f"保存目录: {t.get('save_folder', '-')} | 备用限额: {t.get('daily_limit', 500)} | 状态: {status}"
         )
 
 
@@ -473,7 +491,7 @@ def config_add_target(cfg: dict):
     save_raw = input(f"请输入保存目录 [默认 {default_save}]: ").strip()
     save_folder = normalize_path(save_raw) if save_raw else default_save
 
-    limit_raw = input("请输入该 115 的每日限额 [默认 500]: ").strip()
+    limit_raw = input("请输入该 115 的备用本地限额 [默认 500]: ").strip()
     try:
         daily_limit = max(1, int(limit_raw)) if limit_raw else 500
     except ValueError:
@@ -492,7 +510,7 @@ def config_add_target(cfg: dict):
         "enabled": True,
     })
     save_config(cfg)
-    print(f"[成功] 已新增 115 目标 [{name}] -> {save_folder} (每日限额 {daily_limit})！运行中的服务将在 2 秒内热重载生效。")
+    print(f"[成功] 已新增 115 目标 [{name}] -> {save_folder}！运行中的服务将在 2 秒内热重载生效。")
 
 
 def config_edit_target(cfg: dict):
@@ -523,14 +541,13 @@ def config_edit_target(cfg: dict):
     new_mount_raw = input(f"  路径名 [{old_mount}]: ").strip()
     new_mount = normalize_path(new_mount_raw) if new_mount_raw else old_mount
 
-    # 若路径名变了且旧保存目录以旧路径名开头，智能推荐替换前缀
     suggested_save = old_save
     if new_mount != old_mount and old_mount and old_save.startswith(old_mount + "/"):
         suggested_save = new_mount + old_save[len(old_mount):]
     new_save_raw = input(f"  保存目录 [{suggested_save}]: ").strip()
     new_save = normalize_path(new_save_raw) if new_save_raw else suggested_save
 
-    new_limit_raw = input(f"  每日限额 [{old_limit}]: ").strip()
+    new_limit_raw = input(f"  备用本地限额 [{old_limit}]: ").strip()
     if new_limit_raw:
         try:
             new_limit = max(1, int(new_limit_raw))
@@ -613,7 +630,7 @@ def config_reorder_targets(cfg: dict):
     item = targets.pop(src)
     targets.insert(dst, item)
     save_config(cfg)
-    print(f"[成功] 已将 [{item['name']}] 移动到第 {dst + 1} 顺位！")
+    print(f"[成功] 已将 [{item['name']}] 移动到第 {dst + 1} 顺位！第 1 顺位将作为跨云归并的主盘。")
 
 
 def config_edit_basic(cfg: dict):
@@ -650,6 +667,44 @@ def config_edit_basic(cfg: dict):
     tg["history_start_time"] = new_start
     save_config(cfg)
     print("[成功] 基础设置已保存！（注意：若修改了 TG 频道，请停止后重新启动以使监听事件生效。）")
+
+
+def config_manage_merge_and_quota(cfg: dict):
+    cd2 = cfg.setdefault("clouddrive2", {})
+    merge = cd2.setdefault("merge", {})
+    print("\n--- 官方配额暂停阈值与跨云归并设置 ---")
+
+    cur_pct = cd2.get("quota_pause_percent", 95)
+    print(f"当前官方配额暂停阈值: {cur_pct}%（当 115 官方离线配额使用率达到此百分比时，自动换盘或暂停休眠）")
+    pct_raw = input(f"请输入新的暂停阈值百分比 (1~100) [{cur_pct}]: ").strip()
+    if pct_raw:
+        try:
+            val = int(pct_raw)
+            if 1 <= val <= 100:
+                cd2["quota_pause_percent"] = val
+            else:
+                print("[错误] 百分比必须在 1~100 之间，保持原值。")
+        except ValueError:
+            print("[错误] 输入无效，保持原值。")
+
+    cur_merge_en = merge.get("enabled", True)
+    en_raw = input(f"全部盘满额后是否自动跨云归并副盘到主盘？(y/n) [{'y' if cur_merge_en else 'n'}]: ").strip().lower()
+    if en_raw in ("y", "yes"):
+        merge["enabled"] = True
+    elif en_raw in ("n", "no"):
+        merge["enabled"] = False
+
+    cur_wait = merge.get("wait_offline_max_minutes", 120)
+    wait_raw = input(f"归并前等待副盘未完成离线任务的最长超时(分钟) [{cur_wait}]: ").strip()
+    if wait_raw:
+        try:
+            w_val = max(1, int(wait_raw))
+            merge["wait_offline_max_minutes"] = w_val
+        except ValueError:
+            print("[错误] 超时必须是正整数，保持原值。")
+
+    save_config(cfg)
+    print("[成功] 配额阈值与跨云归并配置已保存！后台服务会自动热重载。")
 
 
 def config_manage_actors(cfg: dict):
@@ -710,9 +765,10 @@ def action_config():
         print("  1. 新增 115 目标")
         print("  2. 修改 115 目标（路径名 / 保存目录 / 限额 / 启停）")
         print("  3. 删除 115 目标")
-        print("  4. 调整 115 轮转顺序")
+        print("  4. 调整 115 轮转顺序（首位即主盘）")
         print("  5. 修改基础设置（CD2 地址 / Token / 频道 / 按演员分类）")
-        print("  6. 管理出演者白名单")
+        print("  6. 管理官方配额暂停阈值与跨云归并设置")
+        print("  7. 管理出演者白名单")
         print("  0. 返回主菜单")
         print("=" * 62)
         choice = input("请输入数字选项: ").strip()
@@ -729,6 +785,8 @@ def action_config():
         elif choice == "5":
             config_edit_basic(cfg)
         elif choice == "6":
+            config_manage_merge_and_quota(cfg)
+        elif choice == "7":
             config_manage_actors(cfg)
         else:
             print("[提示] 无效选项，请重新输入。")
@@ -740,8 +798,13 @@ def print_live_dashboard():
     cfg = load_config()
     state = get_runtime_state()
     cp = load_checkpoint()
-    today, counts = load_quota_counts(cfg)
+    quota_raw = load_quota_info()
+    today = quota_raw.get("date", datetime.datetime.now().strftime("%Y-%m-%d"))
+    targets_q = quota_raw.get("targets", {})
+    counts = quota_raw.get("counts", {})
+    pause_thresh = quota_raw.get("pause_percent_threshold", cfg.get("clouddrive2", {}).get("quota_pause_percent", 95))
     targets = cfg.get("clouddrive2", {}).get("targets", [])
+    merge_st = load_merge_status()
 
     if state["paused"]:
         run_label = f"已暂停 (模式: {state['mode']}, PID: {state['pid']})"
@@ -752,54 +815,73 @@ def print_live_dashboard():
 
     daemon_label = "已开启 (开机自启)" if state["systemd_enabled"] else "未开启"
 
-    print("\n" + "=" * 66)
+    print("\n" + "=" * 70)
     print(f"                  实时任务状态看板 ({today})")
-    print("=" * 66)
+    print("=" * 70)
     print(f"  运行状态   : {run_label}")
     print(f"  守护进程   : {daemon_label}")
     print(f"  监听频道   : @{cfg.get('telegram', {}).get('target_channel', '-')}")
     print(f"  当前断点   : 消息 ID {cp.get('last_scanned_id', 0)} (更新于 {cp.get('updated_at', '-')})")
-    print("-" * 66)
-    print("  多 115 今日配额进度（按轮转顺序）：")
+    print(f"  暂停阈值   : 使用率达到 {pause_thresh}% 自动换盘/暂停休眠")
+    print("-" * 70)
+    print("  多 115 配额状态（第 1 顺位为主盘）：")
 
-    total_used = 0
-    total_limit = 0
     active_assigned = False
     for idx, t in enumerate(targets, 1):
-        folder = normalize_path(t.get("save_folder", ""))
-        limit = int(t.get("daily_limit", 500))
-        used = counts.get(folder, 0)
+        m_path = normalize_path(t.get("mount_path", ""))
+        s_folder = normalize_path(t.get("save_folder", ""))
         enabled = t.get("enabled", True)
-        if enabled:
-            total_used += used
-            total_limit += limit
+
+        t_info = targets_q.get(m_path)
+        if t_info and t_info.get("official"):
+            used = t_info.get("used", 0)
+            total = t_info.get("total", 0)
+            left = t_info.get("left", 0)
+            pct = t_info.get("percent", 0.0)
+            bar = render_progress_bar(used, total)
+            mode_tag = "官方"
+        else:
+            used = counts.get(s_folder, 0)
+            total = int(t.get("daily_limit", 500))
+            left = max(0, total - used)
+            pct = round((used / total * 100), 1) if total > 0 else 0.0
+            bar = render_progress_bar(used, total)
+            mode_tag = "本地"
 
         if not enabled:
             tag = "停用"
-        elif used >= limit:
-            tag = "已满"
+        elif pct >= pause_thresh or left <= 0:
+            tag = "满额/暂停"
         elif not active_assigned:
-            tag = "当前推送中"
+            tag = "推送中"
             active_assigned = True
         else:
             tag = "排队候补"
 
-        bar = render_progress_bar(used, limit)
-        print(f"  [{idx}] {t.get('name', '-'):<8} {bar} {used:4d}/{limit:<4d} | {tag:<6} | {folder}")
+        role = "主盘" if idx == 1 else "副盘"
+        print(f"  [{idx}] {t.get('name', '-'):<6}({role}) {bar} {mode_tag}已用:{used}/{total}(剩{left}) | {tag:<8} | {s_folder}")
 
-    print(f"  总计启用配额: {total_used} / {total_limit}")
-    print("-" * 66)
+    # 跨云归并状态展示
+    if merge_st:
+        print("-" * 70)
+        p_name = merge_st.get("primary", "-")
+        fin_at = merge_st.get("finished_at", "-")
+        moved = merge_st.get("moved", 0)
+        failed = merge_st.get("failed", 0)
+        st_label = "成功" if merge_st.get("ok", False) else "部分失败"
+        print(f"  跨云归并状态: 最近一次归并至 [{p_name}] - {st_label} (已搬移 {moved} 项, 失败 {failed} 项 | {fin_at})")
 
+    print("-" * 70)
     record_file = os.path.join(RECORD_DIR, f"{today}.md")
     if os.path.exists(record_file):
         with open(record_file, "r", encoding="utf-8", errors="ignore") as f:
             rows = [line.strip() for line in f if line.startswith("| ") and not line.startswith("| 时间") and not line.startswith("| :---")]
         print(f"  今日已归档记录 ({len(rows)} 条)，最近 5 条：")
         for row in rows[-5:]:
-            print(f"    {row[:95]}")
+            print(f"    {row[:98]}")
     else:
         print("  今日暂无下载记录。")
-    print("=" * 66)
+    print("=" * 70)
 
 
 def follow_live_logs():
@@ -819,12 +901,59 @@ def follow_live_logs():
         print("\n>>> 已退出实时日志查看，后台任务不受影响。")
 
 
+def action_manual_merge():
+    if CD2Client is None or run_merge is None:
+        print("\n[错误] cd2_ops 模块加载失败，请检查依赖。")
+        pause_prompt()
+        return
+
+    cfg = load_config()
+    targets = cfg.get("clouddrive2", {}).get("targets", [])
+    enabled = [t for t in targets if t.get("enabled", True)]
+    if len(enabled) < 2:
+        print("\n[提示] 启用的 115 目标少于 2 个，无需执行跨云归并。")
+        pause_prompt()
+        return
+
+    primary = enabled[0]
+    sources = enabled[1:]
+    print("\n" + "=" * 62)
+    print("              手动执行跨云归并流水线")
+    print("=" * 62)
+    print(f"  主盘（归并目的地）: [{primary['name']}] -> {primary['save_folder']}")
+    sources_desc = ", ".join(f"[{s['name']}]" for s in sources)
+    print(f"  副盘（待搬迁来源）: {sources_desc}")
+    print("  操作说明: 将副盘保存目录中的所有内容跨云移动到主盘保存目录，")
+    print("            支持覆盖同名文件与文件夹递归合并，搬完后刷新 CD2 两边目录。")
+    print("=" * 62)
+    confirm = input("确认立即执行归并？(y/N): ").strip().lower()
+    if confirm != "y":
+        print("已取消归并。")
+        pause_prompt()
+        return
+
+    cd2_server = cfg.get("clouddrive2", {}).get("server", "127.0.0.1:19798")
+    cd2_token = cfg.get("clouddrive2", {}).get("api_token", "")
+    merge_conf = cfg.get("clouddrive2", {}).get("merge", {"wait_offline_max_minutes": 120})
+
+    print("\n[*] 正在连接 CD2 并执行归并，请稍候...\n")
+    client = CD2Client(server=cd2_server, token=cd2_token, logger=print)
+    summary = run_merge(client, targets, merge_conf, DATA_DIR, logger=print)
+    print("\n" + "-" * 62)
+    print(f"归并执行完成！结果: {'全部成功' if summary.get('ok') else '部分失败'}")
+    print(f"  总搬移成功: {summary.get('moved', 0)} 项")
+    print(f"  失败项目数: {summary.get('failed', 0)} 项")
+    print("-" * 62)
+    pause_prompt()
+
+
 def action_live_view():
     while True:
         print_live_dashboard()
         print("  1. 查看实时滚动日志（Ctrl+C 返回）")
         print("  2. 查看今日完整下载记录文件")
-        print("  3. 刷新状态看板")
+        print("  3. 立即手动执行跨云归并 (副盘全部内容 -> 主盘，并刷新 CD2)")
+        print("  4. 刷新状态看板")
         print("  0. 返回主菜单")
         choice = input("请选择: ").strip()
         if choice == "0":
@@ -842,6 +971,8 @@ def action_live_view():
                 print(f"\n[提示] 今日记录文件不存在: {record_file}")
             pause_prompt()
         elif choice == "3":
+            action_manual_merge()
+        elif choice == "4":
             continue
 
 
@@ -856,7 +987,6 @@ def enable_systemd_daemon():
         print("\n[提示] 开启守护进程前需先完成一次 Telegram 登录认证。")
         return
 
-    # 停止独立后台进程，防止双实例锁冲突
     if get_standalone_pid() > 0:
         print("[*] 正在停止当前独立后台进程以移交给 systemd 守护...")
         stop_standalone_process()
@@ -948,7 +1078,10 @@ def action_daemon():
 def print_main_menu():
     cfg = load_config()
     state = get_runtime_state()
-    today, counts = load_quota_counts(cfg)
+    quota_raw = load_quota_info()
+    today = quota_raw.get("date", datetime.datetime.now().strftime("%Y-%m-%d"))
+    targets_q = quota_raw.get("targets", {})
+    counts = quota_raw.get("counts", {})
     targets = cfg.get("clouddrive2", {}).get("targets", [])
     cp = load_checkpoint()
 
@@ -963,26 +1096,34 @@ def print_main_menu():
     quota_parts = []
     for t in targets:
         if t.get("enabled", True):
-            used = counts.get(normalize_path(t.get("save_folder", "")), 0)
-            quota_parts.append(f"{t.get('name', '-')}:{used}/{t.get('daily_limit', 500)}")
+            m_path = normalize_path(t.get("mount_path", ""))
+            s_folder = normalize_path(t.get("save_folder", ""))
+            t_info = targets_q.get(m_path)
+            if t_info and t_info.get("official"):
+                quota_parts.append(f"{t.get('name', '-')}[官]:已用{t_info.get('used', 0)}/剩{t_info.get('left', 0)}")
+            else:
+                c = counts.get(s_folder, 0)
+                lim = t.get("daily_limit", 500)
+                quota_parts.append(f"{t.get('name', '-')}[本]:{c}/{lim}")
+
     quota_str = " | ".join(quota_parts) if quota_parts else "未配置启用目标"
 
-    print("\n" + "=" * 62)
-    print("       TG -> 115 多账号云下载管理面板 (Ubuntu CLI)")
-    print("=" * 62)
+    print("\n" + "=" * 64)
+    print("       TG -> 115 智能云下载管理面板 (Ubuntu CLI)")
+    print("=" * 64)
     print(f"  当前状态 : {status_str}")
     print(f"  守护进程 : {'已开启' if state['systemd_enabled'] else '未开启'}")
     print(f"  今日配额 : {quota_str} ({today})")
     print(f"  最新断点 : 消息 ID {cp.get('last_scanned_id', 0)}")
-    print("-" * 62)
+    print("-" * 64)
     print("  1. 启动（启动或恢复任务）")
     print("  2. 暂停（挂起推送，保留断点）")
     print("  3. 停止（安全停止任务并保存断点）")
-    print("  4. 配置（管理多 115 路径名 / 保存目录 / 限额）")
-    print("  5. 实时任务查看（配额进度 / 实时日志 / 今日记录）")
+    print("  4. 配置（管理多 115 路径名 / 保存目录 / 限额 / 阈值与归并）")
+    print("  5. 实时任务查看（配额进度 / 实时日志 / 今日记录 / 手动归并）")
     print("  6. 守护进程（开启和关闭 systemd 开机自启）")
     print("  7. 退出")
-    print("=" * 62)
+    print("=" * 64)
 
 
 def main():
