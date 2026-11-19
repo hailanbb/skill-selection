@@ -138,7 +138,7 @@ def load_config() -> dict:
         cd2["targets"] = targets
 
     if "quota_pause_percent" not in cd2:
-        cd2["quota_pause_percent"] = 95
+        cd2["quota_pause_percent"] = 90
     if "merge" not in cd2 or not isinstance(cd2["merge"], dict):
         cd2["merge"] = {"enabled": True, "wait_offline_max_minutes": 120}
 
@@ -469,15 +469,16 @@ def action_stop():
 
 def print_targets_table(cfg: dict):
     targets = cfg.get("clouddrive2", {}).get("targets", [])
-    print("\n当前已配置的 115 云存储目标（按顺序自动轮转）：")
+    print("\n当前已配置的 115 云存储目标（按顺序自动轮转，配额由 115 官方自动感知）：")
     if not targets:
         print("  (暂无配置，请选择 1 新增)")
         return
     for idx, t in enumerate(targets, 1):
         status = "启用" if t.get("enabled", True) else "停用"
+        role = "主盘" if idx == 1 else "副盘"
         print(
-            f"  [{idx}] {t.get('name', '-')} | 路径名: {t.get('mount_path', '-')} | "
-            f"保存目录: {t.get('save_folder', '-')} | 备用限额: {t.get('daily_limit', 500)} | 状态: {status}"
+            f"  [{idx}] {t.get('name', '-')} ({role}) | 路径名: {t.get('mount_path', '-')} | "
+            f"保存目录: {t.get('save_folder', '-')} | 配额: 官方自动获取 | 状态: {status}"
         )
 
 
@@ -491,13 +492,6 @@ def config_add_target(cfg: dict):
     save_raw = input(f"请输入保存目录 [默认 {default_save}]: ").strip()
     save_folder = normalize_path(save_raw) if save_raw else default_save
 
-    limit_raw = input("请输入该 115 的备用本地限额 [默认 500]: ").strip()
-    try:
-        daily_limit = max(1, int(limit_raw)) if limit_raw else 500
-    except ValueError:
-        print("[错误] 限额必须是正整数，已取消。")
-        return
-
     default_name = mount_path.strip("/") or f"115-{len(cfg['clouddrive2']['targets']) + 1}"
     name_raw = input(f"请输入显示名称 [默认 {default_name}]: ").strip()
     name = name_raw or default_name
@@ -506,11 +500,10 @@ def config_add_target(cfg: dict):
         "name": name,
         "mount_path": mount_path,
         "save_folder": save_folder,
-        "daily_limit": daily_limit,
         "enabled": True,
     })
     save_config(cfg)
-    print(f"[成功] 已新增 115 目标 [{name}] -> {save_folder}！运行中的服务将在 2 秒内热重载生效。")
+    print(f"[成功] 已新增 115 目标 [{name}] -> {save_folder} (配额由官方自动获取)！运行中的服务将在 2 秒内热重载生效。")
 
 
 def config_edit_target(cfg: dict):
@@ -533,7 +526,6 @@ def config_edit_target(cfg: dict):
     t = targets[idx]
     old_mount = t.get("mount_path", "")
     old_save = t.get("save_folder", "")
-    old_limit = t.get("daily_limit", 500)
     old_name = t.get("name", "")
     old_enabled = t.get("enabled", True)
 
@@ -546,16 +538,6 @@ def config_edit_target(cfg: dict):
         suggested_save = new_mount + old_save[len(old_mount):]
     new_save_raw = input(f"  保存目录 [{suggested_save}]: ").strip()
     new_save = normalize_path(new_save_raw) if new_save_raw else suggested_save
-
-    new_limit_raw = input(f"  备用本地限额 [{old_limit}]: ").strip()
-    if new_limit_raw:
-        try:
-            new_limit = max(1, int(new_limit_raw))
-        except ValueError:
-            print("[错误] 限额必须是正整数，保持原值。")
-            new_limit = old_limit
-    else:
-        new_limit = old_limit
 
     suggested_name = new_mount.strip("/") if (new_mount != old_mount and old_name == old_mount.strip("/")) else old_name
     new_name_raw = input(f"  显示名称 [{suggested_name}]: ").strip()
@@ -573,8 +555,8 @@ def config_edit_target(cfg: dict):
     t["name"] = new_name
     t["mount_path"] = new_mount
     t["save_folder"] = new_save
-    t["daily_limit"] = new_limit
     t["enabled"] = new_enabled
+    t.pop("daily_limit", None)
 
     save_config(cfg)
     print(f"[成功] 已更新目标 [{idx + 1}]！运行中的服务会自动热重载生效。")
@@ -672,11 +654,11 @@ def config_edit_basic(cfg: dict):
 def config_manage_merge_and_quota(cfg: dict):
     cd2 = cfg.setdefault("clouddrive2", {})
     merge = cd2.setdefault("merge", {})
-    print("\n--- 官方配额暂停阈值与跨云归并设置 ---")
+    print("\n--- 官方配额停止阈值与跨云归并设置 ---")
 
-    cur_pct = cd2.get("quota_pause_percent", 95)
-    print(f"当前官方配额暂停阈值: {cur_pct}%（当 115 官方离线配额使用率达到此百分比时，自动换盘或暂停休眠）")
-    pct_raw = input(f"请输入新的暂停阈值百分比 (1~100) [{cur_pct}]: ").strip()
+    cur_pct = cd2.get("quota_pause_percent", 90)
+    print(f"当前官方配额停止阈值: {cur_pct}%（配额由 115 官方接口自动感知，使用率达到 {cur_pct}% 时自动停止换盘或归并休眠）")
+    pct_raw = input(f"请输入新的停止阈值百分比 (1~100) [{cur_pct}]: ").strip()
     if pct_raw:
         try:
             val = int(pct_raw)
@@ -842,16 +824,16 @@ def print_live_dashboard():
             mode_tag = "官方"
         else:
             used = counts.get(s_folder, 0)
-            total = int(t.get("daily_limit", 500))
-            left = max(0, total - used)
-            pct = round((used / total * 100), 1) if total > 0 else 0.0
-            bar = render_progress_bar(used, total)
-            mode_tag = "本地"
+            total = 0
+            left = 0
+            pct = 0.0
+            bar = "[" + "." * 16 + "]  --%"
+            mode_tag = "探测中"
 
         if not enabled:
             tag = "停用"
-        elif pct >= pause_thresh or left <= 0:
-            tag = "满额/暂停"
+        elif pct >= pause_thresh or (total > 0 and left <= 0):
+            tag = "达到阈值/停止"
         elif not active_assigned:
             tag = "推送中"
             active_assigned = True
@@ -859,7 +841,8 @@ def print_live_dashboard():
             tag = "排队候补"
 
         role = "主盘" if idx == 1 else "副盘"
-        print(f"  [{idx}] {t.get('name', '-'):<6}({role}) {bar} {mode_tag}已用:{used}/{total}(剩{left}) | {tag:<8} | {s_folder}")
+        quota_display = f"官方已用:{used}/{total}(剩{left})" if total > 0 else f"官方同步中(已推{used}项)"
+        print(f"  [{idx}] {t.get('name', '-'):<6}({role}) {bar} {quota_display:<20} | {tag:<8} | {s_folder}")
 
     # 跨云归并状态展示
     if merge_st:
@@ -1099,12 +1082,11 @@ def print_main_menu():
             m_path = normalize_path(t.get("mount_path", ""))
             s_folder = normalize_path(t.get("save_folder", ""))
             t_info = targets_q.get(m_path)
-            if t_info and t_info.get("official"):
-                quota_parts.append(f"{t.get('name', '-')}[官]:已用{t_info.get('used', 0)}/剩{t_info.get('left', 0)}")
+            if t_info and t_info.get("official") and t_info.get("total", 0) > 0:
+                quota_parts.append(f"{t.get('name', '-')}:已用{t_info.get('used', 0)}/剩{t_info.get('left', 0)}({t_info.get('percent', 0)}%)")
             else:
                 c = counts.get(s_folder, 0)
-                lim = t.get("daily_limit", 500)
-                quota_parts.append(f"{t.get('name', '-')}[本]:{c}/{lim}")
+                quota_parts.append(f"{t.get('name', '-')}:官方同步中(已推{c})")
 
     quota_str = " | ".join(quota_parts) if quota_parts else "未配置启用目标"
 

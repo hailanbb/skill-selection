@@ -51,19 +51,22 @@ chmod +x install.sh
     "server": "127.0.0.1:19798",
     "api_token": "YOUR_CLOUDDRIVE2_API_TOKEN",
     "split_by_actor": true,
+    "quota_pause_percent": 90,
+    "merge": {
+      "enabled": true,
+      "wait_offline_max_minutes": 120
+    },
     "targets": [
       {
         "name": "115-主盘",
         "mount_path": "/115-1",
         "save_folder": "/115-1/云下载/tg",
-        "daily_limit": 500,
         "enabled": true
       },
       {
         "name": "115-备盘",
         "mount_path": "/115-2",
         "save_folder": "/115-2/云下载/tg",
-        "daily_limit": 500,
         "enabled": true
       }
     ]

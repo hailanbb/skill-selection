@@ -49,7 +49,7 @@ def write_json_atomic(path: str, data: dict):
 
 
 def normalize_targets(cfg: dict) -> list:
-    """兼容多 targets 与旧版 base_folder 单目标配置"""
+    """兼容多 targets 结构，全面以官方配额自动感知驱动"""
     cd2 = cfg.get("clouddrive2", {})
     raw_targets = cd2.get("targets")
     targets = []
@@ -68,21 +68,15 @@ def normalize_targets(cfg: dict) -> list:
             if not save_folder:
                 continue
             name = (item.get("name") or "").strip() or mount_path.strip("/") or f"115-{idx + 1}"
-            try:
-                daily_limit = max(1, int(item.get("daily_limit", 500)))
-            except (TypeError, ValueError):
-                daily_limit = 500
             enabled = bool(item.get("enabled", True))
             targets.append({
                 "name": name,
                 "mount_path": mount_path,
                 "save_folder": save_folder,
-                "daily_limit": daily_limit,
                 "enabled": enabled,
             })
     else:
         legacy_folder = normalize_path(cd2.get("base_folder", ""))
-        legacy_limit = int(cfg.get("limits", {}).get("daily_download_limit", 500))
         if legacy_folder:
             parts = [p for p in legacy_folder.split("/") if p]
             mount_path = f"/{parts[0]}" if parts else "/"
@@ -90,7 +84,6 @@ def normalize_targets(cfg: dict) -> list:
                 "name": mount_path.strip("/") or "115-1",
                 "mount_path": mount_path,
                 "save_folder": legacy_folder,
-                "daily_limit": max(1, legacy_limit),
                 "enabled": True,
             })
     return targets
@@ -104,7 +97,7 @@ CD2_CONF = {}
 TARGET_ACTORS = {}
 TARGETS = []
 MERGE_CONF = {}
-QUOTA_PAUSE_PERCENT = 95
+QUOTA_PAUSE_PERCENT = 90
 _config_mtime = 0.0
 
 cd2_client = None
@@ -131,16 +124,16 @@ def load_config(initial: bool = False):
     TARGETS = normalize_targets(config)
     MERGE_CONF = CD2_CONF.get("merge", {"enabled": True, "wait_offline_max_minutes": 120})
     try:
-        QUOTA_PAUSE_PERCENT = max(1, min(100, int(CD2_CONF.get("quota_pause_percent", 95))))
+        QUOTA_PAUSE_PERCENT = max(1, min(100, int(CD2_CONF.get("quota_pause_percent", 90))))
     except (TypeError, ValueError):
-        QUOTA_PAUSE_PERCENT = 95
+        QUOTA_PAUSE_PERCENT = 90
 
     _config_mtime = mtime
 
     if not initial:
         log(f"[配置热重载] 已加载最新配置，共 {len(TARGETS)} 个 115 目标 "
             f"({sum(1 for t in TARGETS if t['enabled'])} 个启用)，"
-            f"配额暂停阈值: {QUOTA_PAUSE_PERCENT}%，跨云归并: {'开启' if MERGE_CONF.get('enabled', True) else '关闭'}")
+            f"官方配额停止阈值: {QUOTA_PAUSE_PERCENT}%，跨云归并: {'开启' if MERGE_CONF.get('enabled', True) else '关闭'}")
         if (
             CD2_CONF.get("server") != _cd2_server_connected
             or CD2_CONF.get("api_token") != _cd2_token_connected
@@ -171,10 +164,16 @@ def init_cd2():
 
     for idx, t in enumerate(TARGETS, 1):
         status_str = "启用" if t["enabled"] else "停用"
-        log(f"[CD2] 115 目标 #{idx}: [{t['name']}] 挂载路径={t['mount_path']} | "
-            f"保存目录={t['save_folder']} | 备用本地限额={t['daily_limit']} | 状态={status_str}")
+        log(f"[CD2] 115 目标 #{idx}: [{t['name']}] 挂载路径={t['mount_path']} | 保存目录={t['save_folder']} | 状态={status_str}")
         if t["enabled"]:
             cd2_client.ensure_folder_chain(t["save_folder"], t["mount_path"])
+            q = cd2_client.get_quota(t["mount_path"])
+            if q and q.get("total", 0) > 0:
+                used_pct = round((q["used"] / q["total"] * 100), 1)
+                log(f"      -> 官方配额自动感知: 总量 {q['total']} | 已用 {q['used']} | 剩余 {q['left']} "
+                    f"(使用率 {used_pct}% | 达到 {QUOTA_PAUSE_PERCENT}% 停止换盘)")
+            else:
+                log("      -> 官方配额: 正在连接 CD2 实时探测中...")
     log("[CD2] 客户端初始化完成。")
 
 
@@ -250,20 +249,16 @@ def check_target_quota(target: dict, counts: dict) -> dict:
         except Exception as e:
             log(f"-> [CD2] 读取 {target['name']} 官方配额异常: {e}")
 
-    # 2. 回退到本地计数模式
+    # 2. 备用容错模式（仅在 CD2 接口临时未响应时使用）
     local_used = counts.get(save_folder, 0)
-    limit = target["daily_limit"]
-    pct = round((local_used / limit * 100), 1) if limit > 0 else 100.0
-    paused = local_used >= limit
-    reason = f"本地计数达到限额 ({local_used}/{limit})" if paused else "正常"
     return {
-        "available": not paused,
+        "available": True,
         "official": False,
-        "total": limit,
+        "total": 0,
         "used": local_used,
-        "left": max(0, limit - local_used),
-        "percent": pct,
-        "reason": reason,
+        "left": 0,
+        "percent": 0.0,
+        "reason": "官方配额探测中",
     }
 
 
@@ -826,9 +821,28 @@ async def main():
 
     watcher_task = asyncio.create_task(state_watcher())
     try:
-        await catchup_and_scan_messages()
-        log(f"[实时监控中] 正在持续监听 @{TG_CONF['target_channel']} 的最新资源...")
-        await client.run_until_disconnected()
+        while True:
+            try:
+                if not client.is_connected():
+                    log("[Telegram] 正在连接服务器...")
+                    await client.connect()
+                    if not await client.is_user_authorized():
+                        await client.start()
+                    log("[Telegram] 登录认证成功！")
+
+                # 每次连接或重连后，自动补扫期间遗漏的消息
+                await catchup_and_scan_messages()
+                log(f"[实时监控中] 正在持续监听 @{TG_CONF['target_channel']} 的最新资源...")
+
+                await client.run_until_disconnected()
+                log("[Telegram] 长连接已断开，3 秒后自动重连...")
+                await asyncio.sleep(3)
+
+            except (asyncio.CancelledError, KeyboardInterrupt):
+                raise
+            except Exception as conn_err:
+                log(f"[网络抖动] Telegram 连接中断 ({conn_err})，5 秒后自动重连并同步断点...")
+                await asyncio.sleep(5)
     except (asyncio.CancelledError, KeyboardInterrupt):
         cp = load_checkpoint()
         log(f"[安全退出] 任务已停止，当前断点消息 ID: {cp.get('last_scanned_id', 0)} 已保存，下次启动将从此处无缝继续。")
