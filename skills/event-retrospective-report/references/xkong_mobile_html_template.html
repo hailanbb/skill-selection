@@ -1,0 +1,357 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
+  <title>{{EVENT_NAME}} · 商业转化复盘报告</title>
+  <style>
+    :root {
+      --bg-primary: #101924;
+      --bg-secondary: #17212D;
+      --bg-card: #152438;
+      --bg-card-inner: #0E1A29;
+      --border-color: rgba(7, 110, 225, 0.22);
+      --border-subtle: rgba(255, 255, 255, 0.08);
+      --text-main: #FFFFFF;
+      --text-sub: #94A3B8;
+      --text-muted: #64748B;
+      --brand-blue: #076EE1;
+      --brand-cyan: #00D2FF;
+      --brand-ice: #EAF3FF;
+      --accent-green: #10B981;
+      --accent-amber: #F59E0B;
+      --accent-rose: #EF4444;
+      --shadow-sm: 0 4px 14px rgba(0, 0, 0, 0.35);
+      --shadow-lg: 0 10px 25px -5px rgba(0, 0, 0, 0.55);
+    }
+
+    * {
+      box-sizing: border-box;
+      margin: 0;
+      padding: 0;
+      -webkit-tap-highlight-color: transparent;
+    }
+
+    body {
+      background: var(--bg-primary);
+      color: var(--text-main);
+      font-family: "Microsoft YaHei", "微软雅黑", -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+      line-height: 1.65;
+      padding-bottom: 75px;
+      overflow-x: hidden;
+      background-image: 
+        radial-gradient(circle at 15% 15%, rgba(7, 110, 225, 0.16) 0%, transparent 45%),
+        radial-gradient(circle at 85% 80%, rgba(0, 210, 255, 0.10) 0%, transparent 45%);
+      background-attachment: fixed;
+    }
+
+    .top-bar {
+      position: sticky;
+      top: 0;
+      z-index: 100;
+      backdrop-filter: blur(16px);
+      -webkit-backdrop-filter: blur(16px);
+      background: rgba(16, 25, 36, 0.92);
+      border-bottom: 1px solid var(--border-color);
+      padding: 12px 18px;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+    }
+
+    .brand-tag {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      font-size: 13px;
+      font-weight: 700;
+      color: var(--brand-cyan);
+    }
+
+    .brand-tag span.badge {
+      background: rgba(7, 110, 225, 0.2);
+      border: 1px solid rgba(7, 110, 225, 0.4);
+      padding: 2px 7px;
+      border-radius: 6px;
+      font-size: 11px;
+      color: var(--brand-ice);
+    }
+
+    .date-tag {
+      font-size: 12px;
+      color: var(--text-sub);
+    }
+
+    .container {
+      max-width: 680px;
+      margin: 0 auto;
+      padding: 16px;
+    }
+
+    .hero-card {
+      background: linear-gradient(135deg, #17263C 0%, #101B2B 100%);
+      border: 1px solid rgba(7, 110, 225, 0.35);
+      border-radius: 18px;
+      padding: 22px 18px;
+      margin-bottom: 18px;
+      box-shadow: var(--shadow-lg);
+      position: relative;
+      overflow: hidden;
+    }
+
+    .hero-status-pill {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      background: rgba(16, 185, 129, 0.15);
+      border: 1px solid rgba(16, 185, 129, 0.4);
+      color: #34D399;
+      font-size: 11px;
+      font-weight: 600;
+      padding: 3px 10px;
+      border-radius: 20px;
+      margin-bottom: 12px;
+    }
+
+    .hero-status-pill .dot {
+      width: 6px;
+      height: 6px;
+      border-radius: 50%;
+      background: #10B981;
+      box-shadow: 0 0 8px #10B981;
+    }
+
+    .hero-title {
+      font-size: 21px;
+      font-weight: 700;
+      line-height: 1.4;
+      margin-bottom: 8px;
+      color: #FFFFFF;
+    }
+
+    .hero-subtitle {
+      font-size: 13px;
+      color: var(--text-sub);
+      line-height: 1.5;
+      margin-bottom: 16px;
+    }
+
+    .event-info-box {
+      background: var(--bg-card-inner);
+      border-radius: 12px;
+      padding: 12px 14px;
+      border: 1px solid rgba(255, 255, 255, 0.06);
+      font-size: 12px;
+      line-height: 1.6;
+    }
+
+    .info-line {
+      display: flex;
+      align-items: flex-start;
+      gap: 8px;
+      margin-bottom: 6px;
+      color: var(--text-sub);
+    }
+
+    .info-line:last-child {
+      margin-bottom: 0;
+    }
+
+    .info-line strong {
+      color: #FFFFFF;
+    }
+
+    .section-title-wrap {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      margin: 26px 0 12px 2px;
+    }
+
+    .section-title {
+      font-size: 16px;
+      font-weight: 700;
+      color: #FFFFFF;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+
+    .section-title::before {
+      content: "";
+      width: 4px;
+      height: 16px;
+      border-radius: 2px;
+      background: linear-gradient(to bottom, var(--brand-cyan), var(--brand-blue));
+    }
+
+    .section-badge {
+      font-size: 11px;
+      color: var(--brand-ice);
+      background: rgba(7, 110, 225, 0.2);
+      border: 1px solid rgba(7, 110, 225, 0.3);
+      padding: 2px 8px;
+      border-radius: 12px;
+    }
+
+    .kpi-grid {
+      display: grid;
+      grid-template-columns: repeat(3, 1fr);
+      gap: 10px;
+      margin-bottom: 16px;
+    }
+
+    .kpi-card {
+      background: var(--bg-card);
+      border: 1px solid var(--border-color);
+      border-radius: 14px;
+      padding: 14px 8px;
+      text-align: center;
+      box-shadow: var(--shadow-sm);
+    }
+
+    .kpi-card.highlight {
+      border-color: rgba(16, 185, 129, 0.45);
+      background: linear-gradient(145deg, rgba(16, 185, 129, 0.12) 0%, #152438 100%);
+    }
+
+    .kpi-label {
+      font-size: 11px;
+      color: var(--text-sub);
+      margin-bottom: 4px;
+    }
+
+    .kpi-num {
+      font-size: 25px;
+      font-weight: 700;
+      color: #FFFFFF;
+      line-height: 1.1;
+      font-feature-settings: "tnum";
+    }
+
+    .kpi-num .unit {
+      font-size: 12px;
+      font-weight: normal;
+      color: var(--text-sub);
+      margin-left: 2px;
+    }
+
+    .kpi-subtext {
+      font-size: 10px;
+      margin-top: 4px;
+      color: var(--text-muted);
+    }
+
+    .card-box {
+      background: var(--bg-card);
+      border: 1px solid var(--border-color);
+      border-radius: 16px;
+      padding: 16px;
+      margin-bottom: 16px;
+      box-shadow: var(--shadow-sm);
+    }
+
+    /* 相册与纯大图样式 */
+    .photos-container {
+      display: flex;
+      flex-direction: column;
+      gap: 16px;
+      margin-bottom: 24px;
+    }
+
+    .photo-card {
+      background: var(--bg-card);
+      border: 1px solid var(--border-color);
+      border-radius: 16px;
+      overflow: hidden;
+      box-shadow: var(--shadow-sm);
+    }
+
+    .photo-img-wrap {
+      width: 100%;
+      background: #08101C;
+      overflow: hidden;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+    }
+
+    .photo-img-wrap img {
+      width: 100%;
+      height: auto;
+      max-height: 580px;
+      object-fit: contain;
+      display: block;
+    }
+
+    .bottom-bar {
+      position: fixed;
+      bottom: 0;
+      left: 0;
+      right: 0;
+      background: rgba(16, 25, 36, 0.95);
+      backdrop-filter: blur(12px);
+      -webkit-backdrop-filter: blur(12px);
+      border-top: 1px solid var(--border-color);
+      display: flex;
+      justify-content: space-around;
+      padding: 8px 16px 12px;
+      z-index: 99;
+    }
+
+    .nav-btn {
+      background: none;
+      border: none;
+      color: var(--text-sub);
+      font-size: 11px;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 3px;
+      cursor: pointer;
+      font-family: "Microsoft YaHei", "微软雅黑", sans-serif;
+    }
+
+    .nav-btn.active, .nav-btn:hover {
+      color: var(--brand-cyan);
+    }
+
+    .nav-btn .icon {
+      font-size: 15px;
+    }
+  </style>
+</head>
+<body>
+
+  <header class="top-bar">
+    <div class="brand-tag">
+      <span>{{BRAND_NAME}}</span>
+      <span class="badge">专场复盘</span>
+    </div>
+    <div class="date-tag">{{EVENT_DATE_TAG}}</div>
+  </header>
+
+  <main class="container">
+    {{MAIN_CONTENT}}
+  </main>
+
+  <nav class="bottom-bar">
+    <button class="nav-btn active" onclick="scrollToId('overview')"><span class="icon">📊</span><span>概览</span></button>
+    <button class="nav-btn" onclick="scrollToId('results')"><span class="icon">🎯</span><span>战报</span></button>
+    <button class="nav-btn" onclick="scrollToId('strategy')"><span class="icon">🚀</span><span>战略</span></button>
+    <button class="nav-btn" onclick="scrollToId('highlights')"><span class="icon">🌟</span><span>亮点</span></button>
+    <button class="nav-btn" onclick="scrollToId('reflections')"><span class="icon">⚠️</span><span>反思</span></button>
+    <button class="nav-btn" onclick="scrollToId('synergy')"><span class="icon">⚙️</span><span>协同</span></button>
+    <button class="nav-btn" onclick="scrollToId('photos')"><span class="icon">📸</span><span>剪影</span></button>
+  </nav>
+
+  <script>
+    function scrollToId(id) {
+      const target = document.getElementById(id);
+      if (target) {
+        target.scrollIntoView({ behavior: 'smooth', block: 'start' });
+      }
+    }
+  </script>
+</body>
+</html>
